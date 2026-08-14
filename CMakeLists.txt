@@ -1,0 +1,88 @@
+cmake_minimum_required(VERSION 3.16)
+
+project(hbm_sim LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+set(HBM_SIM_CONTROLLER_SOURCES
+  src/controller/controller.cpp
+  src/controller/executor.cpp
+  src/controller/refresh.cpp
+  src/controller/rfm.cpp
+  src/controller/row_policy.cpp
+  src/controller/scheduler.cpp
+  src/controller/timing.cpp
+)
+
+set(HBM_SIM_CORE_SOURCES
+  src/core/addr_map.cpp
+  src/core/data.cpp
+  src/core/memory_backend.cpp
+  src/core/stack_model.cpp
+  src/core/system.cpp
+)
+
+set(HBM_SIM_DRAM_SOURCES
+  src/dram/interface.cpp
+  src/dram/jedec.cpp
+  src/dram/profiles.cpp
+  src/dram/semantics.cpp
+  src/dram/spec.cpp
+  src/dram/standard_traits.cpp
+  src/dram/state.cpp
+)
+
+set(HBM_SIM_FRONTEND_SOURCES
+  src/frontend/traffic.cpp
+)
+
+set(HBM_SIM_STATS_SOURCES
+  src/stats/stats.cpp
+)
+
+set(HBM_SIM_VALIDATION_SOURCES
+  src/validation/dfi.cpp
+  src/validation/trace.cpp
+  src/validation/validator.cpp
+)
+
+add_library(hbm_sim_core
+  ${HBM_SIM_CONTROLLER_SOURCES}
+  ${HBM_SIM_CORE_SOURCES}
+  ${HBM_SIM_DRAM_SOURCES}
+  ${HBM_SIM_FRONTEND_SOURCES}
+  ${HBM_SIM_STATS_SOURCES}
+  ${HBM_SIM_VALIDATION_SOURCES}
+)
+
+target_include_directories(hbm_sim_core PUBLIC include)
+target_compile_options(hbm_sim_core PRIVATE -Wall -Wextra -pedantic)
+
+add_executable(hbm_sim
+  src/cli/help.cpp
+  src/cli/main.cpp
+)
+target_link_libraries(hbm_sim PRIVATE hbm_sim_core)
+target_compile_options(hbm_sim PRIVATE -Wall -Wextra -pedantic)
+
+add_executable(sequence_tests tests/sequence_tests.cpp)
+target_link_libraries(sequence_tests PRIVATE hbm_sim_core)
+target_compile_options(sequence_tests PRIVATE -Wall -Wextra -pedantic)
+
+enable_testing()
+add_test(NAME sequence_tests COMMAND sequence_tests)
+add_test(NAME smoke COMMAND ${CMAKE_COMMAND} -E env
+  HBM_SIM_BIN=$<TARGET_FILE:hbm_sim>
+  bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/smoke.sh
+)
+
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+  add_test(NAME model_validation
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tools/model_validation.py
+      --binary $<TARGET_FILE:hbm_sim>
+  )
+endif()
