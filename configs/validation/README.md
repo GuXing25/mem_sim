@@ -8,6 +8,10 @@
 
 这两类验证都不能替代真实 HBM4 器件测量。
 
+当前还包含 HBM3/HBM4/LPDDR5/LPDDR6 四个 Ramulator reference 配置，以及
+`dramsim3_hbm2_common.cfg`。后者只把 DRAMsim3 HBM2 的公共 ACT/PRE/RD/WR/REF 和
+IDD 输入映射到项目状态机，明确不是 HBM3 产品 profile。
+
 ## 1. `hbm4_native_1ch.cfg`
 
 该文件加载 `profiles/hbm4/jedec_8000_32gb_8hi.cfg`，但把运行范围缩为一个

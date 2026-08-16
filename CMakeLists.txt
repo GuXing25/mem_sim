@@ -71,8 +71,13 @@ add_executable(sequence_tests tests/sequence_tests.cpp)
 target_link_libraries(sequence_tests PRIVATE hbm_sim_core)
 target_compile_options(sequence_tests PRIVATE -Wall -Wextra -pedantic)
 
+add_executable(timing_boundary_tests tests/timing_boundary_tests.cpp)
+target_link_libraries(timing_boundary_tests PRIVATE hbm_sim_core)
+target_compile_options(timing_boundary_tests PRIVATE -Wall -Wextra -pedantic)
+
 enable_testing()
 add_test(NAME sequence_tests COMMAND sequence_tests)
+add_test(NAME timing_boundary_tests COMMAND timing_boundary_tests)
 add_test(NAME smoke COMMAND ${CMAKE_COMMAND} -E env
   HBM_SIM_BIN=$<TARGET_FILE:hbm_sim>
   bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/smoke.sh
@@ -80,9 +85,29 @@ add_test(NAME smoke COMMAND ${CMAKE_COMMAND} -E env
 
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
+  add_test(NAME timing_boundary_validation
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tools/timing_boundary_validation.py
+      --probe $<TARGET_FILE:timing_boundary_tests>
+  )
   add_test(NAME model_validation
     COMMAND ${Python3_EXECUTABLE}
       ${CMAKE_CURRENT_SOURCE_DIR}/tools/model_validation.py
       --binary $<TARGET_FILE:hbm_sim>
+  )
+  add_test(NAME performance_curve_validation
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tools/performance_curve.py
+      --binary $<TARGET_FILE:hbm_sim>
+      --requests 256
+      --intervals 32,8,1
+      --read-ratios 100,50
+  )
+  add_test(NAME sensitivity_uncertainty_validation
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tools/sensitivity_uncertainty.py
+      --binary $<TARGET_FILE:hbm_sim>
+      --requests 256
+      --samples 6
   )
 endif()

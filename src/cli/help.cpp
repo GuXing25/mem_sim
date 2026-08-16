@@ -25,6 +25,7 @@ void print_help(const char* argv0) {
       << "  --speed-bin-mbps N --density-gb N --stack-height N\n"
       << "  --pattern stream|random\n"
       << "  --trace PATH        Trace lines: R|W ADDRESS [data=HEX] [expect=HEX] [mask=HEX]\n"
+      << "                      maintenance: M REFpb|REFab|RFMpb|RFMab|REFdb ADDRESS\n"
       << "                      or BW|BR ADDRESS len=BYTES pattern/check=...; # comments allowed\n"
       << "  --memory-image PATH load initial sparse memory image (text or binary, auto-detected)\n"
       << "  --dump-memory-image PATH  dump final sparse memory image (.bin for binary, .txt for text)\n"

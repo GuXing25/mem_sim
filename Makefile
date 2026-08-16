@@ -6,6 +6,7 @@ CPPFLAGS ?= -Iinclude
 BUILD_DIR := build
 TARGET := $(BUILD_DIR)/hbm_sim
 SEQUENCE_TEST := $(BUILD_DIR)/sequence_tests
+TIMING_BOUNDARY_TEST := $(BUILD_DIR)/timing_boundary_tests
 # 主程序需要 src/cli/main.cpp；测试程序需要复用库代码但不能链接 CLI main。
 SRCS := $(shell find src -name '*.cpp' | sort)
 LIB_SRCS := $(filter-out src/cli/main.cpp,$(SRCS))
@@ -13,8 +14,8 @@ OBJS := $(patsubst src/%.cpp,$(BUILD_DIR)/%.o,$(SRCS))
 LIB_OBJS := $(patsubst src/%.cpp,$(BUILD_DIR)/%.o,$(LIB_SRCS))
 DEPS := $(OBJS:.o=.d)
 
-.PHONY: all clean clean-outputs delete run test smoke sequence-test model-validation reference-validation \
-	ramulator-validation \
+.PHONY: all clean clean-outputs delete run test smoke sequence-test timing-boundary-validation \
+	model-validation performance-validation sensitivity-validation reference-validation ramulator-validation \
 	examples examples_hbm4 examples_hbm3 examples_lpddr6 examples_lpddr5
 
 RAMULATOR2_ROOT ?= /path/to/ramulator2
@@ -33,6 +34,9 @@ $(BUILD_DIR)/%.o: src/%.cpp | $(BUILD_DIR)
 # sequence_tests 直接链接控制器库对象，用 C++ assert-style 测试检查协议序列。
 $(SEQUENCE_TEST): $(LIB_OBJS) tests/sequence_tests.cpp | $(BUILD_DIR)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LIB_OBJS) tests/sequence_tests.cpp -o $@
+
+$(TIMING_BOUNDARY_TEST): $(LIB_OBJS) tests/timing_boundary_tests.cpp | $(BUILD_DIR)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LIB_OBJS) tests/timing_boundary_tests.cpp -o $@
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
@@ -62,8 +66,17 @@ smoke: $(TARGET)
 sequence-test: $(SEQUENCE_TEST)
 	./$(SEQUENCE_TEST)
 
+timing-boundary-validation: $(TIMING_BOUNDARY_TEST)
+	python3 ./tools/timing_boundary_validation.py --probe ./$(TIMING_BOUNDARY_TEST)
+
 model-validation: $(TARGET)
 	python3 ./tools/model_validation.py --binary ./$(TARGET)
+
+performance-validation: $(TARGET)
+	python3 ./tools/performance_curve.py --binary ./$(TARGET)
+
+sensitivity-validation: $(TARGET)
+	python3 ./tools/sensitivity_uncertainty.py --binary ./$(TARGET)
 
 reference-validation: $(TARGET)
 	python3 ./tools/ramulator2_differential.py --binary ./$(TARGET) \
@@ -77,7 +90,7 @@ ramulator-validation: reference-validation
 # - smoke 关注 CLI 主路径和输出字段
 # - sequence-test 关注精确命令顺序和 timing 间隔
 # - model-validation 关注理论公式、DFI、来源审计和敏感性阈值
-test: smoke sequence-test model-validation
+test: smoke sequence-test timing-boundary-validation model-validation
 
 clean:
 	rm -rf $(BUILD_DIR)

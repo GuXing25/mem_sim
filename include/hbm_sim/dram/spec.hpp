@@ -196,6 +196,9 @@ struct TimingConstraint {
   int window = 0;
   bool sibling = false;
   std::string note;
+  // 可审计的约束名称，例如 nRCDRD 或 nCWL+nBL+nWR。放在聚合尾部
+  // 以保持旧测试中 TimingConstraint 初始化器的字段顺序兼容。
+  std::string parameter;
 };
 
 struct TimingSourceOverride {

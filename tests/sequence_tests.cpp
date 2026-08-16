@@ -192,6 +192,7 @@ void test_timing_engine_table_and_window_state() {
       0,
       false,
       "unit test ACT->RD table constraint",
+      "unit_nRCD",
   });
 
   DecodedAddress decoded;

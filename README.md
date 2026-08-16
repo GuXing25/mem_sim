@@ -215,7 +215,8 @@ cmake --build build-clang-debug --parallel
 ctest --test-dir build-clang-debug --output-on-failure
 ```
 
-CTest 包含 CLI smoke、C++ 命令序列测试和 28 项项目原生模型验收。VS Code 中
+CTest 包含 CLI smoke、C++ 命令序列、Timing 边界、28 项项目原生验收、CI 规模
+性能曲线和敏感性/不确定性检查，共 7 个入口。VS Code 中
 可运行 `hbm_sim: run all tests`；Make 兼容入口仍是
 `make CXX=/usr/bin/clang++-18 test`。
 

@@ -63,6 +63,10 @@ class TimingEngine {
   // 检查 table-driven preceding->following constraint 是否已经 ready。
   // 这里不处理 window>0 的 tFAW 类约束，tFAW 走 recent_acts 专门路径。
   bool constraint_ready(const DramSpec& spec, const DecodedAddress& decoded, Command cmd, Cycle clk) const;
+  // 返回所有表驱动约束共同决定的最早发射 tick。LPDDR 用它避免在总线换向
+  // gate 尚未结束时过早建立一个注定会过期的 WCK/CAS 窗口。
+  Cycle constraint_ready_at(const DramSpec& spec, const DecodedAddress& decoded,
+                            Command cmd) const;
   // 一条命令发出后，把所有以它为 preceding 的 constraint 写入对应 scope bucket。
   void apply_constraints(const DramSpec& spec, const DecodedAddress& decoded, Command issued, Cycle clk);
 

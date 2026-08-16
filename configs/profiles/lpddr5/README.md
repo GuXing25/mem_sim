@@ -89,5 +89,4 @@ false，当前运行不会产生该项开销。
 ```
 
 输出应继续显示 vendor-required 项来自 `research_default`。未来引入 LPDDR5
-标准或目标器件表时，应新增独立 JEDEC/vendor profile，不要直接把本文件改名为
-“已校准”。
+标准或目标器件表时，应新增独立 JEDEC/vendor profile。

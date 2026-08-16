@@ -14,6 +14,8 @@
 namespace hbm_sim {
 namespace {
 
+std::string lower_token(std::string token);
+
 RequestType parse_type(const std::string& token) {
   // trace 兼容单字母和完整单词，方便复用不同工具生成的简单访存轨迹。
   // BW/BR 语法也会被流式 trace 解析器识别，并在送入控制器前展开成事务。
@@ -26,6 +28,30 @@ RequestType parse_type(const std::string& token) {
     return RequestType::Write;
   }
   throw std::invalid_argument("unknown trace request type: " + token);
+}
+
+bool is_maintenance_type(const std::string& token) {
+  const std::string lowered = lower_token(token);
+  return lowered == "m" || lowered == "maintenance";
+}
+
+Command parse_maintenance_command(const std::string& token) {
+  const std::string lowered = lower_token(token);
+  if (lowered == "refab") return Command::REFAB;
+  if (lowered == "refpb") return Command::REFPB;
+  if (lowered == "refdb") return Command::REFDB;
+  if (lowered == "rfmab") return Command::RFMAB;
+  if (lowered == "rfmpb") return Command::RFMPB;
+  if (lowered == "preab") return Command::PREAB;
+  if (lowered == "prepb") return Command::PREPB;
+  if (lowered == "mrw") return Command::MRW;
+  if (lowered == "mrr") return Command::MRR;
+  if (lowered == "wcksync") return Command::WCKSYNC;
+  if (lowered == "wcktrain") return Command::WCKTRAIN;
+  if (lowered == "dvfs") return Command::DVFS;
+  if (lowered == "eccscrub") return Command::ECCSCRUB;
+  if (lowered == "raserr") return Command::RASERR;
+  throw std::invalid_argument("unsupported maintenance trace command: " + token);
 }
 
 bool is_burst_type(const std::string& token) {
@@ -527,6 +553,40 @@ class TraceTrafficStream final : public TrafficStream {
     }
     if (tokens.size() < idx + 2) {
       throw std::runtime_error("trace line " + std::to_string(lineno_) + " missing address");
+    }
+
+    if (is_maintenance_type(tokens[idx])) {
+      if (tokens.size() < idx + 3) {
+        throw std::runtime_error("trace line " + std::to_string(lineno_) +
+                                 " maintenance syntax is M COMMAND ADDRESS");
+      }
+      req = Request{};
+      req.id = next_id_++;
+      req.type = RequestType::Maintenance;
+      req.next = parse_maintenance_command(tokens[idx + 1]);
+      req.address = parse_address(tokens[idx + 2]);
+      req.inject_cycle = inject_cycle;
+      req.decoded = mapper_.decode(req.address);
+      for (std::size_t i = idx + 3; i < tokens.size(); ++i) {
+        const std::size_t eq = tokens[i].find('=');
+        if (eq == std::string::npos) {
+          throw std::runtime_error("trace line " + std::to_string(lineno_) +
+                                   " has invalid maintenance option: " + tokens[i]);
+        }
+        const std::string key = lower_token(tokens[i].substr(0, eq));
+        const std::string value = tokens[i].substr(eq + 1);
+        if (key == "stack" || key == "stack_id") {
+          req.target_stack = std::stoi(value);
+          req.has_explicit_stack = true;
+        } else if (key == "qos" || key == "priority") {
+          req.qos_class = std::stoi(value);
+        } else {
+          throw std::runtime_error("trace line " + std::to_string(lineno_) +
+                                   " has unknown maintenance option: " + key);
+        }
+      }
+      account_request(req);
+      return;
     }
 
     const bool is_burst = is_burst_type(tokens[idx]);

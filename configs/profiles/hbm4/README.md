@@ -1,6 +1,6 @@
 # HBM4 profile 说明
 
-本文说明本目录四份 HBM4 profile。标准依据为用户提供的
+本文说明本目录四份 HBM4 profile。标准依据
 `HBM4 JESD270-4A_dual_Kimi+DeepSeek.pdf`。页码以下优先写 JEDEC 文档正文页码；
 双语 PDF 的实际 PDF 页可能有偏移。
 
@@ -150,11 +150,3 @@ profile 是配置路径测试材料；在真实 48 Gb/16Hi 器件配置中必须
   --strict-timing-table \
   --dump-timing-table outputs/hbm4_synthetic_timing.csv
 ```
-
-解读原则：
-
-- `jedec` 表示标准可见条件下的值。
-- `derived` 表示项目按标准公式换算。
-- `research_default` 表示缺少目标 vendor 数据的替代值。
-- `vendor` 只有在绑定真实器件和可追踪表号后才支持厂商级结论；当前 synthetic
-  文件不满足这一条件。真实用户 profile 应从它复制到新文件后逐项替换并写明表号。

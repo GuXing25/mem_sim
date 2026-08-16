@@ -18,3 +18,13 @@ make clean-outputs
 ```
 
 `make delete` 是同义兼容命令。清理后不影响后续仿真，所需目录会自动重建。
+
+本轮验证的结构化证据默认写入 `outputs/validation/`：
+
+- `timing_boundaries.csv/json`
+- `ramulator2_diff_v2.json`
+- `performance_curves.csv/json`
+- `sensitivity.csv`、`sensitivity_uncertainty.json`
+- `dramsim3_aux.json`
+
+这些文件是可再生成实验产物，不代替源码、配置和工具版本记录。

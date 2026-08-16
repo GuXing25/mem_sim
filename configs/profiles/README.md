@@ -26,7 +26,7 @@ profiles/
 ```
 
 当前项目只围绕四种存储展开：HBM3、HBM4、LPDDR5、LPDDR6。HBM3 和 LPDDR5
-暂时没有完整手册表导入，因此它们的 profile 用 `ramulator2_*` 命名，并标为
+是基于ramulator，因此它们的 profile 用 `ramulator2_*` 命名，并标为
 `source = research_default`。
 
 逐目录详细说明：
@@ -110,11 +110,3 @@ profile。
   --vendor-profile synthetic_vendor \
   --strict-timing-table
 ```
-
-## 新增配置片段清单
-
-- 文件名能表达 standard、speed-bin、density、stack-height 或 mode。
-- 文件中有 `source` 和 `note`。
-- `configs/profiles/index.csv` 已同步添加一行。
-- 通过 `--dump-timing-table` 检查最终 nCK 值和 source 标记。
-- 真实器件对比前，用 `--strict-timing-table` 检查 vendor-required 默认值。

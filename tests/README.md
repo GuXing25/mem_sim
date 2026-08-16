@@ -8,6 +8,7 @@
 
 - `smoke.sh`：端到端 CLI smoke regression。
 - `sequence_tests.cpp`：C++ 命令序列测试，检查关键命令展开、timing 和 validator 行为。
+- `timing_boundary_tests.cpp`：枚举 active TimingConstraint，生成 `t-1/t` 和 scope 边界矩阵。
 - `../tools/model_validation.py`：项目级分析验收，检查公式、硬性阈值、DFI 数据路径和来源 manifest。
 
 修改建议：
@@ -20,11 +21,14 @@
 
 ## 测试分层
 
-默认 CTest 回归分为三层：
+默认 CTest 当前有 7 个入口：
 
 - `smoke.sh`：黑盒测试，运行真实 CLI，检查主要配置、输出字段、trace dump、validator 和工具脚本。
 - `sequence_tests.cpp`：白盒/半白盒测试，直接构造请求或命令序列，检查具体命令展开和状态规则。
 - `model_validation.py`：固定 HBM4 单 channel 配置执行 28 项项目验收，检查理论峰值、回归带宽门槛、精确延迟、同地址顺序、DFI expected payload、后端重开、timing 来源和 manifest 证据绑定。
+- `timing_boundary_tests` 与 `timing_boundary_validation.py`：C++ 边界执行和独立 CSV 审计。
+- `performance_curve.py`：CI 规模负载曲线形状检查。
+- `sensitivity_uncertainty.py`：CI 规模敏感性和输入区间检查。
 
 当前 Clang 18 + CMake/Ninja 主路径：
 
@@ -56,9 +60,8 @@ python3 tools/ramulator2_differential.py \
   --ramulator-root /path/to/ramulator2
 ```
 
-该检查只比较固定配置下双方刻意共享的 timing、命令顺序、地址坐标和周期，默认周期
-容差为 2 tick。它不等同于实现规范或真实器件校准；项目默认通过条件仍是自身 smoke、
-sequence 和 model validation。
+该检查只比较固定配置下双方刻意共享的 timing、命令顺序、地址坐标、周期和维护
+场景。它不等同于实现规范或真实器件校准；外部参考仍不属于默认 CTest。
 
 测试或手动仿真后清理根目录 CSV/TXT/BIN 输出：
 

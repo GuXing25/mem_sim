@@ -28,12 +28,12 @@ DRAMsim3 和 Ramulator2.1 的说服力并不只来自“代码能跑”。它们
 验证来源：
 
 - DRAMsim3 有成熟配置、性能/功耗/热模型路径，以及把命令 trace 转成 Micron
-  Verilog model testbench 的外部验证入口。它的 README 中说明了 Verilog
-  Validation 路径，本地参考在 `/home/wsl/test/DRAMsim/DRAMsim3/README.md`。
+  Verilog model testbench 的外部验证入口。本地参考在
+  `/home/guxing/learn/memorystack/DRAMsim3`。
 - Ramulator2.1 有系统的 smoke、latency-throughput、device_timings 和
   controller_scheduling 回归。它的 README 明确说明这些测试分别回答能否运行、
-  性能形状是否合理、device timing 是否正确、controller 是否发出正确命令，本地
-  参考在 `/home/wsl/test/ramulator2-2.1/README.md`。
+  性能形状是否合理、device timing 是否正确、controller 是否发出正确命令；本地
+  参考在 `/home/guxing/learn/memorystack/ramulator2`。
 
 但这不等于两者都自带 HBM4/LPDDR6 官方厂商模型或真实硬件校准。对
 `hbm_sim` 来说，正确做法不是简单追求“和某个模拟器完全一样”，而是把证据分层：
@@ -52,9 +52,9 @@ DRAMsim3 和 Ramulator2.1 的说服力并不只来自“代码能跑”。它们
 | --- | --- | --- | --- | --- |
 | V0 | 构建与 smoke | 程序能构建、能跑完基本请求 | 已有 | 软件可运行 |
 | V1 | 数据正确性 | payload 写入、读回、mask、golden、后端持久化 | 已有 | 存储语义自洽 |
-| V2 | 命令/时序正确性 | ACT/RD/WR/PRE/REF/RFM 等命令前置条件和 timing gate | 已有，持续补充 | 按项目配置表执行 |
+| V2 | 命令/时序正确性 | ACT/RD/WR/PRE/REF/RFM 等命令前置条件和 timing gate | active constraints 315/315 边界通过 | 按项目配置表执行 |
 | V3 | 标准一致性 | HBM4/LPDDR6 可见组织、命令、burst、refresh、DFI 抽象 | 部分已有 | JEDEC/DFI-oriented |
-| V4 | 外部模拟器共同面 | 与 DRAMsim3/Ramulator2 在共同场景下对齐或差异可解释 | 部分已有 | 共同面可对照 |
+| V4 | 外部模拟器共同面 | 与 DRAMsim3/Ramulator2 在共同场景下对齐或差异可解释 | Ramulator 225/225；DRAMsim3 9/9 | 共同面可对照 |
 | V5 | 外部模型校准 | 与 Micron/厂商 Verilog、DRAMPower、HotSpot/3D-ICE 等外部模型对齐 | 待补 | 外部模型校准 |
 | V6 | 真实硬件校准 | 与真实板卡/器件的延迟、带宽、功耗、温度测量对齐 | 待补 | 硬件校准 |
 
@@ -153,6 +153,17 @@ make test
 
 python3 tools/model_validation.py \
   --json-out outputs/hbm_sim_model_validation.json
+
+python3 tools/timing_boundary_validation.py \
+  --probe ./build-clang-debug/timing_boundary_tests \
+  --json-out outputs/validation/timing_boundaries.json
+
+python3 tools/performance_curve.py --binary ./build-clang-debug/hbm_sim \
+  --csv-out outputs/validation/performance_curves.csv \
+  --json-out outputs/validation/performance_curves.json
+
+python3 tools/sensitivity_uncertainty.py --binary ./build-clang-debug/hbm_sim \
+  --json-out outputs/validation/sensitivity_uncertainty.json
 ```
 
 关键证据：
@@ -170,17 +181,17 @@ python3 tools/model_validation.py \
 
 ```bash
 make reference-validation \
-  RAMULATOR2_ROOT=/home/wsl/test/ramulator2-2.1
+  RAMULATOR2_ROOT=/home/guxing/learn/memorystack/ramulator2
 ```
 
 该对照只比较共同面：
 
 ```text
-HBM4-like timing
+HBM3/HBM4/LPDDR5/LPDDR6 shared timing
 ACT/RD/WR/PRE 等核心命令
 短序列 command issue cycle
 decoded channel/PC/SID/BG/bank/row/column
-row hit / conflict 行为
+row hit/conflict、BG、换向、tFAW、refresh/RFM 行为
 ```
 
 不比较：
@@ -215,6 +226,10 @@ DRAMsim3 适合作为以下方向的参考：
 - 事件级功耗和热模型路径。
 - command trace 生成和外部 Verilog testbench 的思想。
 - 对 DDR3/DDR4/LPDDR 类公开 Micron Verilog 模型的验证入口。
+
+当前已经执行 `tools/dramsim3_aux_validation.py`：使用 HBM2 公共命令切片验证
+ACT→RD、读延迟和 ACT/RD/WR/REF 的 IDD 公式，并实际运行 SuperLU 热求解器检查
+相同环境/几何输入下的正温升趋势。该结果不外推为 HBM4/LPDDR6 器件精度。
 
 DRAMsim3 当前不是 HBM4/LPDDR6 官方校准源。用于本项目时应写成：
 

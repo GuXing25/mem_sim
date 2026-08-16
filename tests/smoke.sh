@@ -355,6 +355,22 @@ grep -Eq "^preset,name,value_nck,source" "$timing_table"
 grep -Eq "nCL" "$timing_table"
 rm -f "$cmd_trace" "$timing_table" "$dfi_trace" "$dfi_signal_trace"
 
+# 显式维护 trace：差分工具用它构造可复现的 refresh/RFM 场景。
+maintenance_trace="$(mktemp)"
+maintenance_cmds="$(mktemp)"
+maintenance_out="$(mktemp)"
+cat >"$maintenance_trace" <<'TRACE'
+0 M REFpb 0x0
+1000 M RFMpb 0x40
+TRACE
+"$HBM_SIM_BIN" --config configs/validation/hbm4_reference_1ch.cfg \
+  --trace "$maintenance_trace" --cmd-trace "$maintenance_cmds" \
+  --validate-cmd-trace >"$maintenance_out"
+grep -F ",REFpb," "$maintenance_cmds" >/dev/null
+grep -F ",RFMpb," "$maintenance_cmds" >/dev/null
+grep -Eq "^maintenance_served[[:space:]]*: 2" "$maintenance_out"
+rm -f "$maintenance_trace" "$maintenance_cmds" "$maintenance_out"
+
 dfi_real_trace="$(mktemp)"
 dfi_real_signal_trace="$(mktemp)"
 cat >"$dfi_real_trace" <<'TRACE'

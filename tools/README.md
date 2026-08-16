@@ -8,7 +8,11 @@
 
 - `compare_stats.py`：比较两次仿真输出中的关键统计字段，用于轻量 golden/baseline 对比。
 - `model_validation.py`：运行项目原生 HBM4 配置，检查分析公式、性能阈值、真实存储、full-stack、DFI、来源和 project identity。
-- `ramulator2_differential.py`：将本地 Ramulator2.1 作为非规范性外部参考，只检查双方刻意共享的 HBM4 命令面。
+- `timing_boundary_validation.py`：审计 C++ probe 生成的四标准 `t-1/t` Timing 边界矩阵。
+- `ramulator2_differential.py`：将本地 Ramulator2.1 作为非规范性外部参考，检查四标准共同命令面。
+- `performance_curve.py`：生成注入率—延迟—吞吐量 CSV/JSON 曲线。
+- `sensitivity_uncertainty.py`：生成 Timing 单因素敏感性和联合输入扰动区间。
+- `dramsim3_aux_validation.py`：执行较老 HBM 公共命令、IDD 功耗公式和热趋势辅助验证。
 
 修改建议：
 
@@ -63,11 +67,9 @@ python3 tools/ramulator2_differential.py \
 Makefile 兼容入口为
 `make CXX=/usr/bin/clang++-18 reference-validation RAMULATOR2_ROOT=/path/to/ramulator2`。
 
-当前参考检查比较 `closed_read`、`row_hit`、`row_conflict` 和
-`write_forwarded_read`，覆盖
-timing、命令顺序、decoded 坐标和逐命令周期。默认 2 tick 容差用于解释两边 HBM ACT
-命令占用粒度差异，不能表述为实现等价。发生差异时先按本项目需求和标准分析，不会
-自动修改成 Ramulator 行为。
+当前参考检查覆盖 HBM3/HBM4/LPDDR5/LPDDR6 的 timing、命令顺序、decoded 坐标、
+逐命令周期、same/different BG、双向总线换向、tFAW、refresh/RFM 和自动预充电。
+局部容差与规范化规则逐场景记录，不能表述为实现或器件等价。
 
 字段比较建议：
 

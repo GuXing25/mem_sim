@@ -1,6 +1,6 @@
 # LPDDR6 profile 说明
 
-本文说明本目录四份 LPDDR6 profile。标准依据为用户提供的
+本文说明本目录四份 LPDDR6 profile。标准依据为
 `JESD209-6:2025 LPDDR6 Standard` 双语 PDF。由于 LPDDR6 的 RL/WL、burst、
 链路保护、efficiency mode、DVFSL 和 WCK 行为互相耦合，不能脱离
 `mode_profile` 只看某一个 timing 数字。

@@ -968,11 +968,17 @@ std::optional<Command> Controller::next_command(Request& req) {
         return std::nullopt;
       }
       const Timing& t = spec_.timing;
-      Cycle data_gate = req.type == RequestType::Read ? bank.next_rd : bank.next_wr;
+      Command data_command = req.type == RequestType::Read ? Command::RD : Command::WR;
+      Cycle data_gate = std::max(
+          req.type == RequestType::Read ? bank.next_rd : bank.next_wr,
+          timing_engine_.constraint_ready_at(spec_, req.decoded, data_command));
       int cas_to_data = std::max(t.nCAS, t.nWCK2CK);
-      if (data_gate > clk_ + timing_delay(std::max(1, cas_to_data))) {
-        // WCK/CAS 过早启动会在 tRCD 结束前过期，导致重复 CAS。只有当
-        // 本次 CAS 的 ready 点已经能覆盖 RD/WR bank gate 时才发 CAS。
+      Cycle prospective_ready = clk_ + timing_delay(std::max(1, cas_to_data));
+      Cycle prospective_end =
+          clk_ + timing_delay(std::max(t.nWCKPST, t.nWCK2CK + 1));
+      if (std::max(data_gate, prospective_ready) >= prospective_end) {
+        // WCK/CAS 过早启动会在 nRCD 或总线换向 gate 结束前过期，导致重复
+        // CAS。等到本次窗口确实覆盖数据命令的最早合法 tick 再发。
         return std::nullopt;
       }
       return req.type == RequestType::Read ? Command::CASRD : Command::CASWR;

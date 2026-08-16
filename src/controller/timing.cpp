@@ -81,6 +81,23 @@ bool TimingEngine::constraint_ready(
   return true;
 }
 
+Cycle TimingEngine::constraint_ready_at(
+    const DramSpec& spec,
+    const DecodedAddress& decoded,
+    Command cmd) const {
+  Cycle ready = 0;
+  for (const auto& constraint : spec.timing_constraints) {
+    if (constraint.window > 0 ||
+        std::find(constraint.following.begin(), constraint.following.end(), cmd) ==
+            constraint.following.end()) {
+      continue;
+    }
+    const TimingScopeState& scope = scope_state(spec, constraint.scope, decoded);
+    ready = std::max(ready, scope.next_command[command_index(cmd)]);
+  }
+  return ready;
+}
+
 void TimingEngine::apply_constraints(
     const DramSpec& spec,
     const DecodedAddress& decoded,
