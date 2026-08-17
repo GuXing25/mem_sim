@@ -1,33 +1,34 @@
 #pragma once
 
-// Controller 层顶层接口：一个 Controller 对应一个 channel 内的调度与 DRAM 状态。
-// MemorySystem 可以按 [stack][channel] 并行持有多个 Controller；跨 stack 路由、
-// 反压和 QoS 位于 system 层，不污染这里的单 channel JEDEC 调度状态。
+// Controller 层顶层接口：一个 Controller 对应一个 channel 内的调度与 DRAM
+// 状态。 MemorySystem 可以按 [stack][channel] 并行持有多个 Controller；跨 stack
+// 路由、 反压和 QoS 位于 system 层，不污染这里的单 channel JEDEC 调度状态。
 
-#include <deque>
-#include <optional>
 #include <cstddef>
+#include <deque>
 #include <memory>
+#include <optional>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
-#include "hbm_sim/dram/bank_state.hpp"
 #include "hbm_sim/controller/command.hpp"
-#include "hbm_sim/core/data.hpp"
-#include "hbm_sim/core/request.hpp"
 #include "hbm_sim/controller/refresh.hpp"
 #include "hbm_sim/controller/rfm.hpp"
 #include "hbm_sim/controller/row_policy.hpp"
+#include "hbm_sim/controller/timing.hpp"
+#include "hbm_sim/core/data.hpp"
+#include "hbm_sim/core/request.hpp"
+#include "hbm_sim/dram/bank_state.hpp"
 #include "hbm_sim/dram/spec.hpp"
 #include "hbm_sim/phy/mem_phy.hpp"
 #include "hbm_sim/stats/stats.hpp"
-#include "hbm_sim/controller/timing.hpp"
 
 namespace hbm_sim {
 
 struct ControllerOptions {
-  // 普通读队列容量。frontend 注入时如果队列满，MemorySystem/Controller 会记录 stall。
+  // 普通读队列容量。frontend 注入时如果队列满，MemorySystem/Controller 会记录
+  // stall。
   std::size_t read_buffer_size = 32;
   // 普通写队列容量。写请求进入队列后会把地址加入 buffered_write_addrs_，
   // 使后续同地址读可以 forward、同地址写可以 coalesce。
@@ -59,31 +60,34 @@ struct ControllerOptions {
 // 简化 FR-FCFS 风格控制器。HBM 模式下支持 row/column 双发射；LPDDR 模式下
 // 使用统一命令总线，并显式建模 ACT1/ACT2、CAS_RD/CAS_WR 与 WCK 活跃窗口。
 class Controller {
- public:
+public:
   // 构造函数复制 DramSpec，形成该 controller 的配置快照。这样一次仿真中
   // 外部即使修改原始 spec，也不会影响正在运行的 controller。
   explicit Controller(DramSpec spec, ControllerOptions options = {});
 
-  // 尝试把一个请求放入对应 buffer。返回 false 表示队列满，调用者应在下一拍重试。
+  // 尝试把一个请求放入对应 buffer。返回 false
+  // 表示队列满，调用者应在下一拍重试。
   bool enqueue(Request req);
   // 带 frontend 注入时序的运行入口。requests 会按 inject_cycle 排序后逐拍注入。
   void run(std::vector<Request> requests, Cycle max_cycles);
-  void run(RequestSource& source, Cycle max_cycles);
+  void run(RequestSource &source, Cycle max_cycles);
   // 只运行当前已经入队的请求，常用于 sequence test 手工 enqueue 后推进。
   void run_until_done(Cycle max_cycles);
   // 推进一个 controller tick。HBM edge pairing 下，一个 tick 可以代表半个 nCK。
   void tick();
-  // 所有 request buffer、maintenance backlog 和 pending completion 都为空时为 done。
+  // 所有 request buffer、maintenance backlog 和 pending completion 都为空时为
+  // done。
   bool done() const;
-  // 计算带宽、remaining、cycle-limit 等收尾统计。run()/run_until_done() 会自动调用。
+  // 计算带宽、remaining、cycle-limit 等收尾统计。run()/run_until_done()
+  // 会自动调用。
   void finalize_run_stats();
   Cycle clock() const { return clk_; }
 
-  const Stats& stats() const { return stats_; }
-  const DramSpec& spec() const { return spec_; }
-  const std::vector<IssuedCommand>& issued_commands() const { return issued_; }
+  const Stats &stats() const { return stats_; }
+  const DramSpec &spec() const { return spec_; }
+  const std::vector<IssuedCommand> &issued_commands() const { return issued_; }
 
- private:
+private:
   enum class BufferKind {
     // active buffer 保存已经发出 ACT/ACT1、仍需要 ACT2/CAS/RD/WR 的请求。
     Active,
@@ -95,7 +99,8 @@ class Controller {
   };
 
   struct RisingEdgeCommandInfo {
-    // 最近一次 rising edge 行命令，用于判断下一次 falling edge PRE 是否可 pairing。
+    // 最近一次 rising edge 行命令，用于判断下一次 falling edge PRE 是否可
+    // pairing。
     Command command = Command::NOP;
     // HBM pairing 通常按 pseudo-channel 观察；不同 PC 的 falling PRE 可独立。
     int pseudo_channel = -1;
@@ -116,6 +121,13 @@ class Controller {
     BusClass bus = BusClass::Unified;
     // false 表示本总线本周期没有找到 timing-ready 的命令。
     bool valid = false;
+  };
+
+  // choose() 期间记录“除 PHY 准入外已经满足调度条件”的候选被拒原因。
+  // 每条总线每 tick 最终无命令发出时，才把它折算为一次反压统计。
+  struct PhyBackpressureObservation {
+    bool command = false;
+    bool data = false;
   };
 
   // DramSpec 是控制器的“配置快照”。构造后不再从外部修改，保证仿真一致性。
@@ -149,7 +161,8 @@ class Controller {
   // 每个 flat bank 中 active_buffer_ 里的请求数，用于避免 refresh/PRE 关闭
   // 尚有打开流程的 bank。
   std::vector<int> active_per_bank_;
-  // 行策略、refresh 和 RFM 都有独立状态对象；Controller 只在 tick() 中协调它们。
+  // 行策略、refresh 和 RFM 都有独立状态对象；Controller 只在 tick()
+  // 中协调它们。
   RowPolicyEngine row_policy_;
   RefreshManager refresh_manager_;
   RfmManager rfm_manager_;
@@ -161,29 +174,33 @@ class Controller {
   bool explicit_power_down_active_ = false;
   bool explicit_self_refresh_active_ = false;
   bool wck_retrain_required_ = false;
+  // 普通请求唤醒显式 PDE/SREFEN 时，由 controller 注入对应退出维护命令；
+  // 在该命令真正 issue 前保留状态，避免 PHY 与 controller 状态机脱节。
+  std::optional<Command> explicit_low_power_exit_pending_;
   Cycle low_power_idle_since_ = 0;
   Cycle low_power_exit_until_ = 0;
   std::uint64_t next_controller_sequence_ = 1;
 
   // 扫描 pending_，把 completion <= clk_ 的请求转入完成统计。
   void complete_pending();
-  void complete_read(Request& req, const MemPhyCompletion* phy_completion = nullptr);
-  void complete_write(Request& req, const MemPhyCompletion* phy_completion = nullptr);
-  void check_read_data(const Request& req, const ByteVector& actual, bool initialized, bool forwarded);
-  void ensure_write_payload(Request& req);
-  bool read_hits_buffered_write(const Request& req) const;
-  bool has_unresolved_overlapping_read(const Request& write,
+  void complete_read(Request &req,
+                     const MemPhyCompletion *phy_completion = nullptr);
+  void complete_write(Request &req,
+                      const MemPhyCompletion *phy_completion = nullptr);
+  void check_read_data(const Request &req, const ByteVector &actual,
+                       bool initialized, bool forwarded);
+  void ensure_write_payload(Request &req);
+  bool read_hits_buffered_write(const Request &req) const;
+  bool has_unresolved_overlapping_read(const Request &write,
                                        std::uint64_t older_than_sequence) const;
-  bool has_unresolved_overlapping_write(const Request& read) const;
-  ByteVector read_forward_payload(const Request& req, bool* initialized) const;
-  DecodedAddress storage_decoded_for(const Request& req) const;
-  void apply_storage_command_event(const Request& req, Command issued);
-  void commit_write_data(Request& req);
-  void annotate_issued_data(const Request& req,
-                            Command cmd,
-                            const ByteVector& payload,
-                            const ByteVector* mask,
-                            const ByteVector* initialized_mask,
+  bool has_unresolved_overlapping_write(const Request &read) const;
+  ByteVector read_forward_payload(const Request &req, bool *initialized) const;
+  DecodedAddress storage_decoded_for(const Request &req) const;
+  void apply_storage_command_event(const Request &req, Command issued);
+  void commit_write_data(Request &req);
+  void annotate_issued_data(const Request &req, Command cmd,
+                            const ByteVector &payload, const ByteVector *mask,
+                            const ByteVector *initialized_mask,
                             bool initialized);
 
   // 在指定总线上选择一条 timing-ready 命令。choose() 自身不发命令，只返回候选；
@@ -191,34 +208,42 @@ class Controller {
   Candidate choose(BusClass bus);
   // 在一个 buffer 内构造候选视图并调用 Scheduler。avoid_active_close 用于避免
   // 维护/PRE 命令关闭仍有 active request 的 bank。
-  Candidate pick_best_ready_from(std::deque<Request>& buffer, BufferKind kind, BusClass bus, bool avoid_active_close);
+  Candidate pick_best_ready_from(std::deque<Request> &buffer, BufferKind kind,
+                                 BusClass bus, bool avoid_active_close,
+                                 PhyBackpressureObservation *phy_block);
   // 判断候选是否能在当前 bus 上参与调度；这是 bus/active-close 级过滤，
   // timing/state 是否 ready 由 timing_ok() 另行判断。
-  bool candidate_eligible(const Request& req, Command cmd, BusClass bus, BufferKind kind, bool avoid_active_close) const;
+  bool candidate_eligible(const Request &req, Command cmd, BusClass bus,
+                          BufferKind kind, bool avoid_active_close) const;
+  bool phy_admission_ok(Command cmd,
+                        PhyBackpressureObservation *phy_block) const;
   // priority buffer 按队首服务，避免 refresh/RFM rotation 被重排。
-  Candidate pick_priority_if(BusClass bus);
+  Candidate pick_priority_if(BusClass bus,
+                             PhyBackpressureObservation *phy_block);
   // 根据 write watermark 在 read/write buffer 中选择普通请求。
-  Candidate pick_rw_if(BusClass bus);
+  Candidate pick_rw_if(BusClass bus, PhyBackpressureObservation *phy_block);
   // LPDDR ACT1 后如果 ACT2 deadline 到达，优先抢占普通调度。
-  Candidate pick_urgent_act2(BusClass bus);
+  Candidate pick_urgent_act2(BusClass bus,
+                             PhyBackpressureObservation *phy_block);
   // 根据读写队列占用更新 write_mode_。
   void set_write_mode();
-  std::deque<Request>& request_buffer(BufferKind kind);
-  const std::deque<Request>& request_buffer(BufferKind kind) const;
+  std::deque<Request> &request_buffer(BufferKind kind);
+  const std::deque<Request> &request_buffer(BufferKind kind) const;
   std::size_t queued_requests() const;
   bool buffer_has_space(BufferKind kind) const;
   // 根据请求目标 row 与 bank 状态推导下一条应发命令。
-  std::optional<Command> next_command(Request& req);
+  std::optional<Command> next_command(Request &req);
   // 检查命令是否满足 bank-local 与 scope-level timing gate。
-  bool timing_ok(const Request& req, Command cmd) const;
-  bool constraint_timing_ok(const Request& req, Command cmd) const;
+  bool timing_ok(const Request &req, Command cmd) const;
+  bool constraint_timing_ok(const Request &req, Command cmd) const;
   // 判断命令是否能占用当前 choose() 正在服务的总线。
-  bool bus_matches(const Request& req, Command cmd, BusClass bus) const;
-  bool would_close_active(const Request& req, Command cmd, BufferKind source) const;
+  bool bus_matches(const Request &req, Command cmd, BusClass bus) const;
+  bool would_close_active(const Request &req, Command cmd,
+                          BufferKind source) const;
   bool is_rising_edge() const;
-  bool can_issue_falling_edge_pre(const Request& req, Command cmd) const;
-  void record_rising_row_command(const Request& req, Command cmd);
-  int bank_key(const DecodedAddress& decoded) const;
+  bool can_issue_falling_edge_pre(const Request &req, Command cmd) const;
+  void record_rising_row_command(const Request &req, Command cmd);
+  int bank_key(const DecodedAddress &decoded) const;
 
   // 发出候选命令并更新全部状态。所有命令副作用集中在这里，便于审计。
   void issue(Candidate cand);
@@ -227,9 +252,9 @@ class Controller {
   void erase_request(BufferKind kind, std::size_t index);
   void promote_to_active(BufferKind kind, std::size_t index);
   // 对请求做一次性 row hit/miss/conflict 分类。
-  void classify_row_status(Request& req);
+  void classify_row_status(Request &req);
   // 记录命令 trace，不影响仿真行为。
-  void append_issued(const Request& req, Command cmd, BusClass bus);
+  void append_issued(const Request &req, Command cmd, BusClass bus);
 
   // 命令分类函数保持独立，避免 bus_matches()/retire_or_advance() 中重复写条件。
   bool is_row_command(Command cmd) const;
@@ -240,26 +265,26 @@ class Controller {
   bool is_refresh_command(Command cmd) const;
   bool is_rfm_command(Command cmd) const;
   bool is_opening_command(Command cmd) const;
-  bool is_maintenance_request(const Request& req) const;
-  bool is_terminal_maintenance(const Request& req, Command cmd) const;
+  bool is_maintenance_request(const Request &req) const;
+  bool is_terminal_maintenance(const Request &req, Command cmd) const;
   bool is_all_bank_row_command(Command cmd) const;
   bool any_bank_busy() const;
-  bool any_bank_busy_in_channel(const DecodedAddress& decoded) const;
+  bool any_bank_busy_in_channel(const DecodedAddress &decoded) const;
 
   Cycle timing_delay(int cycles) const;
   Cycle burst_delay() const;
   void schedule_refresh();
   void service_pending_maintenance();
-  void schedule_maintenance(Command cmd, const DecodedAddress& decoded);
+  void schedule_maintenance(Command cmd, const DecodedAddress &decoded);
   void apply_row_policy_pre_schedule();
-  void try_upgrade_row_policy_command(Candidate& cand);
-  void on_row_policy_issue(const Request& req, Command issued);
+  void try_upgrade_row_policy_command(Candidate &cand);
+  void on_row_policy_issue(const Request &req, Command issued);
   DecodedAddress decoded_from_flat_bank(int flat_bank) const;
-  DecodedAddress dual_bank_partner(const DecodedAddress& decoded) const;
-  bool dual_bank_target_idle(const DecodedAddress& decoded) const;
+  DecodedAddress dual_bank_partner(const DecodedAddress &decoded) const;
+  bool dual_bank_target_idle(const DecodedAddress &decoded) const;
   // LPDDR WCK 窗口检查：RD/WR 只能发生在 ready_at 和 active_until 之间。
-  bool wck_ready_for_data(const Request& req) const;
-  bool state_ok(const Request& req, Command cmd) const;
+  bool wck_ready_for_data(const Request &req) const;
+  bool state_ok(const Request &req, Command cmd) const;
 };
 
-}  // namespace hbm_sim
+} // namespace hbm_sim

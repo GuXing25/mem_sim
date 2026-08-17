@@ -80,6 +80,33 @@ Vref、模拟 I/O、电气训练收敛、lane repair 和封装信号完整性。
 | `phy_training_cycles` | 自动训练周期 |
 | `phy_auto_train` | 是否执行 PHY-independent 自动训练 |
 
+### 5.1 统计与队列口径
+
+- `phy_command_backpressure` / `phy_data_backpressure` 是 **总线阻塞次数**：某条
+  controller 命令总线在一个 tick 内存在已通过总线、依赖和 JEDEC timing 检查的候选，
+  但最终因 PHY command/data 准入被拒且没有发出命令时计一次。它不是“候选被检查的
+  次数”；HBM 的 row/column 两条总线在同一 tick 可各计一次。
+- `phy_command_fifo_depth` 是 MC→PHY 命令流水线的 **在途容量**，并不是 CA 总线带宽。
+  现有 controller 已经调度 HBM row/column 或 LPDDR unified CA 发射；再让 PHY 用
+  FIFO 复刻 CA 限速会重复计算带宽。默认 `phy_command_pipeline_cycles=1` 时，每条
+  CA 路径每个可发射 tick 会释放一个 slot，因而深度 16/32/64 在常规负载下通常不会
+  形成反压。要研究该 FIFO，应增大 pipeline latency 或降低 depth；要研究 CA 吞吐，
+  应修改 controller 的总线调度模型。
+
+### 5.2 低功耗和 RDA/WRA 语义
+
+自动空闲低功耗（`low_power_mode`）是 controller residency 策略，不向 PHY 虚构
+PDE/SREFEN。相反，显式维护命令 `PDE` / `SREFEN` 会同时使 controller 与 Behavioral
+PHY 进入低功耗。若普通读写在此后到达，controller 会自动排入并真正发出相应的
+`PDX` / `SREFEX`，在该退出命令发射前不会清除本地低功耗状态；因此不会出现 PHY
+永久停在 LowPower、controller 却已继续调度的状态机脱节。
+
+`RDA` / `WRA` 的自动预充有意保留两种时刻：Direct 兼容历史路径，在命令发射拍更新
+MemoryImage；Behavioral 路径在读/写数据完成拍更新。这使 Behavioral 更接近“数据
+burst 结束后 precharge”的解释，但也意味着两种模式的行缓冲驻留时间不同。Direct 与
+Behavioral 的性能结果不能把 RDA/WRA 场景当作逐周期等价差分；应分别报告或在比较时
+禁用 auto-precharge。
+
 ## 6. 输出与验证
 
 标准输出增加 `mem_phy_mode`、`phy_protocol`、`dfi_version`、FIFO/流水线配置，以及

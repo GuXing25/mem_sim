@@ -112,13 +112,13 @@ MemPhy::MemPhy(DramSpec spec,
   }
   if (behavioral() && options_.reset_cycles > 0) {
     state_ = MemPhyState::Reset;
-    state_deadline_ = static_cast<Cycle>(options_.reset_cycles);
+    state_deadline_ = timing_delay(options_.reset_cycles);
   } else if (behavioral() && options_.initialization_cycles > 0) {
     state_ = MemPhyState::Initialization;
-    state_deadline_ = static_cast<Cycle>(options_.initialization_cycles);
+    state_deadline_ = timing_delay(options_.initialization_cycles);
   } else if (behavioral() && options_.auto_train && options_.training_cycles > 0) {
     state_ = MemPhyState::Training;
-    state_deadline_ = static_cast<Cycle>(options_.training_cycles);
+    state_deadline_ = timing_delay(options_.training_cycles);
   }
 }
 
@@ -214,10 +214,10 @@ void MemPhy::advance_lifecycle(Cycle cycle) {
     if (cycle >= state_deadline_) {
       if (options_.initialization_cycles > 0) {
         state_ = MemPhyState::Initialization;
-        state_deadline_ = cycle + static_cast<Cycle>(options_.initialization_cycles);
+        state_deadline_ = cycle + timing_delay(options_.initialization_cycles);
       } else if (options_.auto_train && options_.training_cycles > 0) {
         state_ = MemPhyState::Training;
-        state_deadline_ = cycle + static_cast<Cycle>(options_.training_cycles);
+        state_deadline_ = cycle + timing_delay(options_.training_cycles);
       } else {
         state_ = MemPhyState::Ready;
       }
@@ -227,7 +227,7 @@ void MemPhy::advance_lifecycle(Cycle cycle) {
     if (cycle >= state_deadline_) {
       if (options_.auto_train && options_.training_cycles > 0) {
         state_ = MemPhyState::Training;
-        state_deadline_ = cycle + static_cast<Cycle>(options_.training_cycles);
+        state_deadline_ = cycle + timing_delay(options_.training_cycles);
       } else {
         state_ = MemPhyState::Ready;
       }

@@ -39,6 +39,7 @@ struct MemPhyOptions {
   int command_pipeline_cycles = 1;
   int read_return_pipeline_cycles = 1;
   int write_data_pipeline_cycles = 1;
+  // 生命周期长度与 pipeline 一样以 nCK 配置；内部会乘 tick_multiplier。
   int reset_cycles = 0;
   int initialization_cycles = 0;
   int training_cycles = 0;
