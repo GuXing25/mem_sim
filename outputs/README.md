@@ -27,4 +27,8 @@ make clean-outputs
 - `sensitivity.csv`、`sensitivity_uncertainty.json`
 - `dramsim3_aux.json`
 
+`outputs/visualization/` 可保存离线可视化实验包：`commands.csv`、`dfi.csv`、
+`stats.txt`、`thermal_map.txt`、`performance_curves.json` 和最终的
+`dashboard.html`。HTML 自包含数据和 JavaScript，不依赖服务器或 Node.js。
+
 这些文件是可再生成实验产物，不代替源码、配置和工具版本记录。

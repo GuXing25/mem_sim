@@ -94,6 +94,12 @@ add_test(NAME phy_smoke COMMAND ${CMAKE_COMMAND} -E env
   bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/phy_smoke.sh
 )
 set_tests_properties(phy_smoke PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_test(NAME visualization_smoke COMMAND ${CMAKE_COMMAND} -E env
+  HBM_SIM_BIN=$<TARGET_FILE:hbm_sim>
+  HBM_SIM_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+  bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/visualization_smoke.sh)
+set_tests_properties(visualization_smoke PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 add_test(NAME smoke COMMAND ${CMAKE_COMMAND} -E env
   HBM_SIM_BIN=$<TARGET_FILE:hbm_sim>
   bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/smoke.sh

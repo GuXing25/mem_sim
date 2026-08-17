@@ -13,6 +13,37 @@
 - `performance_curve.py`：生成注入率—延迟—吞吐量 CSV/JSON 曲线。
 - `sensitivity_uncertainty.py`：生成 Timing 单因素敏感性和联合输入扰动区间。
 - `dramsim3_aux_validation.py`：执行较老 HBM 公共命令、IDD 功耗公式和热趋势辅助验证。
+- `visualize.py`：将已有 command/DFI CSV、性能曲线 JSON、thermal map 和文本统计输出为一个无需服务端的交互式 HTML 仪表盘。
+
+## 离线可视化
+
+项目不把浏览器框架嵌入仿真核心。先按原有方式导出 trace，再用标准库脚本生成一个
+自包含 HTML；复制该 HTML 到另一台机器也能离线查看。
+这对应 Ramulator2 的 offline trace visualizer。当前不实现 HTTP/WebSocket 实时推流，
+因为那会把服务端生命周期和网络错误处理引入 controller 的仿真热路径；以后若确有实时
+观测需求，可在此 HTML 数据格式之外增加独立 streamer，而不改变现有 trace 入口。
+
+```bash
+./build-clang-debug/hbm_sim --config configs/run/hbm4.cfg --requests 128 \
+  --cmd-trace outputs/visualization/commands.csv \
+  --dfi-trace outputs/visualization/dfi.csv \
+  --dump-thermal-map outputs/visualization/thermal_map.txt \
+  | tee outputs/visualization/stats.txt
+
+python3 tools/visualize.py \
+  --command-trace outputs/visualization/commands.csv \
+  --dfi-trace outputs/visualization/dfi.csv \
+  --stats outputs/visualization/stats.txt \
+  --thermal-map outputs/visualization/thermal_map.txt \
+  --out outputs/visualization/dashboard.html
+```
+
+仪表盘借鉴 Ramulator 的 offline trace explorer，包含 command/bank 与 request swimlane
+两种时间线、密度概览与点击定位、stack/channel/command/request 过滤、命令比例、DFI
+command/data 计数、可选的注入率—延迟—吞吐曲线和热图。生成后还可以在浏览器中通过
+`Open command CSV` 替换 command trace，方便观察另一轮实验而不需要重新运行 Python。
+`make visualize-example` 会产生完整 HBM4 示例；`make visualization-smoke` 验证生成器
+可消费当前 CLI 的实际输出。
 
 修改建议：
 

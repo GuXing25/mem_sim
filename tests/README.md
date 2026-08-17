@@ -12,6 +12,7 @@
 - `../tools/model_validation.py`：项目级分析验收，检查公式、硬性阈值、DFI 数据路径和来源 manifest。
 - `phy_tests.cpp`：Behavioral PHY 生命周期、FIFO/负例、DVFS/WCK、四标准数据回环和 DFI completion。
 - `phy_smoke.sh`：四个主配置的在线 PHY/DFI 验证及六 Stack、192 Controller 路径。
+- `visualization_smoke.sh`：从实际 CLI command/DFI/thermal 输出生成离线 HTML 仪表盘。
 
 修改建议：
 
@@ -23,7 +24,7 @@
 
 ## 测试分层
 
-默认 CTest 当前有 7 个入口：
+默认 CTest 当前有 10 个入口：
 
 - `smoke.sh`：黑盒测试，运行真实 CLI，检查主要配置、输出字段、trace dump、validator 和工具脚本。
 - `sequence_tests.cpp`：白盒/半白盒测试，直接构造请求或命令序列，检查具体命令展开和状态规则。
@@ -31,6 +32,10 @@
 - `timing_boundary_tests` 与 `timing_boundary_validation.py`：C++ 边界执行和独立 CSV 审计。
 - `performance_curve.py`：CI 规模负载曲线形状检查。
 - `sensitivity_uncertainty.py`：CI 规模敏感性和输入区间检查。
+- `phy_tests.cpp` / `phy_smoke.sh`：在线 Behavioral PHY 的生命周期、FIFO、DFI completion
+  与四标准、多 stack 回归。
+- `visualization_smoke.sh`：验证后处理仪表盘兼容当前 trace 和 thermal map 格式；它不
+  参与仿真热路径，也不要求浏览器、Node.js 或图形库。
 
 当前 Clang 18 + CMake/Ninja 主路径：
 

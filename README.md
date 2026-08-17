@@ -169,6 +169,19 @@ configs/validation/   验证配置和证据清单
 
 大量请求默认通过 `TrafficStream` 逐步生成，不先构造完整请求数组。
 
+## 可视化
+
+项目提供了离线、零第三方依赖的验证仪表盘：它复用既有 command/DFI trace、性能曲线和
+thermal map，不改变仿真器的 C++ 核心架构。运行完整示例：
+
+```bash
+make visualize-example
+```
+
+生成的 `outputs/visualization/example/dashboard.html` 可直接在浏览器打开；其中包含命令
+时间线、bank lane 过滤、命令统计、DFI 活动、性能曲线和热图。详细的手工命令见
+[tools/README.md](tools/README.md#离线可视化)。
+
 ## 存储后端
 
 ```bash
