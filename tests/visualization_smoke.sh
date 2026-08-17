@@ -29,5 +29,6 @@ grep -q "Trace explorer" "$vis_tmp_dir/dashboard.html"
 grep -q "Request swimlanes" "$vis_tmp_dir/dashboard.html"
 grep -q '"commands"' "$vis_tmp_dir/dashboard.html"
 grep -q '"sampled":true' "$vis_tmp_dir/dashboard.html"
+grep -q 'f(r)' "$vis_tmp_dir/dashboard.html"
 
 echo "visualization smoke passed"
