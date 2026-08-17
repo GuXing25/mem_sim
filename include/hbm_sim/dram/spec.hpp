@@ -305,7 +305,7 @@ struct DramSpec {
   // 的字节数统计得到。
   int data_bus_bits = 128;
   int internal_prefetch_size = 8;
-  // DFI5.0 相关的第一版抽象。当前可生成 command/data beat trace
+  // DFI 6.x-oriented 行为抽象。可供在线 MemPhy 和 command/data beat trace 使用
   // 以及 DFI-like signal CSV；完整 pin-level DFI 协议仍在 validation 层外。
   // phase_count=0 表示按 tick_multiplier 自动派生。
   int dfi_phase_count = 0;

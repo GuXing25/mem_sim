@@ -25,7 +25,7 @@ backend、floorplan、功耗、热模型、ECC shadow、DFI trace 和 vendor/sou
 本轮新增两类标准相关配置入口：
 
 - LPDDR6 dual-bank refresh 的专用 timing：`nREFDB2ACT`、`nREFDB2REFDBS`、`nREFDB2REFDBL`，也可用 `tDBR2ACT_ns`、`tREFdb2REFdb_S_ns`、`tREFdb2REFdb_L_ns` 这类手册风格 key 覆盖。
-- DFI5.0-oriented beat/signal trace：`dfi_phase_count`、`dfi_data_lane_bytes`、`dfi_read_latency_nck`、`dfi_write_latency_nck`，配合 CLI 的 `--dfi-trace` 导出 command/data beat CSV，配合 `--dfi-signal-trace` 导出 `dfi_reset_n/dfi_cs_n/dfi_cke/dfi_odt/dfi_address/dfi_bank/dfi_rddata_en/dfi_wrdata_en/dfi_rddata_valid/dfi_wrdata_mask/dfi_wrdata/dfi_rddata` 和 payload source/init-mask 视图。
+- DFI 6.x-oriented Behavioral PHY/beat/signal trace：`mem_phy_mode`、`dfi_version`、`phy_*`、`dfi_phase_count`、`dfi_data_lane_bytes` 和 `dfi_*_latency_nck`；CLI 可导出 command/data beat、signal 和 payload source/init-mask 视图。
 - 验证专用配置：`configs/validation/` 分开保存项目原生验收配置、外部参考重叠面配置、vendor 参数清单和 project identity 清单，不用于替代日常 run 配置或真实厂商 profile。
 
 ## 当前新增：存储模型、功耗和热参数

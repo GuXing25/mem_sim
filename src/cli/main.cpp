@@ -585,6 +585,30 @@ void apply_option(Cli& cli, const std::string& raw_key, const std::string& value
     cli.controller.write_buffer_size = static_cast<std::size_t>(parse_u64(value));
   } else if (key == "priority_buffer_size") {
     cli.controller.priority_buffer_size = static_cast<std::size_t>(parse_u64(value));
+  } else if (key == "mem_phy_mode" || key == "phy_mode") {
+    cli.controller.phy.mode = hbm_sim::parse_mem_phy_mode(value);
+  } else if (key == "dfi_version" || key == "phy_dfi_version") {
+    cli.controller.phy.dfi_version = value;
+  } else if (key == "phy_command_fifo_depth") {
+    cli.controller.phy.command_fifo_depth = static_cast<std::size_t>(parse_u64(value));
+  } else if (key == "phy_read_fifo_depth") {
+    cli.controller.phy.read_fifo_depth = static_cast<std::size_t>(parse_u64(value));
+  } else if (key == "phy_write_fifo_depth") {
+    cli.controller.phy.write_fifo_depth = static_cast<std::size_t>(parse_u64(value));
+  } else if (key == "phy_command_pipeline_cycles") {
+    cli.controller.phy.command_pipeline_cycles = parse_int(value);
+  } else if (key == "phy_read_return_pipeline_cycles") {
+    cli.controller.phy.read_return_pipeline_cycles = parse_int(value);
+  } else if (key == "phy_write_data_pipeline_cycles") {
+    cli.controller.phy.write_data_pipeline_cycles = parse_int(value);
+  } else if (key == "phy_reset_cycles") {
+    cli.controller.phy.reset_cycles = parse_int(value);
+  } else if (key == "phy_initialization_cycles") {
+    cli.controller.phy.initialization_cycles = parse_int(value);
+  } else if (key == "phy_training_cycles") {
+    cli.controller.phy.training_cycles = parse_int(value);
+  } else if (key == "phy_auto_train") {
+    cli.controller.phy.auto_train = parse_bool(value);
   } else if (key == "write_low_watermark") {
     cli.controller.write_low_watermark = std::stod(value);
   } else if (key == "write_high_watermark") {
@@ -1150,6 +1174,20 @@ std::vector<std::string> validate_storage_model_config(const hbm_sim::StorageMod
   return errors;
 }
 
+std::vector<std::string> validate_phy_config(const hbm_sim::MemPhyOptions& phy) {
+  std::vector<std::string> errors;
+  if (phy.dfi_version.empty()) errors.push_back("dfi_version must not be empty");
+  if (phy.command_fifo_depth == 0 || phy.read_fifo_depth == 0 || phy.write_fifo_depth == 0) {
+    errors.push_back("PHY FIFO depths must be > 0");
+  }
+  if (phy.command_pipeline_cycles < 0 || phy.read_return_pipeline_cycles < 0 ||
+      phy.write_data_pipeline_cycles < 0 || phy.reset_cycles < 0 ||
+      phy.initialization_cycles < 0 || phy.training_cycles < 0) {
+    errors.push_back("PHY pipeline/lifecycle cycles must be >= 0");
+  }
+  return errors;
+}
+
 Cli parse_args(int argc, char** argv) {
   Cli cli;
   for (int i = 1; i < argc; i++) {
@@ -1208,6 +1246,10 @@ Cli parse_args(int argc, char** argv) {
       apply_option(cli, "write_buffer_size", need_value(arg));
     } else if (arg == "--priority-buffer-size") {
       apply_option(cli, "priority_buffer_size", need_value(arg));
+    } else if (arg == "--mem-phy" || arg == "--phy-mode") {
+      apply_option(cli, "mem_phy_mode", need_value(arg));
+    } else if (arg == "--dfi-version") {
+      apply_option(cli, "dfi_version", need_value(arg));
     } else if (arg == "--max-cycles") {
       apply_option(cli, "max_cycles", need_value(arg));
     } else if (arg == "--single-controller") {
@@ -1468,6 +1510,12 @@ int main(int argc, char** argv) {
       for (const auto& error : storage_errors) {
         msg += "\n  - " + error;
       }
+      throw std::runtime_error(msg);
+    }
+    std::vector<std::string> phy_errors = validate_phy_config(cli.controller.phy);
+    if (!phy_errors.empty()) {
+      std::string msg = "PHY config validation failed:";
+      for (const auto& error : phy_errors) msg += "\n  - " + error;
       throw std::runtime_error(msg);
     }
 
@@ -1817,6 +1865,19 @@ int main(int argc, char** argv) {
                 spec.dfi_read_latency_nck > 0 ? spec.dfi_read_latency_nck : spec.timing.nCL);
     print_field(std::cout, "dfi_write_latency_nck",
                 spec.dfi_write_latency_nck > 0 ? spec.dfi_write_latency_nck : spec.timing.nCWL);
+    print_field(std::cout, "mem_phy_mode", hbm_sim::to_string(cli.controller.phy.mode));
+    print_field(std::cout, "phy_protocol", spec.lpddr_family ? "lpddr" : "hbm");
+    print_field(std::cout, "dfi_version", cli.controller.phy.dfi_version);
+    print_field(std::cout, "phy_command_fifo_depth", cli.controller.phy.command_fifo_depth);
+    print_field(std::cout, "phy_read_fifo_depth", cli.controller.phy.read_fifo_depth);
+    print_field(std::cout, "phy_write_fifo_depth", cli.controller.phy.write_fifo_depth);
+    print_field(std::cout, "phy_command_pipeline", cli.controller.phy.command_pipeline_cycles);
+    print_field(std::cout, "phy_read_return_pipeline", cli.controller.phy.read_return_pipeline_cycles);
+    print_field(std::cout, "phy_write_data_pipeline", cli.controller.phy.write_data_pipeline_cycles);
+    print_field(std::cout, "phy_reset_config_cycles", cli.controller.phy.reset_cycles);
+    print_field(std::cout, "phy_init_config_cycles", cli.controller.phy.initialization_cycles);
+    print_field(std::cout, "phy_train_config_cycles", cli.controller.phy.training_cycles);
+    print_field(std::cout, "phy_auto_train", cli.controller.phy.auto_train ? "true" : "false");
     print_field(std::cout, "tick_multiplier", spec.tick_multiplier);
     print_field(std::cout, "tCK_ps", spec.timing.tCK_ps);
     print_field(std::cout, "full_stack_model", spec.full_stack_model ? "true" : "false");

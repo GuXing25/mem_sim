@@ -159,6 +159,7 @@ Controller::Controller(DramSpec spec, ControllerOptions options)
   if (!memory_image_) {
     memory_image_ = std::make_shared<MemoryImage>(spec_);
   }
+  mem_phy_ = std::make_unique<MemPhy>(spec_, options_.phy, memory_image_);
   data_validator_ = options_.data_validator;
   row_policy_.reset(static_cast<std::size_t>(spec_.total_banks()), options_.row_policy_cap);
   refresh_manager_.reset(spec_, clk_);
@@ -377,6 +378,29 @@ void Controller::finalize_run_stats() {
                            : 100.0 * static_cast<double>(payload_bytes) /
                                  static_cast<double>(interface_bytes);
   stats_.dfi_beat_bytes = dfi_beat_bytes(spec_);
+  if (mem_phy_) {
+    const MemPhyStats& phy = mem_phy_->stats();
+    stats_.phy_commands = phy.commands;
+    stats_.phy_read_requests = phy.read_requests;
+    stats_.phy_write_requests = phy.write_requests;
+    stats_.phy_read_completions = phy.read_completions;
+    stats_.phy_write_completions = phy.write_completions;
+    stats_.phy_command_backpressure = phy.command_backpressure;
+    stats_.phy_data_backpressure = phy.data_backpressure;
+    stats_.phy_reset_cycles = phy.reset_cycles;
+    stats_.phy_initialization_cycles = phy.initialization_cycles;
+    stats_.phy_training_cycles = phy.training_cycles;
+    stats_.phy_ca_edges = phy.ca_edges;
+    stats_.phy_hbm_row_commands = phy.hbm_row_commands;
+    stats_.phy_hbm_column_commands = phy.hbm_column_commands;
+    stats_.phy_lpddr_wck_events = phy.lpddr_wck_events;
+    stats_.phy_lpddr_split_act_events = phy.lpddr_split_activate_events;
+    stats_.phy_max_command_fifo = phy.max_command_fifo;
+    stats_.phy_max_read_fifo = phy.max_read_fifo;
+    stats_.phy_max_write_fifo = phy.max_write_fifo;
+    stats_.phy_total_read_service_cycles = phy.total_read_service_cycles;
+    stats_.phy_total_write_service_cycles = phy.total_write_service_cycles;
+  }
   if (memory_image_) {
     apply_storage_stats(stats_, memory_image_->storage_stats());
   }
@@ -388,7 +412,8 @@ void Controller::finalize_run_stats() {
 
 bool Controller::done() const {
   return active_buffer_.empty() && priority_buffer_.empty() && read_buffer_.empty() &&
-         write_buffer_.empty() && pending_maintenance_.empty() && pending_.empty();
+         write_buffer_.empty() && pending_maintenance_.empty() && pending_.empty() &&
+         (!mem_phy_ || mem_phy_->idle());
 }
 
 void Controller::tick() {
@@ -398,6 +423,9 @@ void Controller::tick() {
   // 3. 生成 refresh/RFM/row-policy 等维护请求
   // 4. 在可用命令总线上选择并发射命令
   clk_++;
+  if (mem_phy_) {
+    mem_phy_->tick(clk_);
+  }
   if (spec_.hbm_edge_pairing) {
     if (is_rising_edge()) {
       stats_.rising_edge_ticks++;
@@ -480,6 +508,15 @@ void Controller::complete_pending() {
       continue;
     }
 
+    std::optional<MemPhyCompletion> phy_completion;
+    if (mem_phy_ && mem_phy_->behavioral()) {
+      phy_completion = mem_phy_->take_completion(it->id, it->controller_sequence);
+      if (!phy_completion.has_value()) {
+        ++it;
+        continue;
+      }
+    }
+
     if (it->type == RequestType::Read) {
       // 读请求在 RD/RDA 发出后不会立即完成，而是等 nCL+nBL 的简化读延迟。
       // bypass_dram 的读已在 enqueue() 直接计完成，这里不重复增加 completed_reads。
@@ -498,7 +535,7 @@ void Controller::complete_pending() {
                                        static_cast<std::int64_t>(payload_bytes)) *
             8;
       }
-      complete_read(*it);
+      complete_read(*it, phy_completion ? &*phy_completion : nullptr);
     } else if (it->type == RequestType::Write) {
       // 写请求当前采用简化完成语义：WR/WRA 发出后 1 cycle 即完成。
       // 这对带宽/命令调度研究足够轻量，若后续研究写响应时序，可在这里扩展。
@@ -512,26 +549,54 @@ void Controller::complete_pending() {
                                  static_cast<std::int64_t>(interface_bytes) -
                                      static_cast<std::int64_t>(payload_bytes)) *
           8;
-      complete_write(*it);
+      complete_write(*it, phy_completion ? &*phy_completion : nullptr);
     }
     it = pending_.erase(it);
   }
 }
 
-void Controller::complete_read(Request& req) {
+void Controller::complete_read(Request& req, const MemPhyCompletion* phy_completion) {
   const std::size_t size = request_data_size(spec_, req);
   bool initialized = true;
   DecodedAddress storage = storage_decoded_for(req);
-  ByteVector actual = memory_image_->read(req.address, size, &initialized, &storage);
-  ByteVector initialized_mask = memory_image_->read_initialized_mask(req.address, actual.size(), &storage);
+  ByteVector actual;
+  ByteVector initialized_mask;
+  if (phy_completion != nullptr) {
+    actual = phy_completion->data;
+    initialized = phy_completion->initialized;
+    initialized_mask = phy_completion->initialized_mask;
+  } else {
+    actual = memory_image_->read(req.address, size, &initialized, &storage);
+    initialized_mask = memory_image_->read_initialized_mask(req.address, actual.size(), &storage);
+  }
   Command data_cmd = req.issued_data_command == Command::NOP ? Command::RD : req.issued_data_command;
   annotate_issued_data(req, data_cmd, actual, nullptr, &initialized_mask, initialized);
   stats_.dfi_read_beats += dfi_beats_for_payload(spec_, actual.size());
   stats_.dfi_data_bytes += actual.size();
   check_read_data(req, actual, initialized, false);
+  if (phy_completion != nullptr && data_cmd == Command::RDA) {
+    memory_image_->precharge_bank(storage, clk_);
+  }
 }
 
-void Controller::complete_write(Request& req) {
+void Controller::complete_write(Request& req, const MemPhyCompletion* phy_completion) {
+  if (phy_completion != nullptr) {
+    ensure_write_payload(req);
+    const ByteVector* mask = req.has_byte_mask ? &req.byte_mask : nullptr;
+    Command data_cmd = req.issued_data_command == Command::NOP ? Command::WR : req.issued_data_command;
+    annotate_issued_data(req, data_cmd, req.payload, mask, nullptr, true);
+    req.data_committed = true;
+    stats_.dfi_write_beats += dfi_beats_for_payload(spec_, req.payload.size());
+    stats_.dfi_data_bytes += req.payload.size();
+    if (req.has_byte_mask) stats_.dfi_masked_write_beats += dfi_beats_for_payload(spec_, req.payload.size());
+    stats_.data_write_commits++;
+    if (req.has_byte_mask) stats_.data_masked_write_commits++;
+    if (data_cmd == Command::WRA) {
+      DecodedAddress storage = storage_decoded_for(req);
+      memory_image_->precharge_bank(storage, clk_);
+    }
+    return;
+  }
   if (req.data_committed) {
     return;
   }
@@ -646,6 +711,15 @@ bool Controller::has_unresolved_overlapping_read(
   return queue_has_overlap(read_buffer_) ||
          queue_has_overlap(active_buffer_) ||
          queue_has_overlap(pending_);
+}
+
+bool Controller::has_unresolved_overlapping_write(const Request& read) const {
+  const std::size_t read_size = request_data_size(spec_, read);
+  return std::any_of(pending_.begin(), pending_.end(), [&](const Request& pending) {
+    return pending.type == RequestType::Write &&
+           ranges_overlap(read.address, read_size,
+                          pending.address, request_data_size(spec_, pending));
+  });
 }
 
 ByteVector Controller::read_forward_payload(const Request& req, bool* initialized) const {
@@ -841,6 +915,18 @@ Controller::Candidate Controller::pick_best_ready_from(std::deque<Request>& buff
 
 bool Controller::candidate_eligible(const Request& req, Command cmd, BusClass bus,
                                     BufferKind kind, bool avoid_active_close) const {
+  if (mem_phy_ && !mem_phy_->can_accept_command(cmd)) {
+    mem_phy_->note_command_backpressure();
+    return false;
+  }
+  if (mem_phy_ && is_data_command(cmd) && !mem_phy_->can_accept_data(cmd)) {
+    mem_phy_->note_data_backpressure();
+    return false;
+  }
+  if (mem_phy_ && mem_phy_->behavioral() && req.type == RequestType::Read &&
+      is_data_command(cmd) && has_unresolved_overlapping_write(req)) {
+    return false;
+  }
   if (req.type == RequestType::Write && is_data_command(cmd) &&
       has_unresolved_overlapping_read(req, req.controller_sequence)) {
     // FR-FCFS 可以重排独立地址，但不能让后到写覆盖仍未完成的先到读。
@@ -1180,6 +1266,9 @@ void Controller::issue(Candidate cand) {
   // 命令发射先记录 trace，再执行状态转换。这样如果后续 executor 逻辑出错，
   // 测试仍能看到最后一条进入 DRAM 的命令，便于定位。
   append_issued(req, issued, cand.bus);
+  if (mem_phy_) {
+    mem_phy_->accept_command(req, issued, cand.bus, clk_);
+  }
   const int command_overhead_bits = command_interface_overhead_bits(spec_, issued);
   if (command_overhead_bits > 0) {
     // LPDDR6 CA parity 这类命令/地址总线保护不属于读写 payload，但会真实占用接口。
@@ -1282,14 +1371,23 @@ void Controller::retire_or_advance(Candidate cand, Command issued) {
       buffered_writes_.erase(pending_write);
     }
     buffered_write_addrs_.erase(done_req.address);
-    commit_write_data(done_req);
+    if (!mem_phy_ || !mem_phy_->behavioral()) {
+      commit_write_data(done_req);
+    }
   }
-  if (issued == Command::RDA || issued == Command::WRA) {
+  if ((issued == Command::RDA || issued == Command::WRA) &&
+      (!mem_phy_ || !mem_phy_->behavioral())) {
     DecodedAddress storage = storage_decoded_for(done_req);
     memory_image_->precharge_bank(storage, clk_);
   }
-  done_req.completion =
-      (issued == Command::RD || issued == Command::RDA) ? clk_ + timing_delay(spec_.timing.read_latency()) : clk_ + 1;
+  if (mem_phy_ && mem_phy_->behavioral()) {
+    done_req.completion = mem_phy_->submit_data(done_req, issued, clk_);
+  } else {
+    done_req.completion =
+        (issued == Command::RD || issued == Command::RDA)
+            ? clk_ + timing_delay(spec_.timing.read_latency())
+            : clk_ + 1;
+  }
   // pending_ 是“已发数据命令但上层尚未看到完成”的队列。它让读延迟统计和
   // DRAM 命令发射解耦，便于后续扩展 callback 或 out-of-order completion。
   pending_.push_back(done_req);
@@ -1356,6 +1454,9 @@ void Controller::annotate_issued_data(const Request& req,
     it->address = req.address;
     it->payload = payload;
     it->has_payload = true;
+    if (mem_phy_ && mem_phy_->behavioral()) {
+      it->data_cycle = clk_;
+    }
     if (req.type == RequestType::Read && req.has_expected_payload) {
       it->expected_payload = req.expected_payload;
       it->has_expected_payload = true;

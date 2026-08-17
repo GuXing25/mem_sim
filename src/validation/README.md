@@ -4,7 +4,7 @@ validation 层当前做离线可审计视图：command trace 回放 bank/timing/
 
 本目录实现命令 trace 导出、DFI beat/signal trace 导出和离线验证。validation 层用于检查
 仿真输出命令流是否满足 bus、edge pairing、bank state、timing constraint、tFAW、
-WCK window 等规则，也提供面向 DFI5.0 的 command/data beat 和 signal CSV 后处理视图。
+WCK window 等规则，也提供面向 DFI 6.x 的 command/data beat 和 signal CSV 视图。
 
 注意当前项目有两条验证线：
 
@@ -20,7 +20,7 @@ WCK window 等规则，也提供面向 DFI5.0 的 command/data beat 和 signal C
 主要文件：
 
 - `trace.cpp`：CSV command trace recorder。
-- `dfi.cpp`：DFI5.0-oriented beat/signal trace generator 和 validator。
+- `dfi.cpp`：DFI 6.x-oriented beat/signal trace generator 和 validator。
 - `validator.cpp`：command trace validator，重放命令状态并生成验证报告。
 
 修改建议：
@@ -63,8 +63,8 @@ DFI 手册定义了 `dfi_wrdata_mask`/DBI 类总线，具体极性取决于目�
 是项目自定义审计字段，用来标明读回数据是否来自已经初始化的存储 byte，不是 DFI 标准 pin。
 
 signal CSV 使用稳定的 `encode_dfi_address()` 打包 decoded 坐标，后续如果接入真实 PHY pin map，
-只需要替换该编码和 lane/phase 数据绑定。当前按 DFI5.0 手册抽取通用 MC/PHY 边界思想，
-但仍不是完整 DFI5.0 pin-level/training/update/frequency-ratio-change/low-power 协议模型；
+只需要替换该编码和 lane/phase 数据绑定。当前按 DFI 6.0 公开功能类别实现 MC/PHY 边界思想，
+但仍不是完整 DFI pin-level、模拟训练或厂商 lane 协议模型；
 完整 HBM4/LPDDR6 pin-level 接口需要对应 DFI 版本与厂商 PHY profile 继续校准。没有厂商
 PHY 私有数据的结构暂时保持 project-defined 配置项和审计字段。
 

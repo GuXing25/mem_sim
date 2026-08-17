@@ -10,6 +10,8 @@
 - `sequence_tests.cpp`：C++ 命令序列测试，检查关键命令展开、timing 和 validator 行为。
 - `timing_boundary_tests.cpp`：枚举 active TimingConstraint，生成 `t-1/t` 和 scope 边界矩阵。
 - `../tools/model_validation.py`：项目级分析验收，检查公式、硬性阈值、DFI 数据路径和来源 manifest。
+- `phy_tests.cpp`：Behavioral PHY 生命周期、FIFO/负例、DVFS/WCK、四标准数据回环和 DFI completion。
+- `phy_smoke.sh`：四个主配置的在线 PHY/DFI 验证及六 Stack、192 Controller 路径。
 
 修改建议：
 

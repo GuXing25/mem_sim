@@ -20,6 +20,7 @@
 #include "hbm_sim/controller/rfm.hpp"
 #include "hbm_sim/controller/row_policy.hpp"
 #include "hbm_sim/dram/spec.hpp"
+#include "hbm_sim/phy/mem_phy.hpp"
 #include "hbm_sim/stats/stats.hpp"
 #include "hbm_sim/controller/timing.hpp"
 
@@ -49,6 +50,8 @@ struct ControllerOptions {
   std::shared_ptr<MemoryImage> memory_image;
   // 可选共享数据验证器。它记录错误明细，但不在 RD/WR 时序路径执行文件 I/O。
   std::shared_ptr<DataValidator> data_validator;
+  // 可选 MC-PHY-Stack 路径。Direct 保持历史行为，Behavioral 启用在线 PHY。
+  MemPhyOptions phy;
   // 本控制器代表的全局通道。调度使用局部通道 0，存储和物理事件保留原通道。
   int global_channel_id = 0;
 };
@@ -136,6 +139,7 @@ class Controller {
   std::unordered_map<Address, Request> buffered_writes_;
   std::shared_ptr<MemoryImage> memory_image_;
   std::shared_ptr<DataValidator> data_validator_;
+  std::unique_ptr<MemPhy> mem_phy_;
   // 当前 controller cycle。tick() 开头自增，因此第一轮调度发生在 cycle 1。
   Cycle clk_ = 0;
   // 全局统计，由 enqueue()/issue()/complete_pending()/run_until_done() 更新。
@@ -163,13 +167,14 @@ class Controller {
 
   // 扫描 pending_，把 completion <= clk_ 的请求转入完成统计。
   void complete_pending();
-  void complete_read(Request& req);
-  void complete_write(Request& req);
+  void complete_read(Request& req, const MemPhyCompletion* phy_completion = nullptr);
+  void complete_write(Request& req, const MemPhyCompletion* phy_completion = nullptr);
   void check_read_data(const Request& req, const ByteVector& actual, bool initialized, bool forwarded);
   void ensure_write_payload(Request& req);
   bool read_hits_buffered_write(const Request& req) const;
   bool has_unresolved_overlapping_read(const Request& write,
                                        std::uint64_t older_than_sequence) const;
+  bool has_unresolved_overlapping_write(const Request& read) const;
   ByteVector read_forward_payload(const Request& req, bool* initialized) const;
   DecodedAddress storage_decoded_for(const Request& req) const;
   void apply_storage_command_event(const Request& req, Command issued);

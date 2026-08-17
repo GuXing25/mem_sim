@@ -11,7 +11,7 @@ payload 的 read/write correctness 由 `core/data.hpp` 中的 `DataValidator` �
 主要头文件：
 
 - `trace.hpp`：CSV command trace recorder 接口。
-- `dfi.hpp`：DFI5.0-oriented command/data beat trace、DFI-like signal trace 和 `DfiValidationReport` 接口。
+- `dfi.hpp`：DFI 6.x-oriented command/data beat trace、DFI-like signal trace 和 `DfiValidationReport` 接口。
 - `validator.hpp`：离线 command trace validator 接口和验证报告结构。
 
 修改建议：

@@ -85,23 +85,23 @@ HBM CRC/ECC/RAS metadata、LPDDR DBI/link ECC/CA parity 都应通过这里进入
 
 ## DFI 字段
 
-`DramSpec` 现在包含第一版 DFI5.0 相关抽象字段：
+`DramSpec` 包含 DFI 6.x-oriented PHY/trace 抽象字段：
 
 - `dfi_phase_count`
 - `dfi_data_lane_bytes`
 - `dfi_read_latency_nck`
 - `dfi_write_latency_nck`
 
-这些字段描述 DFI 后处理所需的相位、data beat 粒度和读写数据延迟。`validation/dfi.cpp`
-会基于它们生成两类输出：
+这些字段描述 Behavioral PHY 和 DFI 输出所需的相位、data beat 粒度及读写延迟。
+`validation/dfi.cpp` 会基于它们生成两类输出：
 
 - beat CSV：`COMMAND`、`READ_DATA`、`WRITE_DATA` 事件。
 - signal-like CSV：`dfi_reset_n`、`dfi_cs_n`、`dfi_cke`、`dfi_odt`、`dfi_address`、
   `dfi_bank`、`dfi_rddata_en`、`dfi_wrdata_en`、`dfi_rddata_valid`、`dfi_wrdata_mask`、
   `dfi_wrdata`、`dfi_rddata` 等字段。
 
-这些字段只描述 controller/PHY 边界的 trace 视图。真实 write payload/read payload 由
-controller 在 `IssuedCommand` 上回填，DFI builder 按真实 payload 长度切分 beat；没有 payload
-快照时才使用 `synthetic_fallback`。它们仍不代表完整 DFI5.0 pin-level 协议，也不会改变
-DRAM bank 状态机；状态合法性仍由 `state.cpp` 和 controller executor 负责。没有厂商 PHY
+真实 write/read payload 与 Behavioral PHY completion cycle 由 controller 回填到
+`IssuedCommand`，DFI builder 按真实长度切分 beat；没有 payload 快照时才使用
+`synthetic_fallback`。它们仍不代表完整 DFI pin-level 协议；DRAM bank 状态合法性仍由
+`state.cpp` 和 controller executor 负责。没有厂商 PHY
 资料支撑的 lane 拓扑、训练流程和精确 pin packing 暂时保持 project-defined。

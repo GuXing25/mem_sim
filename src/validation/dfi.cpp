@@ -134,10 +134,10 @@ bool same_decoded_address(const DecodedAddress& lhs, const DecodedAddress& rhs) 
 
 constexpr std::size_t kMaxDfiValidationErrors = 64;
 
-// request_id 只要求在单个前端流中唯一；库调用者完全可以让不同 stack 使用
-// 相同 ID。校验索引必须包含 stack_id，否则同周期的跨 stack 命令会被错误合并。
-using DfiEventKey = std::tuple<int, std::uint64_t, Command, Cycle>;
-using DfiDataKey = std::tuple<int, std::uint64_t, Command, Cycle>;
+// 内部 maintenance ID 在各 controller 独立分配；因此 key 必须同时包含
+// stack/channel，不能只用 request_id，否则多通道同拍 refresh 会被错误合并。
+using DfiEventKey = std::tuple<int, int, std::uint64_t, Command, Cycle>;
+using DfiDataKey = std::tuple<int, int, std::uint64_t, Command, Cycle>;
 
 void add_validation_error(DfiValidationReport& report, const std::string& message) {
   if (report.errors.size() < kMaxDfiValidationErrors) {
@@ -239,7 +239,9 @@ std::vector<DfiEvent> build_dfi_trace(const DramSpec& spec,
     const bool read = read_command;
     const std::size_t payload_bytes = command_payload_bytes(spec, issued);
     const int beat_count = static_cast<int>(ceil_div(payload_bytes, beat_bytes));
-    const Cycle first_data_cycle = issued.cycle + timing_delay(spec, read ? read_latency : write_latency);
+    const Cycle first_data_cycle = issued.data_cycle > 0
+                                       ? issued.data_cycle
+                                       : issued.cycle + timing_delay(spec, read ? read_latency : write_latency);
     for (int beat = 0; beat < beat_count; beat++) {
       Cycle cycle = first_data_cycle + timing_delay(spec, beat);
       const std::size_t bytes_before = static_cast<std::size_t>(beat) * beat_bytes;
@@ -319,24 +321,24 @@ DfiValidationReport validate_dfi_trace(const DramSpec& spec,
   std::set<DfiEventKey> issued_command_keys;
   std::set<DfiDataKey> issued_data_keys;
   for (const auto& issued : commands) {
-    issued_command_keys.emplace(issued.stack_id, issued.request_id,
+    issued_command_keys.emplace(issued.stack_id, issued.decoded.channel, issued.request_id,
                                 issued.command, issued.cycle);
     if (is_read_data_command(issued.command) ||
         is_write_data_command(issued.command)) {
-      issued_data_keys.emplace(issued.stack_id, issued.request_id,
+      issued_data_keys.emplace(issued.stack_id, issued.decoded.channel, issued.request_id,
                                issued.command, issued.cycle);
     }
   }
   for (const auto& event : events) {
     if (event.kind == DfiEventKind::Command) {
-      command_events[{event.stack_id, event.request_id,
+      command_events[{event.stack_id, event.decoded.channel, event.request_id,
                       event.command, event.cycle}].push_back(&event);
       if (event.issued_cycle != event.cycle) {
         add_validation_error(report, event_label(event) +
                                          " has an inconsistent issued cycle");
       }
     } else {
-      data_events[{event.stack_id, event.request_id,
+      data_events[{event.stack_id, event.decoded.channel, event.request_id,
                    event.command, event.issued_cycle}].push_back(&event);
     }
 
@@ -426,7 +428,7 @@ DfiValidationReport validate_dfi_trace(const DramSpec& spec,
   }
 
   for (const auto& issued : commands) {
-    const DfiEventKey command_key{issued.stack_id, issued.request_id,
+    const DfiEventKey command_key{issued.stack_id, issued.decoded.channel, issued.request_id,
                                   issued.command, issued.cycle};
     const auto command_it = command_events.find(command_key);
     report.command_checks++;
@@ -459,9 +461,10 @@ DfiValidationReport validate_dfi_trace(const DramSpec& spec,
 
     const std::size_t payload_bytes = command_payload_bytes(spec, issued);
     const int expected_beats = static_cast<int>(ceil_div(payload_bytes, beat_bytes));
-    const Cycle first_cycle =
-        issued.cycle + timing_delay(spec, read ? read_latency : write_latency);
-    const DfiDataKey data_key{issued.stack_id, issued.request_id,
+    const Cycle first_cycle = issued.data_cycle > 0
+                                  ? issued.data_cycle
+                                  : issued.cycle + timing_delay(spec, read ? read_latency : write_latency);
+    const DfiDataKey data_key{issued.stack_id, issued.decoded.channel, issued.request_id,
                               issued.command, issued.cycle};
     const auto data_it = data_events.find(data_key);
     const std::vector<const DfiEvent*> empty_events;

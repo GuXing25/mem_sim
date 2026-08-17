@@ -7,6 +7,7 @@
 - [审计](审计.md)：验证证据、厂商参数缺口、研究替代值和声明边界。
 - [架构和构建流程](架构和构建流程.md)：配置、frontend、system/controller、spec 与 finalize。
 - [多 Stack 及存储后端](多Stack及存储后端.md)：多 stack 路由/QoS/隔离和三种后端。
+- [Mem PHY 模型](Mem%20PHY模型.md)：MC-PHY-Stack 数据路径、HBM/LPDDR 适配和验证。
 - [内存模型和平台](内存模型和平台.md)：HBM3/HBM4/LPDDR5/LPDDR6 及平台对比。
 
 长期校准路线另见根目录 [VALIDATION_AND_CALIBRATION.md](../VALIDATION_AND_CALIBRATION.md)。

@@ -1,7 +1,8 @@
 # hbm_sim
 
 `hbm_sim` 是面向 HBM3、HBM4、LPDDR5、LPDDR6 的 C++20 内存仿真器。
-项目由仿真平台和堆叠存储模型组成，支持控制器时序研究、真实数据读写、
+项目由仿真平台和堆叠存储模型组成；堆叠存储模型明确包含可选行为级
+Mem PHY 与 Mem Stack，支持控制器时序研究、真实数据读写、
 物理坐标、功耗与热事件，以及可审计的命令和 DFI 事件。
 
 ## 文档
@@ -12,6 +13,7 @@
 - [审计](文档/审计.md)：验证证据、真实厂商参数缺口和研究替代值。
 - [验证与校准路线](VALIDATION_AND_CALIBRATION.md)：外部模型与真实硬件校准操作清单。
 - [架构和构建流程](文档/架构和构建流程.md)：traits、profile、配置覆盖和 finalize。
+- [Mem PHY 模型](文档/Mem%20PHY模型.md)：Direct/Behavioral、HBM/LPDDR 适配和 DFI 口径。
 - [内存模型和平台](文档/内存模型和平台.md)：四类模型和平台对比。
 
 目录内的 `README.md` 只说明本目录，不重复根目录专题文档。
@@ -41,12 +43,12 @@
 ### 审计与验证
 
 - 命令 CSV 和离线命令验证器。
-- DFI-oriented command/data beat 和 signal-like CSV。
+- 在线 Behavioral Mem PHY、HBM/LPDDR 协议适配、DFI-oriented command/data beat 和 signal-like CSV。
 - 实际读写数据、初始化掩码、写掩码和数据来源审计。
 - 请求提供 `expect=` 时，独立检查读数据。
 - 存储镜像、CSV、错误报告、热图和时序表导出。
 
-DFI 输出是控制器到 PHY 边界的研究视图，不是完整 pin-level DFI 实现或
+DFI 输出和行为级 PHY 是 DFI 6.0/6.0.1-oriented 研究模型，不是完整 pin-level DFI 实现或
 合规认证。完整 trace 会保留命令和数据事件，只适合有限调试窗口。
 
 ## 开发与构建环境

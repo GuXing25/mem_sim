@@ -81,6 +81,8 @@ void print_help(const char* argv0) {
       << "  --scheduler frfcfs|fcfs\n"
       << "  --row-policy open_page|closed_page|closed_cap\n"
       << "  --row-policy-cap N  ClosedCAP column accesses before closing\n"
+      << "  --mem-phy direct|behavioral  select compatibility bypass or online Mem PHY\n"
+      << "  --dfi-version VER  label the modeled DFI target (default: 6.0)\n"
       << "  --addr-mapping default|RoBaRaCoCh|ChRaBaRoCo|RoCoRaBaCh\n"
       << "  --dram-transaction-bytes N  payload bytes carried by one RD/WR command\n"
       << "  --channel-mapper decoded|round_robin|xor\n"

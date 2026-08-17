@@ -57,7 +57,7 @@ DFI trace 字段位于 `DramSpec`：
 - `dfi_read_latency_nck`
 - `dfi_write_latency_nck`
 
-这些字段服务于 `validation/dfi.hpp`，用于从 RD/WR 命令生成 DFI command/data beat 观测文件，并进一步导出第一版 DFI-like signal CSV。在线控制器会把真实写 payload 和真实读回 payload 记录到 `IssuedCommand`，DFI builder 再按 `dfi_data_lane_bytes` 切分数据 beat；离线命令缺少 payload 时才使用 `synthetic_fallback`。完整 DFI5.0 CA bit placement、training、frequency ratio change、low-power 协议和厂商 PHY 私有 lane 结构不在 dram header 内直接实现。
+这些字段同时服务于在线 `MemPhy` 和 `validation/dfi.hpp`。Behavioral PHY 把真实完成拍与 payload 记录到 `IssuedCommand`，DFI builder 再按 `dfi_data_lane_bytes` 切分 beat；Direct/离线命令仍可按配置 latency 推导。完整 DFI CA bit placement、模拟训练和厂商私有 lane 结构不在 dram header 内实现。
 
 ## 修改边界
 

@@ -1,6 +1,6 @@
 #pragma once
 
-// DFI5.0-oriented 轨迹视图。模块保持在命令和数据 beat 层，记录控制器/PHY
+// DFI 6.x-oriented 轨迹视图。模块保持在命令和数据 beat 层，记录控制器/PHY
 // 边界事件及在线控制器提供的真实数据，不宣称覆盖全部 dfi_* 信号。
 
 #include <cstddef>

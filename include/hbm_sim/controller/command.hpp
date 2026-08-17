@@ -27,6 +27,8 @@ struct IssuedCommand {
 
   // 命令实际发出的 controller cycle。
   Cycle cycle = 0;
+  // 0 表示使用 legacy DFI latency 推导；Behavioral PHY 在真实数据完成时回填。
+  Cycle data_cycle = 0;
   // 对应 Request::id，便于测试把命令追溯到原始请求。
   std::uint64_t request_id = 0;
   // 实际发出的抽象 DRAM 命令。

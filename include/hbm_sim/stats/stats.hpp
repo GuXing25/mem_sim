@@ -169,6 +169,27 @@ struct Stats {
   std::uint64_t dfi_masked_write_beats = 0;
   std::uint64_t dfi_data_bytes = 0;
   std::uint64_t dfi_beat_bytes = 0;
+  // 在线 Mem PHY 行为级统计。Direct 模式保持为 0。
+  std::uint64_t phy_commands = 0;
+  std::uint64_t phy_read_requests = 0;
+  std::uint64_t phy_write_requests = 0;
+  std::uint64_t phy_read_completions = 0;
+  std::uint64_t phy_write_completions = 0;
+  std::uint64_t phy_command_backpressure = 0;
+  std::uint64_t phy_data_backpressure = 0;
+  std::uint64_t phy_reset_cycles = 0;
+  std::uint64_t phy_initialization_cycles = 0;
+  std::uint64_t phy_training_cycles = 0;
+  std::uint64_t phy_ca_edges = 0;
+  std::uint64_t phy_hbm_row_commands = 0;
+  std::uint64_t phy_hbm_column_commands = 0;
+  std::uint64_t phy_lpddr_wck_events = 0;
+  std::uint64_t phy_lpddr_split_act_events = 0;
+  std::uint64_t phy_max_command_fifo = 0;
+  std::uint64_t phy_max_read_fifo = 0;
+  std::uint64_t phy_max_write_fifo = 0;
+  std::uint64_t phy_total_read_service_cycles = 0;
+  std::uint64_t phy_total_write_service_cycles = 0;
   std::uint64_t row_policy_ap_upgrades = 0;
   std::uint64_t row_policy_precharges = 0;
   std::uint64_t wck_syncs = 0;

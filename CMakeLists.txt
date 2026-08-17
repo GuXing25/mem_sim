@@ -38,6 +38,10 @@ set(HBM_SIM_FRONTEND_SOURCES
   src/frontend/traffic.cpp
 )
 
+set(HBM_SIM_PHY_SOURCES
+  src/phy/mem_phy.cpp
+)
+
 set(HBM_SIM_STATS_SOURCES
   src/stats/stats.cpp
 )
@@ -53,6 +57,7 @@ add_library(hbm_sim_core
   ${HBM_SIM_CORE_SOURCES}
   ${HBM_SIM_DRAM_SOURCES}
   ${HBM_SIM_FRONTEND_SOURCES}
+  ${HBM_SIM_PHY_SOURCES}
   ${HBM_SIM_STATS_SOURCES}
   ${HBM_SIM_VALIDATION_SOURCES}
 )
@@ -75,9 +80,20 @@ add_executable(timing_boundary_tests tests/timing_boundary_tests.cpp)
 target_link_libraries(timing_boundary_tests PRIVATE hbm_sim_core)
 target_compile_options(timing_boundary_tests PRIVATE -Wall -Wextra -pedantic)
 
+add_executable(phy_tests tests/phy_tests.cpp)
+target_link_libraries(phy_tests PRIVATE hbm_sim_core)
+target_compile_options(phy_tests PRIVATE -Wall -Wextra -pedantic)
+
 enable_testing()
 add_test(NAME sequence_tests COMMAND sequence_tests)
 add_test(NAME timing_boundary_tests COMMAND timing_boundary_tests)
+add_test(NAME phy_tests COMMAND phy_tests)
+add_test(NAME phy_smoke COMMAND ${CMAKE_COMMAND} -E env
+  HBM_SIM_BIN=$<TARGET_FILE:hbm_sim>
+  HBM_SIM_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+  bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/phy_smoke.sh
+)
+set_tests_properties(phy_smoke PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 add_test(NAME smoke COMMAND ${CMAKE_COMMAND} -E env
   HBM_SIM_BIN=$<TARGET_FILE:hbm_sim>
   bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/smoke.sh

@@ -69,7 +69,10 @@ argv
 
 ## DFI trace 相关 CLI
 
-DFI5.0 现在有两层抽象：beat CSV 用于检查 command/data beat、phase、latency、真实 payload 和 payload accounting；signal-like CSV 用于把同一批事件展开成后续 MC/PHY 联调更容易消费的 `dfi_*` 字段。它仍不是完整 pin-level DFI 协议。启用 `--dfi-trace` 或 `--dfi-signal-trace` 时，CLI 会保留 command trace，因此适合可审计的调试窗口，不适合默认保留百万级请求的完整事件；controller 在写提交和读完成时把真实数据快照回填到 `IssuedCommand`，并把请求的独立 `expect=` 快照绑定到读命令，离线 DFI builder 再生成 CSV。
+DFI 6.x-oriented 输出有两层抽象：beat CSV 用于检查 command/data beat、phase、latency、真实 payload 和 payload accounting；signal-like CSV 用于把同一批事件展开成后续 MC/PHY 联调更容易消费的 `dfi_*` 字段。它仍不是完整 pin-level DFI 协议。Behavioral PHY 会把真实完成拍回填到 `IssuedCommand`；Direct 模式继续按配置的 DFI latency 推导。启用 `--dfi-trace` 或 `--dfi-signal-trace` 时，CLI 会保留 command trace，因此适合可审计的调试窗口，不适合默认保留百万级请求的完整事件。
+
+- `--mem-phy direct|behavioral`：选择历史兼容路径或在线行为级 PHY。
+- `--dfi-version VER`：记录目标 DFI 版本标签。
 
 - `--dfi-trace PATH` 或 `--dump-dfi-trace PATH`：导出 DFI beat trace。
 - `--dfi-signal-trace PATH` 或 `--dump-dfi-signal-trace PATH`：导出 DFI-like signal trace。
