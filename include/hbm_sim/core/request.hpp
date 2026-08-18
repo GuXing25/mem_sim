@@ -49,6 +49,9 @@ struct Request {
   Cycle inject_cycle = 0;
   // RD/WR 发出后填入完成 cycle，pending_ 根据它判断何时统计完成。
   Cycle completion = 0;
+  // 终端 RD/RDA/WR/WRA 发射的 cycle。旁路转发/合并则记录被 Controller
+  // 接受的 cycle，供异步响应和上层端到端延迟分析使用。
+  Cycle issued_cycle = 0;
   // true 表示该请求由控制器内部转发/合并完成，不占用 DRAM 数据总线。
   bool bypass_dram = false;
   // frontend host request 拆分信息。host_request_id 保留拆分前的请求标识；
@@ -68,6 +71,10 @@ struct Request {
   bool has_byte_mask = false;
   // WR/WRA 已把本请求数据提交到存储模型时置位，避免完成统计再次写入。
   bool data_committed = false;
+  // 完成路径内部元数据。普通 Direct/Behavioral 读在完成时填入；写缓冲转发
+  // 会在建立数据快照时填入，以便异步响应保留 SECDED 结果。
+  bool response_ecc_corrected = false;
+  bool response_ecc_uncorrectable = false;
   // 本请求实际发出的终端 RD/RDA/WR/WRA。完成路径和 DFI 导出使用该字段区分
   // 自动预充电形式及 LPDDR/HBM 命令展开。
   Command issued_data_command = Command::NOP;

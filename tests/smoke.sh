@@ -127,6 +127,8 @@ run_and_check() {
   grep -Eq "^cmd_validation_timing_checks[[:space:]]*:" <<<"$out"
   grep -Eq "^dfi_trace[[:space:]]*:" <<<"$out"
   grep -Eq "^dfi_signal_trace[[:space:]]*:" <<<"$out"
+  grep -Eq "^response_trace[[:space:]]*:" <<<"$out"
+  grep -Eq "^host_responses_exported[[:space:]]*:" <<<"$out"
 }
 
 # 覆盖 HBM 双总线、随机/顺序流量，以及 LPDDR split activate + WCK/CAS 路径。
@@ -191,6 +193,21 @@ rm -f "$memory_dump" "$memory_csv" "$mismatch_report" "$thermal_map"
 # 用户输出路径的父目录应由 CLI 自动创建，避免每个实验脚本重复 mkdir。
 auto_output_root="$(mktemp -d)"
 rm -rf "$auto_output_root"
+
+# CLI 的异步路径必须逐拍接受普通请求和独立 maintenance，并在线消费完整
+# HostResponse；CSV 行数应等于 host 请求数，而不是拆分后的 DRAM transaction 数。
+response_dir="$(mktemp -d)"
+response_out="$response_dir/run.out"
+response_csv="$response_dir/host_responses.csv"
+"$HBM_SIM_BIN" --standard hbm4 --requests 4 --read-ratio 100 \
+  --init-sequence hbm4 --max-cycles 10000 \
+  --response-trace "$response_csv" >"$response_out"
+grep -Eq '^host_request_id,type,system_address,transaction_count' "$response_csv"
+[[ "$(($(wc -l <"$response_csv") - 1))" -eq 4 ]]
+grep -Eq '^host_responses_exported[[:space:]]*: 4' "$response_out"
+grep -Eq '^remaining_requests[[:space:]]*: 0' "$response_out"
+grep -Eq '^hit_cycle_limit[[:space:]]*: false' "$response_out"
+rm -rf "$response_dir"
 "$HBM_SIM_BIN" --standard hbm4 --requests 2 \
   --cmd-trace "$auto_output_root/nested/commands.csv" \
   --dfi-trace "$auto_output_root/nested/dfi.csv" \

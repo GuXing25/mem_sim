@@ -1,6 +1,6 @@
 # 核心实现
 
-core 层当前包含真实存储区热路径：`data.cpp` 实现 `MemoryImage`、row buffer、物理坐标、ECC/power/thermal；`stack_model.cpp` 实现外部 MC 可驱动的被动多 stack 器件数组；`memory_backend.cpp` 实现三类 payload 后端；`system.cpp` 实现主动多 stack、多 channel controller、入口反压/QoS 和 streaming injection。
+core 层当前包含真实存储区热路径：`data.cpp` 实现 `MemoryImage`、row buffer、物理坐标、ECC/power/thermal；`stack_model.cpp` 实现外部 MC 可驱动的被动多 stack 器件数组；`memory_backend.cpp` 实现三类 payload 后端；`system.cpp` 实现主动多 stack、多 channel controller、入口反压/QoS、streaming injection 和异步 host response 重组。
 
 本目录实现跨模块核心逻辑，主要是地址映射、多 controller memory system 和真实堆叠存储模型。
 
@@ -9,7 +9,7 @@ core 层当前包含真实存储区热路径：`data.cpp` 实现 `MemoryImage`�
 - `addr_map.cpp`：系统地址的 interleaved/blocked stack 映射，以及 stack-local Ramulator 风格 channel/pseudo-channel/SID 映射。
 - `data.cpp`：真实稀疏存储区、payload 读写、SECDED shadow、数据校验辅助、row buffer、bank/row/column/subarray/mat/cell/microbump 索引、floorplan、tile 内 thermal grid、DRAMsim3-style IDD/VDD 功耗校准、TSV-aware sparse 3D RC 热耦合和热事件。
 - `stack_model.cpp`：被动多 stack 器件数组实现。默认实例化 6 个 stack；显式 `stack_count` 构造保留给对比实验。它只根据外部给出的 `stack_id` 分发 transaction/command，并维护每个 stack 独立的 `MemoryImage`、物理坐标、功耗、热和统计；Bridge-MC Frontend 的地址选择、QoS、reorder、credit 和跨 stack 调度不在这里实现。
-- `system.cpp`：每 stack 一套多 channel controller 的创建、stack ingress 反压/QoS、请求分发、并行 tick、per-stack 与全局统计合并。
+- `system.cpp`：每 stack 一套多 channel controller 的创建、stack ingress 反压/QoS、请求分发、并行 tick、transaction completion 收集、host response 重组及 per-stack/全局统计合并。
 
 修改建议：
 
@@ -66,6 +66,14 @@ core 层当前包含真实存储区热路径：`data.cpp` 实现 `MemoryImage`�
 - 根据 stack-local decoded channel 或 channel mapper 选择 controller。
 - 让所有 stack/channel controller 在同一个 system cycle 并行 tick。
 - 合并 per-stack/全局统计和带 `stack_id` 的 command trace。
+- 收集 Controller `TransactionResponse`，按 host id/index 重组读数据、初始化掩码和状态。
+
+异步模式使用 `try_submit/step/has_response/pop_response`，Maintenance 走独立的
+`try_submit_maintenance`；`HostOnly/TransactionOnly/Both` 控制保留哪种响应视图，
+`idle/quiescent` 分别表示执行完成和响应也已取空。旧 `run()` 默认仍是低开销批处理；
+CLI 的 `--response-trace` 则实际逐拍驱动并在线消费 HostResponse。这里提供协议中立的
+运行时语义，不实现 UCIe flit、NoC credit 或 RTL CDC，具体映射见
+`文档/异步请求响应接口.md`。
 
 它不负责决定单个 controller 内本周期发什么 DRAM 命令，这个职责仍在
 `src/controller/`；也不宣称模拟完整 UCIe flit/credit/link 仲裁。

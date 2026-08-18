@@ -19,6 +19,7 @@
 #include "hbm_sim/controller/timing.hpp"
 #include "hbm_sim/core/data.hpp"
 #include "hbm_sim/core/request.hpp"
+#include "hbm_sim/core/response.hpp"
 #include "hbm_sim/dram/bank_state.hpp"
 #include "hbm_sim/dram/spec.hpp"
 #include "hbm_sim/dram/mem_phy.hpp"
@@ -55,6 +56,13 @@ struct ControllerOptions {
   MemPhyOptions phy;
   // 本控制器代表的全局通道。调度使用局部通道 0，存储和物理事件保留原通道。
   int global_channel_id = 0;
+  // 0 表示不限制响应队列。设置为非零时，Frontend 不取走响应会最终反压
+  // pending completion，但已经完成的数据不会丢失。
+  std::size_t response_queue_capacity = 0;
+  // 独立 Controller 的异步用户默认保留事务响应。只做统计的 CLI 单控制器
+  // 批处理会关闭它，避免请求数很大时积累无用 payload；MemorySystem 始终覆盖
+  // 为 true，由系统层选择保留 Host/Transaction 哪一种视图。
+  bool retain_responses = true;
 };
 
 // 简化 FR-FCFS 风格控制器。HBM 模式下支持 row/column 双发射；LPDDR 模式下
@@ -82,6 +90,12 @@ public:
   // 会自动调用。
   void finalize_run_stats();
   Cycle clock() const { return clk_; }
+
+  // Controller 级事务完成端口。front_response() 返回的对象在 pop_response()
+  // 前保持稳定，对应 ready/valid 接口中 valid=1、ready=0 的保持语义。
+  bool has_response() const { return !responses_.empty(); }
+  const TransactionResponse &front_response() const;
+  TransactionResponse pop_response();
 
   const Stats &stats() const { return stats_; }
   const DramSpec &spec() const { return spec_; }
@@ -144,6 +158,8 @@ private:
   std::deque<Request> pending_maintenance_;
   // 已发出 RD/WR、正在等待完成统计的请求。
   std::deque<Request> pending_;
+  // 已完成但尚未被 MemorySystem/Frontend 接收的事务响应。
+  std::deque<TransactionResponse> responses_;
   // Ramulator2.1 ControllerBase 风格的写缓冲地址集合：
   // - 后续读同地址可直接转发，不发 DRAM RD
   // - 后续写同地址可合并，不再占用 write buffer
@@ -183,18 +199,25 @@ private:
 
   // 扫描 pending_，把 completion <= clk_ 的请求转入完成统计。
   void complete_pending();
-  void complete_read(Request &req,
-                     const MemPhyCompletion *phy_completion = nullptr);
-  void complete_write(Request &req,
-                      const MemPhyCompletion *phy_completion = nullptr);
-  void check_read_data(const Request &req, const ByteVector &actual,
-                       bool initialized, bool forwarded);
+  TransactionResponse complete_read(
+      Request &req, const MemPhyCompletion *phy_completion = nullptr);
+  TransactionResponse complete_write(
+      Request &req, const MemPhyCompletion *phy_completion = nullptr);
+  ResponseStatus check_read_data(const Request &req, const ByteVector &actual,
+                                 bool initialized, bool forwarded);
   void ensure_write_payload(Request &req);
   bool read_hits_buffered_write(const Request &req) const;
   bool has_unresolved_overlapping_read(const Request &write,
                                        std::uint64_t older_than_sequence) const;
   bool has_unresolved_overlapping_write(const Request &read) const;
-  ByteVector read_forward_payload(const Request &req, bool *initialized) const;
+  ByteVector read_forward_payload(const Request &req, bool *initialized,
+                                  ByteVector *initialized_mask) const;
+  bool response_queue_full() const;
+  TransactionResponse make_response(
+      const Request &req, ByteVector data = {}, ByteVector initialized_mask = {},
+      bool initialized = true, bool forwarded = false,
+      bool coalesced = false,
+      ResponseStatus status = ResponseStatus::Ok) const;
   DecodedAddress storage_decoded_for(const Request &req) const;
   void apply_storage_command_event(const Request &req, Command issued);
   void commit_write_data(Request &req);

@@ -2,6 +2,13 @@
 
 当前测试覆盖不只检查程序能否运行，也守住真实存储区语义：payload 写读、read-forward、masked write、row buffer writeback、多 controller storage placement、txt/bin checkpoint、file-backed backend、burst trace、golden initialized-mask 验证和 command/DFI validation 都应在测试中有入口。
 
+`sequence_tests` 还覆盖异步 frontend 响应：request-ready 反压重试、Controller
+transaction completion、64 B host request 的多子事务重组、多 Stack 路由元数据、
+回调通知、Direct/Behavioral PHY 的 ECC correction 状态，以及有限 response queue
+在上层不 ready 时保持响应且不丢数据。契约测试还覆盖 Maintenance 专用入口、
+重复/提前复用 host tag 拒绝、HostOnly 不保留 transaction 副本、`idle/quiescent`
+边界和批处理在线 response consumer。
+
 本目录保存回归测试。测试覆盖 CLI 主路径、统计字段、命令序列、trace validation 和若干协议边界。
 
 主要文件：

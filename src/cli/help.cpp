@@ -113,6 +113,8 @@ void print_help(const char* argv0) {
       << "  --low-power-entry-cycles N --low-power-exit-cycles N --self-refresh-exit-cycles N\n"
       << "  --strict-timing-table  fail if preset still has vendor-required defaults\n"
       << "  --cmd-trace PATH    write issued command trace as CSV\n"
+      << "  --response-trace PATH  stream completed HostResponse records to CSV\n"
+      << "                      (default MemorySystem path only; responses are consumed online)\n"
       << "  --dfi-trace PATH    write DFI command/data beat trace as CSV\n"
       << "  --dfi-signal-trace PATH  write DFI-like signal trace CSV\n"
       << "  --dump-timing-table PATH  write timing table with source metadata as CSV\n"

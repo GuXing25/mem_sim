@@ -79,6 +79,9 @@ struct MemPhyCompletion {
   ByteVector data;
   ByteVector initialized_mask;
   bool initialized = false;
+  // MemoryImage 本次读触发的 SECDED 结果，继续传到 Controller/System response。
+  bool ecc_corrected = false;
+  bool ecc_uncorrectable = false;
 };
 
 // 协议适配器输出的是行为级 CA 编码摘要，而不是厂商 pin-accurate 波形。

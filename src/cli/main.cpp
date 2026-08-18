@@ -49,6 +49,7 @@ struct Cli {
   bool single_controller = false;
   bool strict_timing_table = false;
   std::string cmd_trace_path;
+  std::string response_trace_path;
   std::string dfi_trace_path;
   std::string dfi_signal_trace_path;
   std::string timing_table_path;
@@ -641,6 +642,9 @@ void apply_option(Cli& cli, const std::string& raw_key, const std::string& value
     cli.strict_timing_table = parse_bool(value);
   } else if (key == "cmd_trace" || key == "cmd_trace_path") {
     cli.cmd_trace_path = value;
+  } else if (key == "response_trace" || key == "response_trace_path" ||
+             key == "host_response_trace") {
+    cli.response_trace_path = value;
   } else if (key == "dfi_trace" || key == "dfi_trace_path" || key == "dump_dfi_trace") {
     cli.dfi_trace_path = value;
   } else if (key == "dfi_signal_trace" || key == "dfi_signal_trace_path" ||
@@ -1014,6 +1018,53 @@ std::string csv_escape(const std::string& value) {
   return out;
 }
 
+std::string bytes_to_hex(const hbm_sim::ByteVector& bytes) {
+  std::ostringstream out;
+  out << std::hex << std::setfill('0');
+  for (std::uint8_t byte : bytes) {
+    out << std::setw(2) << static_cast<unsigned>(byte);
+  }
+  return out.str();
+}
+
+std::string address_to_hex(hbm_sim::Address address) {
+  std::ostringstream out;
+  out << "0x" << std::hex << address;
+  return out.str();
+}
+
+void write_host_response_csv_header(std::ostream& out) {
+  out << "host_request_id,type,system_address,transaction_count,stack,channel,"
+         "arrival_cycle,first_issued_cycle,completion_cycle,latency_cycles,status,"
+         "initialized,ecc_corrected,ecc_uncorrectable,forwarded,coalesced,"
+         "data_hex,initialized_mask_hex\n";
+}
+
+void write_host_response_csv_row(std::ostream& out,
+                                 const hbm_sim::HostResponse& response) {
+  const hbm_sim::Cycle latency =
+      response.completion_cycle >= response.arrival_cycle
+          ? response.completion_cycle - response.arrival_cycle
+          : 0;
+  out << response.host_request_id << ','
+      << hbm_sim::to_string(response.type) << ','
+      << address_to_hex(response.system_address) << ','
+      << response.transaction_count << ',' << response.stack << ','
+      << response.channel << ',' << response.arrival_cycle << ','
+      << response.first_issued_cycle << ',' << response.completion_cycle << ','
+      << latency << ',' << hbm_sim::response_status_name(response.status) << ','
+      << (response.initialized ? "true" : "false") << ','
+      << (response.ecc_corrected ? "true" : "false") << ','
+      << (response.ecc_uncorrectable ? "true" : "false") << ','
+      << (response.forwarded ? "true" : "false") << ','
+      << (response.coalesced ? "true" : "false") << ','
+      << bytes_to_hex(response.data) << ','
+      << bytes_to_hex(response.initialized_mask) << '\n';
+  if (!out) {
+    throw std::runtime_error("failed while writing host response trace");
+  }
+}
+
 void write_timing_table_csv(const std::string& path, const hbm_sim::TimingTable& table) {
   std::ofstream out(path);
   if (!out) {
@@ -1350,6 +1401,8 @@ Cli parse_args(int argc, char** argv) {
       apply_option(cli, "strict_timing_table", "true");
     } else if (arg == "--cmd-trace") {
       apply_option(cli, "cmd_trace", need_value(arg));
+    } else if (arg == "--response-trace" || arg == "--host-response-trace") {
+      apply_option(cli, "response_trace", need_value(arg));
     } else if (arg == "--dfi-trace" || arg == "--dump-dfi-trace") {
       apply_option(cli, "dfi_trace", need_value(arg));
     } else if (arg == "--dfi-signal-trace" || arg == "--dump-dfi-signal-trace") {
@@ -1530,10 +1583,16 @@ int main(int argc, char** argv) {
     if (cli.single_controller && cli.stack_count != 1) {
       throw std::invalid_argument("single_controller is only valid with stack_count=1");
     }
+    if (cli.single_controller && !cli.response_trace_path.empty()) {
+      throw std::invalid_argument(
+          "response_trace requires the default MemorySystem path; "
+          "single_controller has no HostResponse aggregation");
+    }
 
     // 输出路径可以直接指向 outputs/<run-name>/...；CLI 负责建立父目录，用户
     // 不需要在每次仿真前手工 mkdir。输入文件路径不会在这里创建或改写。
     prepare_stack_output_directories(cli.cmd_trace_path, 1);
+    prepare_stack_output_directories(cli.response_trace_path, 1);
     prepare_stack_output_directories(cli.dfi_trace_path, 1);
     prepare_stack_output_directories(cli.dfi_signal_trace_path, 1);
     prepare_stack_output_directories(cli.timing_table_path, 1);
@@ -1611,9 +1670,11 @@ int main(int argc, char** argv) {
     hbm_sim::Stats stats;
     std::vector<hbm_sim::IssuedCommand> issued_commands;
     std::vector<hbm_sim::Stats> per_stack_stats;
+    std::uint64_t exported_host_responses = 0;
     if (cli.single_controller) {
       // 单控制器路径保留给早期模型兼容和最小化调试；它不会体现 stack-level
       // 多 channel 并行，因此正式带宽实验通常应使用默认 MemorySystem。
+      cli.controller.retain_responses = false;
       hbm_sim::Controller controller(spec, cli.controller);
       controller.run(*request_stream, cli.max_cycles);
       memory_image->flush_all_row_buffers(controller.clock());
@@ -1634,7 +1695,70 @@ int main(int argc, char** argv) {
       memory_options.stack_dispatch_width = cli.stack_dispatch_width;
       memory_options.stack_qos_policy = cli.stack_qos_policy;
       hbm_sim::MemorySystem memory(spec, memory_options);
-      memory.run(*request_stream, cli.max_cycles);
+      if (cli.response_trace_path.empty()) {
+        memory.run(*request_stream, cli.max_cycles);
+      } else {
+        std::ofstream response_trace(cli.response_trace_path);
+        if (!response_trace) {
+          throw std::runtime_error("failed to open host response trace output: " +
+                                   cli.response_trace_path);
+        }
+        write_host_response_csv_header(response_trace);
+        memory.set_response_delivery_mode(hbm_sim::ResponseDeliveryMode::HostOnly);
+
+        // 这是 CLI 的真实异步运行路径：请求按 valid/ready 语义重试，系统每拍
+        // step，HostResponse 在运行中 pop 并写出，而不是 run() 结束后堆积。
+        hbm_sim::Request pending_request;
+        bool has_pending_request = false;
+        bool source_done = false;
+        bool saw_request = false;
+        hbm_sim::Cycle last_inject_cycle = 0;
+        while ((!source_done || has_pending_request || !memory.idle() ||
+                !memory.responses_drained()) &&
+               memory.clock() < cli.max_cycles) {
+          while (true) {
+            if (!has_pending_request && !source_done) {
+              if (!request_stream->next(pending_request)) {
+                source_done = true;
+                break;
+              }
+              if (saw_request &&
+                  pending_request.inject_cycle < last_inject_cycle) {
+                throw std::runtime_error(
+                    "streaming request source is not ordered by inject_cycle");
+              }
+              saw_request = true;
+              last_inject_cycle = pending_request.inject_cycle;
+              has_pending_request = true;
+            }
+            if (!has_pending_request ||
+                pending_request.inject_cycle > memory.clock()) {
+              break;
+            }
+            const bool accepted =
+                pending_request.type == hbm_sim::RequestType::Maintenance
+                    ? memory.try_submit_maintenance(pending_request)
+                    : memory.try_submit(pending_request);
+            if (!accepted) break;
+            has_pending_request = false;
+          }
+
+          memory.step();
+          while (memory.has_response()) {
+            const hbm_sim::HostResponse response = memory.pop_response();
+            write_host_response_csv_row(response_trace, response);
+            exported_host_responses++;
+          }
+        }
+
+        std::uint64_t remaining_frontend_requests =
+            has_pending_request ? 1 : 0;
+        if (!source_done) {
+          remaining_frontend_requests +=
+              request_stream->remaining_hint().value_or(1);
+        }
+        memory.finish(remaining_frontend_requests);
+      }
       stats = memory.stats();
       issued_commands = memory.issued_commands();
       per_stack_stats = memory.per_stack_stats();
@@ -1959,6 +2083,9 @@ int main(int argc, char** argv) {
     print_field(std::cout, "address_mapping", hbm_sim::to_string(spec.address_mapping));
     print_field(std::cout, "channel_mapper", hbm_sim::to_string(cli.channel_mapper));
     print_field(std::cout, "cmd_trace", cli.cmd_trace_path.empty() ? "off" : cli.cmd_trace_path);
+    print_field(std::cout, "response_trace",
+                cli.response_trace_path.empty() ? "off" : cli.response_trace_path);
+    print_field(std::cout, "host_responses_exported", exported_host_responses);
     print_field(std::cout, "dfi_trace", cli.dfi_trace_path.empty() ? "off" : cli.dfi_trace_path);
     print_field(std::cout, "dfi_signal_trace",
                 cli.dfi_signal_trace_path.empty() ? "off" : cli.dfi_signal_trace_path);

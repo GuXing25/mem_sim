@@ -7,6 +7,7 @@
 #include "hbm_sim/dram/semantics.hpp"
 
 #include <algorithm>
+#include <limits>
 #include <stdexcept>
 #include <utility>
 
@@ -279,7 +280,9 @@ void merge_stats(Stats& dst, const Stats& src) {
 }  // namespace
 
 MemorySystem::MemorySystem(DramSpec spec, MemorySystemOptions options)
-    : spec_(std::move(spec)), options_(options) {
+    : spec_(std::move(spec)),
+      options_(options),
+      response_delivery_mode_(options.response_delivery_mode) {
   if (options_.stack_count <= 0) {
     throw std::invalid_argument("stack_count must be positive");
   }
@@ -317,6 +320,9 @@ MemorySystem::MemorySystem(DramSpec spec, MemorySystemOptions options)
       ControllerOptions controller_options = options_.controller;
       controller_options.memory_image = memory_images_[static_cast<std::size_t>(stack)];
       controller_options.global_channel_id = channel;
+      // MemorySystem 需要先接收 Controller completion，才能按交付模式丢弃、
+      // 暴露 transaction，或聚合 HostResponse。
+      controller_options.retain_responses = true;
       controllers_.emplace_back(channel_spec, controller_options);
     }
   }
@@ -448,6 +454,383 @@ bool MemorySystem::enqueue(Request req) {
   return true;
 }
 
+bool MemorySystem::try_submit(Request request) {
+  if (request.type == RequestType::Maintenance) {
+    throw std::invalid_argument(
+        "try_submit accepts frontend Read/Write requests only; maintenance is controller-internal");
+  }
+  if (request.transaction_count == 0 ||
+      request.transaction_index >= request.transaction_count) {
+    throw std::invalid_argument(
+        "try_submit received invalid transaction_index/count");
+  }
+  auto submission = host_submissions_.find(request.host_request_id);
+  if (submission == host_submissions_.end()) {
+    if (request.transaction_index != 0) {
+      throw std::invalid_argument(
+          "the first transaction for a host_request_id must have index 0");
+    }
+  } else {
+    const HostSubmission& host = submission->second;
+    if (host.transaction_count != request.transaction_count ||
+        host.type != request.type ||
+        host.accepted[request.transaction_index]) {
+      throw std::invalid_argument(
+          "host_request_id reused or transaction submitted more than once while in flight");
+    }
+  }
+  if (response_delivery_mode_ == ResponseDeliveryMode::Disabled) {
+    response_delivery_mode_ = ResponseDeliveryMode::HostOnly;
+  }
+  if (!enqueue(request)) {
+    if (!last_async_frontend_stall_cycle_.has_value() ||
+        *last_async_frontend_stall_cycle_ != clk_) {
+      frontend_stall_cycles_++;
+      last_async_frontend_stall_cycle_ = clk_;
+    }
+    return false;
+  }
+  record_submitted_transaction(request);
+  return true;
+}
+
+bool MemorySystem::try_submit_maintenance(Request request) {
+  if (request.type != RequestType::Maintenance) {
+    throw std::invalid_argument(
+        "try_submit_maintenance accepts Maintenance requests only");
+  }
+  if (enqueue(std::move(request))) return true;
+  if (!last_async_frontend_stall_cycle_.has_value() ||
+      *last_async_frontend_stall_cycle_ != clk_) {
+    frontend_stall_cycles_++;
+    last_async_frontend_stall_cycle_ = clk_;
+  }
+  return false;
+}
+
+void MemorySystem::record_submitted_transaction(const Request& request) {
+  auto [it, inserted] = host_submissions_.try_emplace(request.host_request_id);
+  HostSubmission& host = it->second;
+  if (inserted) {
+    host.transaction_count = request.transaction_count;
+    host.type = request.type;
+    host.accepted.assign(request.transaction_count, false);
+  }
+  host.accepted[request.transaction_index] = true;
+}
+
+void MemorySystem::record_completed_transaction(
+    const TransactionResponse& response) {
+  auto it = host_submissions_.find(response.host_request_id);
+  if (it == host_submissions_.end()) {
+    return;  // run() 批处理路径没有 try_submit() 注册表。
+  }
+  HostSubmission& host = it->second;
+  host.completed++;
+  // HostOnly/Both 下，tag 还要保护已经 valid、尚未被 frontend pop 的响应。
+  // TransactionOnly 没有 HostResponse 握手点，因此最后一个子事务被系统接收
+  // 后即可释放。
+  if (host.completed >= host.transaction_count &&
+      !retains_host_responses()) {
+    host_submissions_.erase(it);
+  }
+}
+
+void MemorySystem::step() {
+  tick();
+}
+
+void MemorySystem::finish(std::uint64_t remaining_frontend_requests) {
+  remaining_frontend_requests_ = remaining_frontend_requests;
+  finalize_run_stats();
+  collect_issued_commands();
+}
+
+bool MemorySystem::idle() const {
+  return done();
+}
+
+bool MemorySystem::responses_drained() const {
+  return transaction_responses_.empty() && host_responses_.empty() &&
+         host_assemblies_.empty() && host_submissions_.empty() &&
+         std::none_of(controllers_.begin(), controllers_.end(),
+                      [](const Controller& controller) {
+                        return controller.has_response();
+                      });
+}
+
+void MemorySystem::enable_response_interface(bool enabled) {
+  const ResponseDeliveryMode mode =
+      enabled && response_delivery_mode_ == ResponseDeliveryMode::Disabled
+          ? ResponseDeliveryMode::HostOnly
+          : enabled ? response_delivery_mode_ : ResponseDeliveryMode::Disabled;
+  set_response_delivery_mode(mode);
+}
+
+void MemorySystem::set_response_delivery_mode(ResponseDeliveryMode mode) {
+  if (mode == response_delivery_mode_) return;
+  if (clk_ != 0 && !quiescent()) {
+    throw std::logic_error(
+        "response delivery mode may only change while MemorySystem is quiescent");
+  }
+  response_delivery_mode_ = mode;
+}
+
+void MemorySystem::set_transaction_response_callback(
+    TransactionResponseCallback callback) {
+  if (callback) {
+    if (response_delivery_mode_ == ResponseDeliveryMode::Disabled) {
+      set_response_delivery_mode(ResponseDeliveryMode::TransactionOnly);
+    } else if (response_delivery_mode_ == ResponseDeliveryMode::HostOnly) {
+      set_response_delivery_mode(ResponseDeliveryMode::Both);
+    }
+  }
+  transaction_response_callback_ = std::move(callback);
+}
+
+void MemorySystem::set_response_callback(HostResponseCallback callback) {
+  if (callback) {
+    if (response_delivery_mode_ == ResponseDeliveryMode::Disabled) {
+      set_response_delivery_mode(ResponseDeliveryMode::HostOnly);
+    } else if (response_delivery_mode_ == ResponseDeliveryMode::TransactionOnly) {
+      set_response_delivery_mode(ResponseDeliveryMode::Both);
+    }
+  }
+  host_response_callback_ = std::move(callback);
+}
+
+const HostResponse& MemorySystem::front_response() const {
+  if (host_responses_.empty()) {
+    throw std::logic_error("MemorySystem host response queue is empty");
+  }
+  return host_responses_.front();
+}
+
+HostResponse MemorySystem::pop_response() {
+  if (host_responses_.empty()) {
+    throw std::logic_error("MemorySystem host response queue is empty");
+  }
+  HostResponse response = std::move(host_responses_.front());
+  host_responses_.pop_front();
+  // frontend tag 直到响应真正握手（pop）后才可复用，而不是在最后一个
+  // controller completion 生成时就提前释放。
+  auto submission = host_submissions_.find(response.host_request_id);
+  if (submission != host_submissions_.end() &&
+      submission->second.completed >= submission->second.transaction_count) {
+    host_submissions_.erase(submission);
+  }
+  return response;
+}
+
+const TransactionResponse& MemorySystem::front_transaction_response() const {
+  if (transaction_responses_.empty()) {
+    throw std::logic_error(
+        "MemorySystem transaction response queue is empty");
+  }
+  return transaction_responses_.front();
+}
+
+TransactionResponse MemorySystem::pop_transaction_response() {
+  if (transaction_responses_.empty()) {
+    throw std::logic_error(
+        "MemorySystem transaction response queue is empty");
+  }
+  TransactionResponse response = std::move(transaction_responses_.front());
+  transaction_responses_.pop_front();
+  return response;
+}
+
+bool MemorySystem::transaction_response_queue_full() const {
+  return options_.transaction_response_queue_capacity != 0 &&
+         transaction_responses_.size() >=
+             options_.transaction_response_queue_capacity;
+}
+
+bool MemorySystem::host_response_queue_full() const {
+  return options_.host_response_queue_capacity != 0 &&
+         host_responses_.size() >= options_.host_response_queue_capacity;
+}
+
+bool MemorySystem::retains_host_responses() const {
+  return response_delivery_mode_ == ResponseDeliveryMode::HostOnly ||
+         response_delivery_mode_ == ResponseDeliveryMode::Both;
+}
+
+bool MemorySystem::retains_transaction_responses() const {
+  return response_delivery_mode_ == ResponseDeliveryMode::TransactionOnly ||
+         response_delivery_mode_ == ResponseDeliveryMode::Both;
+}
+
+void MemorySystem::collect_responses() {
+  if (response_delivery_mode_ == ResponseDeliveryMode::Disabled) {
+    // 旧 run() 批处理路径只需要统计和 trace。及时丢弃运行时完成对象可避免
+    // 大规模性能实验同时保留 transaction、host 和 payload 三份数据。
+    for (auto& controller : controllers_) {
+      while (controller.has_response()) {
+        TransactionResponse response = controller.pop_response();
+        record_completed_transaction(response);
+      }
+    }
+    return;
+  }
+  for (auto& controller : controllers_) {
+    while (controller.has_response()) {
+      if ((retains_transaction_responses() &&
+           transaction_response_queue_full()) ||
+          (retains_host_responses() && host_response_queue_full())) {
+        // 任一被选中的对外视图未 ready，就不 pop Controller。Host 容量因此
+        // 真正传播到 Controller/pending，而不是落入无界内部 backlog。
+        return;
+      }
+      TransactionResponse response = controller.pop_response();
+      record_completed_transaction(response);
+      if (retains_transaction_responses()) {
+        transaction_responses_.push_back(response);
+        if (transaction_response_callback_) {
+          transaction_response_callback_(transaction_responses_.back());
+        }
+      }
+      if (retains_host_responses()) {
+        aggregate_response(response);
+      }
+    }
+  }
+}
+
+void MemorySystem::aggregate_response(const TransactionResponse& response) {
+  const std::uint32_t count = std::max<std::uint32_t>(
+      1, response.transaction_count);
+  if (response.status == ResponseStatus::InvalidTransaction ||
+      response.transaction_index >= count) {
+    HostResponse invalid;
+    invalid.host_request_id = response.host_request_id;
+    invalid.type = response.type;
+    invalid.system_address = response.system_address;
+    invalid.transaction_count = count;
+    invalid.stack = response.stack;
+    invalid.channel = response.channel;
+    invalid.arrival_cycle = response.arrival_cycle;
+    invalid.first_issued_cycle = response.issued_cycle;
+    invalid.completion_cycle = response.completion_cycle;
+    invalid.transactions.push_back(response);
+    invalid.initialized = response.initialized;
+    invalid.ecc_corrected = response.ecc_corrected;
+    invalid.ecc_uncorrectable = response.ecc_uncorrectable;
+    invalid.forwarded = response.forwarded;
+    invalid.coalesced = response.coalesced;
+    invalid.status = ResponseStatus::InvalidTransaction;
+    publish_host_response(std::move(invalid));
+    return;
+  }
+
+  auto [it, inserted] = host_assemblies_.try_emplace(response.host_request_id);
+  HostAssembly& assembly = it->second;
+  if (inserted) {
+    assembly.transaction_count = count;
+    assembly.transactions.resize(count);
+  }
+  if (assembly.transaction_count != count ||
+      response.transaction_index >= assembly.transactions.size() ||
+      assembly.transactions[response.transaction_index].has_value()) {
+    HostResponse invalid;
+    invalid.host_request_id = response.host_request_id;
+    invalid.type = response.type;
+    invalid.system_address = response.system_address;
+    invalid.transaction_count = count;
+    invalid.transactions.push_back(response);
+    invalid.initialized = response.initialized;
+    invalid.ecc_corrected = response.ecc_corrected;
+    invalid.ecc_uncorrectable = response.ecc_uncorrectable;
+    invalid.forwarded = response.forwarded;
+    invalid.coalesced = response.coalesced;
+    invalid.status = ResponseStatus::InvalidTransaction;
+    publish_host_response(std::move(invalid));
+    host_assemblies_.erase(it);
+    return;
+  }
+
+  assembly.transactions[response.transaction_index] = response;
+  assembly.received++;
+  if (assembly.received == assembly.transaction_count) {
+    publish_host_response(build_host_response(assembly));
+    host_assemblies_.erase(it);
+  }
+}
+
+HostResponse MemorySystem::build_host_response(
+    const HostAssembly& assembly) const {
+  HostResponse host;
+  host.transaction_count = assembly.transaction_count;
+  host.transactions.reserve(assembly.transaction_count);
+  host.initialized = true;
+  host.forwarded = true;
+  host.coalesced = true;
+  host.arrival_cycle = std::numeric_limits<Cycle>::max();
+  host.first_issued_cycle = std::numeric_limits<Cycle>::max();
+
+  for (const auto& item : assembly.transactions) {
+    if (!item.has_value()) {
+      host.status = ResponseStatus::InvalidTransaction;
+      continue;
+    }
+    const TransactionResponse& response = *item;
+    if (host.transactions.empty()) {
+      host.host_request_id = response.host_request_id;
+      host.type = response.type;
+      host.system_address = response.system_address;
+      host.stack = response.stack;
+      host.channel = response.channel;
+    } else {
+      host.system_address = std::min(host.system_address,
+                                     response.system_address);
+      if (host.stack != response.stack) host.stack = -1;
+      if (host.channel != response.channel) host.channel = -1;
+      if (host.type != response.type) {
+        host.status = ResponseStatus::InvalidTransaction;
+      }
+    }
+    host.arrival_cycle = std::min(host.arrival_cycle,
+                                  response.arrival_cycle);
+    host.first_issued_cycle = std::min(host.first_issued_cycle,
+                                       response.issued_cycle);
+    host.completion_cycle = std::max(host.completion_cycle,
+                                     response.completion_cycle);
+    host.initialized = host.initialized && response.initialized;
+    host.ecc_corrected = host.ecc_corrected || response.ecc_corrected;
+    host.ecc_uncorrectable =
+        host.ecc_uncorrectable || response.ecc_uncorrectable;
+    host.forwarded = host.forwarded && response.forwarded;
+    host.coalesced = host.coalesced && response.coalesced;
+    host.status = merge_response_status(host.status, response.status);
+    if (response.type == RequestType::Read) {
+      host.data.insert(host.data.end(), response.data.begin(),
+                       response.data.end());
+      host.initialized_mask.insert(host.initialized_mask.end(),
+                                   response.initialized_mask.begin(),
+                                   response.initialized_mask.end());
+    }
+    host.transactions.push_back(response);
+  }
+  if (host.arrival_cycle == std::numeric_limits<Cycle>::max()) {
+    host.arrival_cycle = 0;
+  }
+  if (host.first_issued_cycle == std::numeric_limits<Cycle>::max()) {
+    host.first_issued_cycle = 0;
+  }
+  return host;
+}
+
+void MemorySystem::publish_host_response(HostResponse response) {
+  if (host_response_queue_full()) {
+    throw std::logic_error(
+        "host response queue became full during one completion");
+  }
+  host_responses_.push_back(std::move(response));
+  if (host_response_callback_) {
+    host_response_callback_(host_responses_.back());
+  }
+}
+
 void MemorySystem::dispatch_stack_ingress() {
   for (int stack = 0; stack < options_.stack_count; stack++) {
     auto& queue = stack_ingress_queues_[static_cast<std::size_t>(stack)];
@@ -506,13 +889,32 @@ void MemorySystem::run(std::vector<Request> requests, Cycle max_cycles) {
 }
 
 void MemorySystem::run(RequestSource& source, Cycle max_cycles) {
+  run_source(source, max_cycles, nullptr);
+}
+
+void MemorySystem::run(RequestSource& source, Cycle max_cycles,
+                       HostResponseConsumer consumer) {
+  if (!consumer) {
+    run_source(source, max_cycles, nullptr);
+    return;
+  }
+  // 这个 overload 的契约就是把完整 host response 交给 consumer；不同时保留
+  // transaction 视图，避免无人消费的调试队列反过来阻塞 host 路径。
+  set_response_delivery_mode(ResponseDeliveryMode::HostOnly);
+  run_source(source, max_cycles, &consumer);
+}
+
+void MemorySystem::run_source(RequestSource& source, Cycle max_cycles,
+                              HostResponseConsumer* consumer) {
   Request pending_request;
   bool has_pending_request = false;
   bool source_done = false;
   Cycle last_inject_cycle = 0;
   bool saw_request = false;
 
-  while ((!source_done || has_pending_request || !done()) && clk_ < max_cycles) {
+  while ((!source_done || has_pending_request || !done() ||
+          (consumer != nullptr && !responses_drained())) &&
+         clk_ < max_cycles) {
     bool stalled = false;
     while (true) {
       if (!has_pending_request && !source_done) {
@@ -540,6 +942,19 @@ void MemorySystem::run(RequestSource& source, Cycle max_cycles) {
       frontend_stall_cycles_++;
     }
     tick();
+    if (consumer != nullptr) {
+      while (has_response()) {
+        HostResponse response = pop_response();
+        (*consumer)(response);
+      }
+    }
+  }
+
+  if (consumer != nullptr) {
+    while (has_response()) {
+      HostResponse response = pop_response();
+      (*consumer)(response);
+    }
   }
 
   remaining_frontend_requests_ = has_pending_request ? 1 : 0;
@@ -565,6 +980,7 @@ void MemorySystem::tick() {
   for (auto& controller : controllers_) {
     controller.tick();
   }
+  collect_responses();
   clk_++;
 }
 

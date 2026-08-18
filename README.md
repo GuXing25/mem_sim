@@ -15,6 +15,7 @@ Mem PHY 与 Mem Stack，支持控制器时序研究、真实数据读写、
 - [架构和构建流程](文档/架构和构建流程.md)：traits、profile、配置覆盖和 finalize。
 - [Mem PHY 模型](文档/Mem%20PHY模型.md)：Direct/Behavioral、HBM/LPDDR 适配和 DFI 口径。
 - [内存模型和平台](文档/内存模型和平台.md)：四类模型和平台对比。
+- [异步请求—响应接口](文档/异步请求响应接口.md)：逐周期请求反压、事务完成、host 重组以及未来 CPU/NoC/UCIe/RTL 适配边界。
 
 目录内的 `README.md` 只说明本目录，不重复根目录专题文档。
 
@@ -210,6 +211,7 @@ ECC、功耗和热模型语义。选择建议见 [存储后端](文档/多Stack�
   --dump-memory-image outputs/final_memory.txt \
   --dump-memory-csv outputs/final_memory.csv \
   --mismatch-report outputs/mismatch.txt \
+  --response-trace outputs/host_responses.csv \
   --dfi-trace outputs/dfi.csv \
   --dfi-signal-trace outputs/dfi_signal.csv \
   --validate-cmd-trace \

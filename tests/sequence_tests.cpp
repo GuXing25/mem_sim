@@ -1129,6 +1129,7 @@ void test_active_six_stack_memory_system_routing_qos_and_stats() {
   writes.push_back(extra);
 
   MemorySystem memory(spec, options);
+  memory.set_response_delivery_mode(hbm_sim::ResponseDeliveryMode::Both);
   memory.run(writes, 2000);
   require(!memory.stats().hit_cycle_limit, "active six-stack run hit cycle limit");
   require(memory.stack_count() == 6 && memory.controller_count() == 12,
@@ -1169,6 +1170,23 @@ void test_active_six_stack_memory_system_routing_qos_and_stats() {
           "multi-stack command trace did not cover every stack");
   require(first_stack0_request == high.id,
           "strict-priority stack QoS did not dispatch the high-priority request first");
+
+  std::vector<bool> response_stacks(6, false);
+  std::size_t response_count = 0;
+  while (memory.has_transaction_response()) {
+    const hbm_sim::TransactionResponse response =
+        memory.pop_transaction_response();
+    require(response.stack >= 0 && response.stack < 6 &&
+                response.channel >= 0 && response.channel < 2 &&
+                response.type == RequestType::Write,
+            "multi-stack async response lost its execution endpoint");
+    response_stacks[static_cast<std::size_t>(response.stack)] = true;
+    response_count++;
+  }
+  require(response_count == writes.size() &&
+              std::all_of(response_stacks.begin(), response_stacks.end(),
+                          [](bool seen) { return seen; }),
+          "multi-stack async response did not cover every accepted request/stack");
 
   hbm_sim::StackAddressMapper mapper(6, 64, spec.addressable_capacity_bytes());
   for (int stack = 0; stack < 6; stack++) {
@@ -1217,6 +1235,26 @@ void test_write_forward_and_coalesce() {
   require(controller.stats().wr == 1, "coalesced writes should issue one DRAM WR");
   require(controller.stats().completed_reads == 1, "forwarded read did not complete");
   require(controller.stats().completed_writes == 2, "coalesced writes did not both count complete");
+  int response_count = 0;
+  int forwarded_responses = 0;
+  int coalesced_responses = 0;
+  while (controller.has_response()) {
+    const hbm_sim::TransactionResponse response = controller.pop_response();
+    response_count++;
+    if (response.forwarded) {
+      forwarded_responses++;
+      require(response.type == RequestType::Read && !response.data.empty(),
+              "forwarded response did not carry the read data snapshot");
+    }
+    if (response.coalesced) {
+      coalesced_responses++;
+      require(response.type == RequestType::Write,
+              "coalesced response was not a write acknowledgement");
+    }
+  }
+  require(response_count == 3 && forwarded_responses == 1 &&
+              coalesced_responses == 1,
+          "Controller did not return one response for each accepted bypass request");
 }
 
 void test_closed_page_row_policy() {
@@ -1602,6 +1640,13 @@ void test_hbm4_host_line_transaction_split() {
   require(memory.stats().read_bytes == 64 &&
               memory.stats().interface_read_bytes == 68,
           "HBM4 split transaction payload or interface-byte accounting is incorrect");
+  require(!memory.has_response() && !memory.has_transaction_response() &&
+              std::none_of(memory.controllers().begin(),
+                           memory.controllers().end(),
+                           [](const Controller& controller) {
+                             return controller.has_response();
+                           }),
+          "legacy batch run retained async payload responses without opt-in");
 
   std::vector<hbm_sim::DfiEvent> events =
       hbm_sim::build_dfi_trace(spec, memory.issued_commands());
@@ -1648,6 +1693,324 @@ void test_hbm4_host_line_transaction_split() {
   require(roundtrip_memory.stats().data_checked_reads == 2 &&
               roundtrip_memory.stats().data_mismatches == 0,
           "64B payload was corrupted while splitting or reassembling transactions");
+}
+
+void test_async_frontend_response_interface() {
+  DramSpec spec = hbm_sim::make_spec("hbm4");
+  spec.supports_refresh = false;
+  spec.supports_rfm = false;
+  hbm_sim::refresh_timing_constraints(spec);
+
+  hbm_sim::MemorySystemOptions system_options;
+  // 一项 ingress 强制调用方走 try_submit() 的重试语义。
+  system_options.stack_ingress_buffer_size = 1;
+  system_options.stack_dispatch_width = 1;
+  MemorySystem memory(spec, system_options);
+
+  std::size_t transaction_notifications = 0;
+  std::size_t host_notifications = 0;
+  memory.set_transaction_response_callback(
+      [&](const hbm_sim::TransactionResponse&) {
+        transaction_notifications++;
+      });
+  memory.set_response_callback([&](const hbm_sim::HostResponse&) {
+    host_notifications++;
+  });
+
+  hbm_sim::TrafficOptions traffic;
+  traffic.pattern = "stream";
+  traffic.requests = 1;
+  traffic.read_ratio = 0;
+  std::vector<Request> writes = hbm_sim::generate_traffic(spec, traffic);
+  require(writes.size() == 2,
+          "async response test requires a two-transaction HBM4 host line");
+  require(memory.try_submit(writes[0]),
+          "async frontend rejected the first ready request");
+  require(!memory.try_submit(writes[1]),
+          "full stack ingress did not deassert request ready");
+  memory.step();
+  require(memory.try_submit(writes[1]),
+          "async frontend did not accept a held request after one step");
+
+  while (!memory.idle() && memory.clock() < 5000) {
+    memory.step();
+  }
+  require(memory.idle(), "async write requests did not become idle");
+  require(memory.has_response(), "async write host response is missing");
+  hbm_sim::HostResponse write_response = memory.pop_response();
+  require(write_response.type == RequestType::Write &&
+              write_response.transaction_count == 2 &&
+              write_response.transactions.size() == 2 &&
+              write_response.status == hbm_sim::ResponseStatus::Ok,
+          "async write transactions were not aggregated into one host response");
+  require(write_response.transactions[0].transaction_index == 0 &&
+              write_response.transactions[1].transaction_index == 1,
+          "host response did not preserve transaction_index order");
+
+  std::size_t write_transaction_responses = 0;
+  while (memory.has_transaction_response()) {
+    const hbm_sim::TransactionResponse response =
+        memory.pop_transaction_response();
+    require(response.type == RequestType::Write &&
+                response.completion_cycle >= response.issued_cycle &&
+                response.stack == 0 && response.channel >= 0,
+            "write transaction response lost timing or route metadata");
+    write_transaction_responses++;
+  }
+  require(write_transaction_responses == 2,
+          "async interface did not return one response per write transaction");
+
+  std::vector<Request> reads = writes;
+  hbm_sim::ByteVector expected_host_data;
+  for (std::size_t index = 0; index < reads.size(); index++) {
+    expected_host_data.insert(expected_host_data.end(),
+                              writes[index].payload.begin(),
+                              writes[index].payload.end());
+    reads[index].id = 9000 + index;
+    reads[index].host_request_id = 9000;
+    reads[index].type = RequestType::Read;
+    reads[index].expected_payload = writes[index].payload;
+    reads[index].has_expected_payload = true;
+    reads[index].payload.clear();
+    reads[index].has_payload = false;
+  }
+
+  std::size_t next = 0;
+  while (next < reads.size() && memory.clock() < 5000) {
+    if (memory.try_submit(reads[next])) {
+      next++;
+    } else {
+      memory.step();
+    }
+  }
+  while (!memory.idle() && memory.clock() < 5000) {
+    memory.step();
+  }
+  require(next == reads.size() && memory.idle(),
+          "async read requests did not complete");
+  require(memory.has_response(), "async read host response is missing");
+  const hbm_sim::HostResponse read_response = memory.pop_response();
+  require(read_response.type == RequestType::Read &&
+              read_response.data == expected_host_data &&
+              read_response.initialized &&
+              read_response.initialized_mask.size() ==
+                  expected_host_data.size() &&
+              std::all_of(read_response.initialized_mask.begin(),
+                          read_response.initialized_mask.end(),
+                          [](std::uint8_t byte) { return byte == 0xff; }) &&
+              read_response.status == hbm_sim::ResponseStatus::Ok,
+          "async host read response lost data, initialization mask, or status");
+  require(transaction_notifications == 4 && host_notifications == 2,
+          "non-consuming async response callbacks fired an incorrect number of times");
+}
+
+void test_async_response_backpressure_holds_completion() {
+  DramSpec spec = hbm_sim::make_spec("hbm4");
+  spec.supports_refresh = false;
+  spec.supports_rfm = false;
+  hbm_sim::refresh_timing_constraints(spec);
+
+  hbm_sim::MemorySystemOptions options;
+  options.controller.response_queue_capacity = 1;
+  options.transaction_response_queue_capacity = 1;
+  options.host_response_queue_capacity = 1;
+  MemorySystem memory(spec, options);
+  memory.set_response_delivery_mode(hbm_sim::ResponseDeliveryMode::Both);
+
+  hbm_sim::TrafficOptions traffic;
+  traffic.pattern = "stream";
+  traffic.requests = 1;
+  traffic.read_ratio = 0;
+  const std::vector<Request> writes =
+      hbm_sim::generate_traffic(spec, traffic);
+  require(writes.size() == 2 && memory.try_submit(writes[0]) &&
+              memory.try_submit(writes[1]),
+          "bounded response test could not submit both transactions");
+
+  while (!memory.idle() && memory.clock() < 5000) {
+    memory.step();
+  }
+  require(memory.idle() && memory.has_transaction_response() &&
+              !memory.has_response(),
+          "bounded transaction queue did not hold the incomplete host response");
+  const std::uint64_t held_request =
+      memory.front_transaction_response().request_id;
+  memory.step();
+  require(memory.front_transaction_response().request_id == held_request,
+          "response changed while valid was held without ready/pop");
+
+  (void)memory.pop_transaction_response();
+  memory.step();
+  require(memory.has_transaction_response() && memory.has_response(),
+          "releasing response ready did not deliver the retained completion");
+  const hbm_sim::HostResponse host = memory.pop_response();
+  require(host.transactions.size() == 2 &&
+              host.status == hbm_sim::ResponseStatus::Ok,
+          "response backpressure dropped or corrupted a child transaction");
+}
+
+void test_async_frontend_contract_and_host_only_delivery() {
+  DramSpec spec = hbm_sim::make_spec("hbm4");
+  spec.supports_refresh = false;
+  spec.supports_rfm = false;
+  hbm_sim::refresh_timing_constraints(spec);
+
+  hbm_sim::MemorySystemOptions options;
+  options.controller.response_queue_capacity = 1;
+  options.transaction_response_queue_capacity = 1;
+  options.host_response_queue_capacity = 1;
+  MemorySystem memory(spec, options);
+
+  Request maintenance;
+  maintenance.type = RequestType::Maintenance;
+  maintenance.next = Command::REFAB;
+  bool rejected_maintenance = false;
+  try {
+    (void)memory.try_submit(maintenance);
+  } catch (const std::invalid_argument&) {
+    rejected_maintenance = true;
+  }
+  require(rejected_maintenance,
+          "try_submit accepted maintenance that cannot produce HostResponse");
+
+  hbm_sim::TrafficOptions traffic;
+  traffic.pattern = "stream";
+  traffic.requests = 1;
+  traffic.read_ratio = 0;
+  std::vector<Request> writes = hbm_sim::generate_traffic(spec, traffic);
+  require(writes.size() == 2 && memory.try_submit(writes[0]),
+          "host-only contract test could not submit transaction zero");
+
+  bool rejected_duplicate = false;
+  try {
+    (void)memory.try_submit(writes[0]);
+  } catch (const std::invalid_argument&) {
+    rejected_duplicate = true;
+  }
+  require(rejected_duplicate,
+          "duplicate in-flight host transaction was not rejected");
+  require(memory.try_submit(writes[1]),
+          "host-only contract test could not submit transaction one");
+
+  while (!memory.idle() && memory.clock() < 5000) memory.step();
+  require(memory.idle() && !memory.quiescent() && memory.has_response(),
+          "idle/quiescent did not distinguish an unconsumed HostResponse");
+  require(!memory.has_transaction_response(),
+          "HostOnly mode retained a duplicate TransactionResponse view");
+
+  bool rejected_early_tag_reuse = false;
+  try {
+    (void)memory.try_submit(writes[0]);
+  } catch (const std::invalid_argument&) {
+    rejected_early_tag_reuse = true;
+  }
+  require(rejected_early_tag_reuse,
+          "host_request_id was released before response pop/ready handshake");
+
+  const hbm_sim::HostResponse response = memory.pop_response();
+  require(response.transactions.size() == 2 && memory.quiescent(),
+          "HostResponse pop did not release the tag or drain the system");
+
+  // pop 后允许 frontend 复用同一 tag；这是有限 tag 空间适配器需要的行为。
+  require(memory.try_submit(writes[0]) && memory.try_submit(writes[1]),
+          "host_request_id was not reusable after HostResponse consumption");
+  while (!memory.idle() && memory.clock() < 10000) memory.step();
+  require(memory.has_response(), "reused host tag did not complete");
+  (void)memory.pop_response();
+  require(memory.quiescent(), "reused host tag left response state behind");
+}
+
+void test_streaming_host_response_consumer() {
+  DramSpec spec = hbm_sim::make_spec("hbm4");
+  spec.supports_refresh = false;
+  spec.supports_rfm = false;
+  hbm_sim::refresh_timing_constraints(spec);
+
+  hbm_sim::TrafficOptions traffic;
+  traffic.pattern = "stream";
+  traffic.requests = 3;
+  traffic.read_ratio = 100;
+  std::unique_ptr<hbm_sim::TrafficStream> source =
+      hbm_sim::make_traffic_stream(spec, traffic);
+
+  MemorySystem memory(spec);
+  std::uint64_t consumed = 0;
+  memory.run(*source, 10000, [&](const hbm_sim::HostResponse& response) {
+    require(response.transactions.size() == 2,
+            "streaming consumer received an incomplete HBM4 host response");
+    consumed++;
+  });
+  require(consumed == 3 && memory.quiescent() &&
+              !memory.has_transaction_response(),
+          "streaming host consumer retained responses or lost a request");
+}
+
+void test_async_ecc_response_status() {
+  for (const hbm_sim::MemPhyMode mode :
+       {hbm_sim::MemPhyMode::Direct, hbm_sim::MemPhyMode::Behavioral}) {
+    DramSpec spec = hbm_sim::make_spec("hbm4");
+    spec.org.channels = 1;
+    spec.org.pseudo_channels = 1;
+    spec.org.sids = 1;
+    spec.org.bank_groups = 1;
+    spec.org.banks_per_group = 1;
+    spec.supports_refresh = false;
+    spec.supports_rfm = false;
+    hbm_sim::refresh_timing_constraints(spec);
+
+    hbm_sim::StorageModelOptions storage;
+    storage.ecc_shadow_enabled = true;
+    storage.ecc_check_on_read = true;
+    storage.ecc_correct_single_bit = true;
+    storage.ecc_inject_period = 1;
+    auto image = std::make_shared<hbm_sim::MemoryImage>(spec, 0, storage);
+
+    hbm_sim::MemorySystemOptions options;
+    options.controller.phy.mode = mode;
+    options.stack_memory_images.push_back(image);
+    MemorySystem memory(spec, options);
+
+    const hbm_sim::Address address = 0x2800;
+    const hbm_sim::ByteVector payload(32, 0xa5);
+    Request write;
+    write.id = mode == hbm_sim::MemPhyMode::Direct ? 9200 : 9210;
+    write.type = RequestType::Write;
+    write.address = address;
+    write.decoded = hbm_sim::AddressMapper(spec).decode(address);
+    write.host_request_id = write.id;
+    write.transfer_bytes = payload.size();
+    write.payload = payload;
+    write.has_payload = true;
+    require(memory.try_submit(write), "ECC async write was not accepted");
+    while (!memory.idle() && memory.clock() < 5000) memory.step();
+    require(memory.idle() && memory.has_response(),
+            "ECC async write did not complete");
+    (void)memory.pop_response();
+    while (memory.has_transaction_response()) {
+      (void)memory.pop_transaction_response();
+    }
+
+    Request read;
+    read.id = write.id + 1;
+    read.type = RequestType::Read;
+    read.address = address;
+    read.decoded = hbm_sim::AddressMapper(spec).decode(address);
+    read.host_request_id = read.id;
+    read.transfer_bytes = payload.size();
+    read.expected_payload = payload;
+    read.has_expected_payload = true;
+    require(memory.try_submit(read), "ECC async read was not accepted");
+    while (!memory.idle() && memory.clock() < 5000) memory.step();
+    require(memory.idle() && memory.has_response(),
+            "ECC async read did not complete");
+    const hbm_sim::HostResponse response = memory.pop_response();
+    require(response.data == payload && response.ecc_corrected &&
+                !response.ecc_uncorrectable &&
+                response.status == hbm_sim::ResponseStatus::EccCorrected &&
+                response.transactions.size() == 1 &&
+                response.transactions[0].ecc_corrected,
+            "ECC correction status was not propagated through the async response");
+  }
 }
 
 void test_address_mapping_templates() {
@@ -2690,6 +3053,11 @@ int main() {
   test_lpddr6_shared_metadata_lane_overhead();
   test_lpddr6_host_line_transaction_split();
   test_hbm4_host_line_transaction_split();
+  test_async_frontend_response_interface();
+  test_async_response_backpressure_holds_completion();
+  test_async_frontend_contract_and_host_only_delivery();
+  test_streaming_host_response_consumer();
+  test_async_ecc_response_status();
   test_address_mapping_templates();
   test_lpddr5_cas_write_sequence();
 

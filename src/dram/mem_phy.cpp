@@ -250,10 +250,16 @@ void MemPhy::complete_slot(const DataSlot& slot, Cycle cycle) {
                                       ? &slot.request.storage_decoded
                                       : &slot.request.decoded;
   if (slot.request.type == RequestType::Read) {
+    const PhysicalStorageStats before = memory_image_->storage_stats();
     const std::size_t size = transfer_size(spec_, slot.request);
     completion.data = memory_image_->read(slot.request.address, size, &completion.initialized, decoded);
     completion.initialized_mask =
         memory_image_->read_initialized_mask(slot.request.address, completion.data.size(), decoded);
+    const PhysicalStorageStats after = memory_image_->storage_stats();
+    completion.ecc_corrected =
+        after.ecc_corrected_errors > before.ecc_corrected_errors;
+    completion.ecc_uncorrectable =
+        after.ecc_uncorrectable_errors > before.ecc_uncorrectable_errors;
     stats_.read_completions++;
     stats_.total_read_service_cycles += cycle - slot.issued_cycle;
   } else {

@@ -8,6 +8,7 @@
 #include <cassert>
 #include <cstddef>
 #include <limits>
+#include <stdexcept>
 #include <utility>
 
 #include "hbm_sim/controller/executor.hpp"
@@ -203,17 +204,31 @@ bool Controller::enqueue(Request req) {
       // 这里按 byte range 判断命中，而不是只看完全相同地址，因此 partial/
       // offset write 后的同一 cache line 读也能被数据正确性检查覆盖。
       req.bypass_dram = true;
+      req.issued_cycle = clk_;
       req.completion = clk_ + 1;
       stats_.reads++;
-      stats_.completed_reads++;
-      stats_.total_read_latency += req.completion - req.arrival;
       stats_.injected_requests++;
       stats_.read_forwards++;
       bool initialized = true;
-      ByteVector actual = read_forward_payload(req, &initialized);
-      stats_.dfi_forwarded_read_beats +=
-          dfi_beats_for_payload(spec_, actual.size());
-      check_read_data(req, actual, initialized, true);
+      ByteVector initialized_mask;
+      const PhysicalStorageStats storage_before =
+          memory_image_->storage_stats();
+      req.payload =
+          read_forward_payload(req, &initialized, &initialized_mask);
+      const PhysicalStorageStats storage_after =
+          memory_image_->storage_stats();
+      req.response_ecc_corrected =
+          storage_after.ecc_corrected_errors >
+          storage_before.ecc_corrected_errors;
+      req.response_ecc_uncorrectable =
+          storage_after.ecc_uncorrectable_errors >
+          storage_before.ecc_uncorrectable_errors;
+      req.has_payload = true;
+      // bypass 读在下一拍才对响应端可见；把快照存在 Request 中，避免后续
+      // 写缓冲变化改变已经接受的读结果。
+      req.byte_mask = std::move(initialized_mask);
+      req.has_byte_mask = true;
+      pending_.push_back(std::move(req));
       return true;
     }
     if (!buffer_has_space(BufferKind::Read)) {
@@ -238,6 +253,9 @@ bool Controller::enqueue(Request req) {
         return false;
       }
       req.controller_sequence = next_controller_sequence_++;
+      req.bypass_dram = true;
+      req.issued_cycle = clk_;
+      req.completion = clk_ + 1;
       // 同地址写请求合并到已有 write/active entry，不再占用队列和总线。
       auto existing = buffered_writes_.find(req.address);
       if (existing == buffered_writes_.end() || !req.has_byte_mask) {
@@ -258,9 +276,11 @@ bool Controller::enqueue(Request req) {
         existing->second.byte_mask.clear();
       }
       stats_.writes++;
-      stats_.completed_writes++;
       stats_.injected_requests++;
       stats_.write_coalesces++;
+      // 合并写没有独立 DRAM 命令，但每个被接受的 frontend 请求仍必须得到
+      // 一条响应。pending_ 只延迟响应，不会重复提交合并后的数据。
+      pending_.push_back(std::move(req));
       return true;
     }
     if (!buffer_has_space(BufferKind::Write)) {
@@ -450,6 +470,59 @@ bool Controller::done() const {
          (!mem_phy_ || mem_phy_->idle());
 }
 
+const TransactionResponse &Controller::front_response() const {
+  if (responses_.empty()) {
+    throw std::logic_error("Controller response queue is empty");
+  }
+  return responses_.front();
+}
+
+TransactionResponse Controller::pop_response() {
+  if (responses_.empty()) {
+    throw std::logic_error("Controller response queue is empty");
+  }
+  TransactionResponse response = std::move(responses_.front());
+  responses_.pop_front();
+  return response;
+}
+
+bool Controller::response_queue_full() const {
+  return options_.response_queue_capacity != 0 &&
+         responses_.size() >= options_.response_queue_capacity;
+}
+
+TransactionResponse Controller::make_response(
+    const Request &req, ByteVector data, ByteVector initialized_mask,
+    bool initialized, bool forwarded, bool coalesced,
+    ResponseStatus status) const {
+  TransactionResponse response;
+  response.request_id = req.id;
+  response.host_request_id = req.host_request_id;
+  response.transaction_index = req.transaction_index;
+  response.transaction_count = std::max<std::uint32_t>(1, req.transaction_count);
+  response.type = req.type;
+  response.system_address =
+      req.has_system_address ? req.system_address : req.address;
+  response.local_address = req.address;
+  response.stack = req.target_stack;
+  response.channel = req.target_channel >= 0 ? req.target_channel
+                                             : options_.global_channel_id;
+  response.arrival_cycle = req.arrival;
+  response.issued_cycle = req.issued_cycle;
+  response.completion_cycle = req.completion;
+  response.data = std::move(data);
+  response.initialized_mask = std::move(initialized_mask);
+  response.initialized = initialized;
+  response.forwarded = forwarded;
+  response.coalesced = coalesced;
+  response.status = status;
+  if (req.transaction_count == 0 ||
+      req.transaction_index >= response.transaction_count) {
+    response.status = ResponseStatus::InvalidTransaction;
+  }
+  return response;
+}
+
 void Controller::tick() {
   // tick() 是单个 channel controller 的主循环。顺序故意接近 Ramulator 风格：
   // 1. 推进时间并统计队列长度
@@ -543,24 +616,31 @@ void Controller::complete_pending() {
       ++it;
       continue;
     }
+    // 输出端未 ready 时保持完成项和响应数据，不从 PHY 取走 completion。
+    if (options_.retain_responses && response_queue_full()) {
+      ++it;
+      continue;
+    }
 
     std::optional<MemPhyCompletion> phy_completion;
-    if (mem_phy_ && mem_phy_->behavioral()) {
+    if (!it->bypass_dram && mem_phy_ && mem_phy_->behavioral()) {
       phy_completion =
           mem_phy_->take_completion(it->id, it->controller_sequence);
       if (!phy_completion.has_value()) {
         ++it;
         continue;
       }
+      // Behavioral PHY 的 completion 是最终事实口径；不要只依赖 submit_data()
+      // 返回的预测周期，为以后增加可变 PHY 服务时间保留接口。
+      it->issued_cycle = phy_completion->issued_cycle;
+      it->completion = phy_completion->completion_cycle;
     }
 
     if (it->type == RequestType::Read) {
       // 读请求在 RD/RDA 发出后不会立即完成，而是等 nCL+nBL 的简化读延迟。
-      // bypass_dram 的读已在 enqueue() 直接计完成，这里不重复增加
-      // completed_reads。
-      if (!it->bypass_dram) {
-        stats_.completed_reads++;
-      }
+      // bypass_dram 的读也在这里进入统一响应路径，但不计真实 DRAM/interface
+      // 搬运字节。
+      stats_.completed_reads++;
       stats_.total_read_latency += it->completion - it->arrival;
       if (!it->bypass_dram) {
         const std::size_t payload_bytes = request_data_size(spec_, *it);
@@ -574,57 +654,108 @@ void Controller::complete_pending() {
                        static_cast<std::int64_t>(payload_bytes)) *
             8;
       }
-      complete_read(*it, phy_completion ? &*phy_completion : nullptr);
+      TransactionResponse response =
+          complete_read(*it, phy_completion ? &*phy_completion : nullptr);
+      if (options_.retain_responses) {
+        responses_.push_back(std::move(response));
+      }
     } else if (it->type == RequestType::Write) {
       // 写请求当前采用简化完成语义：WR/WRA 发出后 1 cycle 即完成。
       // 这对带宽/命令调度研究足够轻量，若后续研究写响应时序，可在这里扩展。
-      const std::size_t payload_bytes = request_data_size(spec_, *it);
-      const int interface_bytes = request_interface_bytes(spec_, payload_bytes);
       stats_.completed_writes++;
-      stats_.write_bytes += payload_bytes;
-      stats_.interface_write_bytes += interface_bytes;
-      stats_.interface_overhead_bits +=
-          std::max<std::int64_t>(0,
-                                 static_cast<std::int64_t>(interface_bytes) -
-                                     static_cast<std::int64_t>(payload_bytes)) *
-          8;
-      complete_write(*it, phy_completion ? &*phy_completion : nullptr);
+      if (!it->bypass_dram) {
+        const std::size_t payload_bytes = request_data_size(spec_, *it);
+        const int interface_bytes =
+            request_interface_bytes(spec_, payload_bytes);
+        stats_.write_bytes += payload_bytes;
+        stats_.interface_write_bytes += interface_bytes;
+        stats_.interface_overhead_bits +=
+            std::max<std::int64_t>(
+                0, static_cast<std::int64_t>(interface_bytes) -
+                       static_cast<std::int64_t>(payload_bytes)) *
+            8;
+      }
+      TransactionResponse response =
+          complete_write(*it, phy_completion ? &*phy_completion : nullptr);
+      if (options_.retain_responses) {
+        responses_.push_back(std::move(response));
+      }
     }
     it = pending_.erase(it);
   }
 }
 
-void Controller::complete_read(Request &req,
-                               const MemPhyCompletion *phy_completion) {
+TransactionResponse Controller::complete_read(
+    Request &req, const MemPhyCompletion *phy_completion) {
   const std::size_t size = request_data_size(spec_, req);
   bool initialized = true;
   DecodedAddress storage = storage_decoded_for(req);
   ByteVector actual;
   ByteVector initialized_mask;
-  if (phy_completion != nullptr) {
+  bool ecc_corrected = req.response_ecc_corrected;
+  bool ecc_uncorrectable = req.response_ecc_uncorrectable;
+  if (req.bypass_dram) {
+    actual = req.payload;
+    initialized_mask = req.byte_mask;
+    initialized = std::all_of(initialized_mask.begin(), initialized_mask.end(),
+                              [](std::uint8_t byte) { return byte != 0; });
+  } else if (phy_completion != nullptr) {
     actual = phy_completion->data;
     initialized = phy_completion->initialized;
     initialized_mask = phy_completion->initialized_mask;
+    ecc_corrected = phy_completion->ecc_corrected;
+    ecc_uncorrectable = phy_completion->ecc_uncorrectable;
   } else {
+    const PhysicalStorageStats storage_before =
+        memory_image_->storage_stats();
     actual = memory_image_->read(req.address, size, &initialized, &storage);
     initialized_mask = memory_image_->read_initialized_mask(
         req.address, actual.size(), &storage);
+    const PhysicalStorageStats storage_after =
+        memory_image_->storage_stats();
+    ecc_corrected = storage_after.ecc_corrected_errors >
+                    storage_before.ecc_corrected_errors;
+    ecc_uncorrectable = storage_after.ecc_uncorrectable_errors >
+                        storage_before.ecc_uncorrectable_errors;
   }
-  Command data_cmd = req.issued_data_command == Command::NOP
-                         ? Command::RD
-                         : req.issued_data_command;
-  annotate_issued_data(req, data_cmd, actual, nullptr, &initialized_mask,
-                       initialized);
-  stats_.dfi_read_beats += dfi_beats_for_payload(spec_, actual.size());
-  stats_.dfi_data_bytes += actual.size();
-  check_read_data(req, actual, initialized, false);
-  if (phy_completion != nullptr && data_cmd == Command::RDA) {
+  const Command data_cmd = req.issued_data_command == Command::NOP
+                               ? Command::RD
+                               : req.issued_data_command;
+  if (req.bypass_dram) {
+    stats_.dfi_forwarded_read_beats +=
+        dfi_beats_for_payload(spec_, actual.size());
+  } else {
+    annotate_issued_data(req, data_cmd, actual, nullptr, &initialized_mask,
+                         initialized);
+    stats_.dfi_read_beats += dfi_beats_for_payload(spec_, actual.size());
+    stats_.dfi_data_bytes += actual.size();
+  }
+  ResponseStatus status =
+      check_read_data(req, actual, initialized, req.bypass_dram);
+  if (ecc_corrected) {
+    status = merge_response_status(status, ResponseStatus::EccCorrected);
+  }
+  if (ecc_uncorrectable) {
+    status = merge_response_status(status, ResponseStatus::EccUncorrectable);
+  }
+  if (!req.bypass_dram && phy_completion != nullptr &&
+      data_cmd == Command::RDA) {
     memory_image_->precharge_bank(storage, clk_);
   }
+  TransactionResponse response =
+      make_response(req, std::move(actual), std::move(initialized_mask),
+                    initialized, req.bypass_dram, false, status);
+  response.ecc_corrected = ecc_corrected;
+  response.ecc_uncorrectable = ecc_uncorrectable;
+  return response;
 }
 
-void Controller::complete_write(Request &req,
-                                const MemPhyCompletion *phy_completion) {
+TransactionResponse Controller::complete_write(
+    Request &req, const MemPhyCompletion *phy_completion) {
+  if (req.bypass_dram) {
+    return make_response(req, {}, {}, true, false, true,
+                         ResponseStatus::Ok);
+  }
   if (phy_completion != nullptr) {
     ensure_write_payload(req);
     const ByteVector *mask = req.has_byte_mask ? &req.byte_mask : nullptr;
@@ -645,12 +776,12 @@ void Controller::complete_write(Request &req,
       DecodedAddress storage = storage_decoded_for(req);
       memory_image_->precharge_bank(storage, clk_);
     }
-    return;
+    return make_response(req);
   }
-  if (req.data_committed) {
-    return;
+  if (!req.data_committed) {
+    commit_write_data(req);
   }
-  commit_write_data(req);
+  return make_response(req);
 }
 
 void Controller::commit_write_data(Request &req) {
@@ -675,13 +806,16 @@ void Controller::commit_write_data(Request &req) {
   }
 }
 
-void Controller::check_read_data(const Request &req, const ByteVector &actual,
-                                 bool initialized, bool forwarded) {
+ResponseStatus Controller::check_read_data(const Request &req,
+                                           const ByteVector &actual,
+                                           bool initialized,
+                                           bool forwarded) {
   if (!initialized) {
     stats_.data_uninitialized_reads++;
   }
   if (!req.has_expected_payload) {
-    return;
+    return initialized ? ResponseStatus::Ok
+                       : ResponseStatus::UninitializedData;
   }
   stats_.data_checked_reads++;
   if (forwarded) {
@@ -696,12 +830,17 @@ void Controller::check_read_data(const Request &req, const ByteVector &actual,
         memory_image_->metadata(req.address, &storage));
     if (!result.matched) {
       stats_.data_mismatches++;
+      return ResponseStatus::DataMismatch;
     }
-    return;
+    return initialized ? ResponseStatus::Ok
+                       : ResponseStatus::UninitializedData;
   }
   if (actual != req.expected_payload) {
     stats_.data_mismatches++;
+    return ResponseStatus::DataMismatch;
   }
+  return initialized ? ResponseStatus::Ok
+                     : ResponseStatus::UninitializedData;
 }
 
 void Controller::ensure_write_payload(Request &req) {
@@ -771,13 +910,13 @@ bool Controller::has_unresolved_overlapping_write(const Request &read) const {
 }
 
 ByteVector Controller::read_forward_payload(const Request &req,
-                                            bool *initialized) const {
+                                            bool *initialized,
+                                            ByteVector *initialized_mask) const {
   const std::size_t size = request_data_size(spec_, req);
   DecodedAddress storage = storage_decoded_for(req);
-  bool base_initialized = true;
-  ByteVector actual =
-      memory_image_->read(req.address, size, &base_initialized, &storage);
-  ByteVector forwarded_mask(size, 0);
+  ByteVector actual = memory_image_->read(req.address, size, nullptr, &storage);
+  ByteVector result_mask = memory_image_->read_initialized_mask(
+      req.address, actual.size(), &storage);
 
   std::vector<const Request *> writes;
   writes.reserve(buffered_writes_.size());
@@ -813,15 +952,19 @@ ByteVector Controller::read_forward_payload(const Request &req,
       if (src < write_req->payload.size() && src < mask.size() &&
           dst < actual.size() && mask[src] != 0) {
         actual[dst] = write_req->payload[src];
-        forwarded_mask[dst] = 0xff;
+        if (dst < result_mask.size()) {
+          result_mask[dst] = 0xff;
+        }
       }
     }
   }
 
   if (initialized != nullptr) {
-    *initialized = base_initialized ||
-                   std::all_of(forwarded_mask.begin(), forwarded_mask.end(),
+    *initialized = std::all_of(result_mask.begin(), result_mask.end(),
                                [](std::uint8_t byte) { return byte != 0; });
+  }
+  if (initialized_mask != nullptr) {
+    *initialized_mask = std::move(result_mask);
   }
   return actual;
 }
@@ -1493,6 +1636,7 @@ void Controller::retire_or_advance(Candidate cand, Command issued) {
 
   Request done_req = req;
   done_req.issued_data_command = issued;
+  done_req.issued_cycle = clk_;
   if (done_req.type == RequestType::Write) {
     auto pending_write = buffered_writes_.find(done_req.address);
     if (pending_write != buffered_writes_.end()) {

@@ -1,6 +1,6 @@
 # 控制器实现
 
-controller 层当前只处理请求调度和命令完成语义：写完成时调用 `MemoryImage::write()` commit payload，读完成时调用 `MemoryImage::read()` 取 actual payload，read-forward 从 write buffer overlay pending write。不要在这里实现具体 `sparse/mmap/chunk` 后端。
+controller 层当前只处理请求调度和命令完成语义：写完成时调用 `MemoryImage::write()` commit payload，读完成时调用 `MemoryImage::read()` 取 actual payload，read-forward 从 write buffer overlay pending write，并为每个已接受的读写生成 `TransactionResponse`。不要在这里实现具体 `sparse/mmap/chunk` 后端或 host 多事务重组。
 
 本目录实现 controller 层。它连接 request buffer、scheduler、row policy、
 refresh/RFM manager、timing engine 和 command executor，决定每个 cycle 发射什么命令。
@@ -26,7 +26,7 @@ refresh/RFM manager、timing engine 和 command executor，决定每个 cycle �
 `controller.cpp` 是协调层，不应该无限膨胀。它可以做这些事：
 
 - 管理 read/write/priority/active buffer。
-- 处理请求进入、完成、读转发和写合并。
+- 处理请求进入、完成、读转发、写合并和 channel-local transaction response。
 - 调用 scheduler、row policy、timing engine、executor。
 - 维护 HBM row/column bus 发射顺序和 LPDDR split activate 流程。
 
