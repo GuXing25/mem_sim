@@ -29,7 +29,7 @@ standard
 四种标准的主 run 配置均启用 `mem_phy_mode=behavioral`，完整路径为
 `Controller/MC -> MemPhy -> MemoryImage/Mem Stack`。配置的 `dfi_version=6.0.1`
 是目标修订标签；公开可核对的 DFI Group 发布项为 6.0，具体口径和限制见
-[Mem PHY 模型](../../文档/Mem%20PHY模型.md)。需要复现旧结果时可追加
+[交付手册的 Mem PHY 章节](../../堆叠存储模型交付手册.md#25-mem-phy)。需要复现旧结果时可追加
 `--mem-phy direct`。
 
 ## 2. `hbm3.cfg`

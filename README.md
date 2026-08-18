@@ -7,17 +7,16 @@ Mem PHY 与 Mem Stack，支持控制器时序研究、真实数据读写、
 
 ## 文档
 
+- [堆叠存储模型交付手册](堆叠存储模型交付手册.md)：交付总入口，覆盖总体设计、模块、构建、使用、验证、参数和输出指标。
 - [项目指南](文档/项目指南.md)：构建、配置、输出字段和代码索引。
 - [仿真使用手册](文档/仿真使用手册.md)：完整命令、全部输出指标、文件查看和定制条件。
 - [多 Stack 及存储后端](文档/多Stack及存储后端.md)：路由、隔离及三种后端。
 - [审计](文档/审计.md)：验证证据、真实厂商参数缺口和研究替代值。
-- [验证与校准路线](VALIDATION_AND_CALIBRATION.md)：外部模型与真实硬件校准操作清单。
 - [架构和构建流程](文档/架构和构建流程.md)：traits、profile、配置覆盖和 finalize。
-- [Mem PHY 模型](文档/Mem%20PHY模型.md)：Direct/Behavioral、HBM/LPDDR 适配和 DFI 口径。
 - [内存模型和平台](文档/内存模型和平台.md)：四类模型和平台对比。
-- [异步请求—响应接口](文档/异步请求响应接口.md)：逐周期请求反压、事务完成、host 重组以及未来 CPU/NoC/UCIe/RTL 适配边界。
 
-目录内的 `README.md` 只说明本目录，不重复根目录专题文档。
+PHY、异步接口和长期校准路线已合并到交付手册，避免同一主题维护多份口径。目录内的
+`README.md` 只说明本目录，不重复根目录专题文档。
 
 ## 主要能力
 
@@ -232,8 +231,8 @@ cmake --build build-clang-debug --parallel
 ctest --test-dir build-clang-debug --output-on-failure
 ```
 
-CTest 包含 CLI smoke、C++ 命令序列、Timing 边界、28 项项目原生验收、CI 规模
-性能曲线和敏感性/不确定性检查，共 7 个入口。VS Code 中
+CTest 包含 CLI smoke、C++ 命令序列、PHY、Timing 边界、可视化、项目原生验收、
+CI 规模性能曲线和敏感性/不确定性检查，当前共 10 个入口（以 `ctest -N` 为准）。VS Code 中
 可运行 `hbm_sim: run all tests`；Make 兼容入口仍是
 `make CXX=/usr/bin/clang++-18 test`。
 

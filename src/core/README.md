@@ -73,7 +73,7 @@ core 层当前包含真实存储区热路径：`data.cpp` 实现 `MemoryImage`�
 `idle/quiescent` 分别表示执行完成和响应也已取空。旧 `run()` 默认仍是低开销批处理；
 CLI 的 `--response-trace` 则实际逐拍驱动并在线消费 HostResponse。这里提供协议中立的
 运行时语义，不实现 UCIe flit、NoC credit 或 RTL CDC，具体映射见
-`文档/异步请求响应接口.md`。
+`堆叠存储模型交付手册.md` 的 2.7 节。
 
 它不负责决定单个 controller 内本周期发什么 DRAM 命令，这个职责仍在
 `src/controller/`；也不宣称模拟完整 UCIe flit/credit/link 仲裁。
