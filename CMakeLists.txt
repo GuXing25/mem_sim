@@ -27,6 +27,7 @@ set(HBM_SIM_CORE_SOURCES
 set(HBM_SIM_DRAM_SOURCES
   src/dram/interface.cpp
   src/dram/jedec.cpp
+  src/dram/mem_phy.cpp
   src/dram/profiles.cpp
   src/dram/semantics.cpp
   src/dram/spec.cpp
@@ -36,10 +37,6 @@ set(HBM_SIM_DRAM_SOURCES
 
 set(HBM_SIM_FRONTEND_SOURCES
   src/frontend/traffic.cpp
-)
-
-set(HBM_SIM_PHY_SOURCES
-  src/phy/mem_phy.cpp
 )
 
 set(HBM_SIM_STATS_SOURCES
@@ -57,7 +54,6 @@ add_library(hbm_sim_core
   ${HBM_SIM_CORE_SOURCES}
   ${HBM_SIM_DRAM_SOURCES}
   ${HBM_SIM_FRONTEND_SOURCES}
-  ${HBM_SIM_PHY_SOURCES}
   ${HBM_SIM_STATS_SOURCES}
   ${HBM_SIM_VALIDATION_SOURCES}
 )

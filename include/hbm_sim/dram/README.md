@@ -14,6 +14,10 @@ controller 层再消费这些描述做调度和发射。
 - `state.hpp`：命令合法性状态机接口。
 - `interface.hpp`：payload、ECC、DBI、CRC、metadata 等接口开销计算接口。
 - `bank_state.hpp`：bank-local 状态结构。
+- `mem_phy.hpp`：MC 与 stack 之间的行为级 PHY。它定义 Direct/Behavioral
+  模式、DFI 生命周期、FIFO、完成队列及 HBM/LPDDR 协议适配器；实现位于
+  `src/dram/mem_phy.cpp`。它不替代 JEDEC 调度器，也不声称是厂商 pin-accurate
+  PHY，建模边界见 `文档/Mem PHY模型.md`。
 
 修改建议：
 

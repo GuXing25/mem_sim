@@ -21,7 +21,7 @@
 #include "hbm_sim/core/request.hpp"
 #include "hbm_sim/dram/bank_state.hpp"
 #include "hbm_sim/dram/spec.hpp"
-#include "hbm_sim/phy/mem_phy.hpp"
+#include "hbm_sim/dram/mem_phy.hpp"
 #include "hbm_sim/stats/stats.hpp"
 
 namespace hbm_sim {

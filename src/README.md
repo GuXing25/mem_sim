@@ -43,7 +43,7 @@ dram -> common
 - 新增 refresh/RFM 策略：优先扩展 `controller/refresh.cpp` 或 `controller/rfm.cpp`，Controller 只负责把维护请求放入 priority path。
 - 新增 LPDDR mode register、WCK、DVFS、CA/link protection 或低功耗行为：先扩展 `DramSpec` 中的配置字段和 `dram/profiles.cpp` 的 profile 展开，再改 `controller/timing.cpp`、`dram/state.cpp` 或 `controller/controller.cpp` 中真正需要的状态机；如果会改变命令合法性，也要同步更新 `validation/validator.cpp` 的离线重放规则。如果该行为消耗命令/地址总线或 metadata bit，还要补 `Stats::interface_command_bits` 或 request-level overhead。
 - 新增 LPDDR6 REFdb timing 或其他 dual-bank refresh 规则：先把字段放入 `Timing` 和 timing table，再在 `dram/spec.cpp` 的 LPDDR constraint 中选择保守/精确作用域；如果需要区分 short/long bank-pair，应同步扩展 validator。
-- 新增 PHY/DFI 行为：公共生命周期、FIFO 和协议编码放在 `phy/mem_phy.cpp`，事件/CSV 校验放在 `validation/dfi.cpp`。Behavioral 数据完成会改变 Controller completion 路径；仍不宣称 pin-level 模拟训练或厂商 lane 合规。
+- 新增 PHY/DFI 行为：公共生命周期、FIFO 和协议编码放在 `dram/mem_phy.cpp`，事件/CSV 校验放在 `validation/dfi.cpp`。Behavioral 数据完成会改变 Controller completion 路径；仍不宣称 pin-level 模拟训练或厂商 lane 合规。
 - 新增接口开销或 metadata lane 口径：优先改 `dram/interface.cpp`，保持 `DramSpec` 只保存配置字段，Controller/MemorySystem 只消费已经计算好的 request/command 开销。
 - 新增初始化、训练或链路控制序列：优先改 `frontend/traffic.cpp` 的 `generate_control_sequence()`，再补 `tests/sequence_tests.cpp` 和 `tests/smoke.sh`，保证 CLI、online controller 和离线 validator 都能看到同一条命令路径。
 - 新增统计字段：先放到 `Stats`，再在 `stats/stats.cpp` 追加输出，避免改变旧字段顺序。

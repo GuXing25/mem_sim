@@ -1,4 +1,4 @@
-#include "hbm_sim/phy/mem_phy.hpp"
+#include "hbm_sim/dram/mem_phy.hpp"
 
 #include <algorithm>
 #include <cctype>

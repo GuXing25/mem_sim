@@ -246,7 +246,7 @@ int main(int argc, char** argv) {
 
     std::vector<Evidence> evidence;
     std::size_t skipped_zero_latency = 0;
-    for (const std::string& standard : {"hbm3", "hbm4", "lpddr5", "lpddr6"}) {
+    for (const char* standard : {"hbm3", "hbm4", "lpddr5", "lpddr6"}) {
       const DramSpec spec = hbm_sim::make_spec(standard);
       for (std::size_t index = 0; index < spec.timing_constraints.size(); ++index) {
         const TimingConstraint& constraint = spec.timing_constraints[index];

@@ -19,6 +19,11 @@ MemoryImage / Mem Stack（payload、行缓冲、物理坐标、功耗、热、EC
 `[stack][channel]` Controller 建立独立 PHY；同一 stack 的各通道仍连接该 stack
 自己的 `MemoryImage`，不同 stack 不共享数据或 PHY 状态。
 
+代码上，PHY 不再是独立目录：公共接口为
+`include/hbm_sim/dram/mem_phy.hpp`，实现为 `src/dram/mem_phy.cpp`，并由
+`Controller` 包含。这样它与 `DramSpec`、命令语义、DFI 字段同属 DRAM 接口模型，
+但仍不承担 Controller 的调度职责或 `MemoryImage` 的持久化职责。
+
 ## 2. 两种模式
 
 `mem_phy_mode=direct` 是兼容路径。它保留历史行为：Controller 直接在原有完成点
@@ -48,6 +53,21 @@ Behavioral；命令行可用 `--mem-phy direct` 覆盖。
 用于 HBM3/HBM4。`LpddrPhyAdapter` 保留统一 CA、ACT1/ACT2、CAS/WCK、WCKTRAIN
 和 DVFS 事件，用于 LPDDR5/LPDDR6。JEDEC bank/timing legality 仍由 Controller
 负责，适配器不会重复计算 tRCD、tFAW、refresh 或 RFM。
+
+### 3.1 命令、数据与信号的转换边界
+
+| 源 | 转换 | 产物 | 当前精度边界 |
+| --- | --- | --- | --- |
+| config/profile | `DramSpec` + `finalize_spec()` | 组织、nCK timing、DFI beat 粒度、协议能力 | 参数值是否为目标料号取决于 source 标签 |
+| host/trace request | Frontend 拆分 host line，`MemorySystem` 做 stack/channel 路由 | stack-local `Request`、`storage_decoded`、`system_address` | `stack=N` 表示 stack-local 地址；未指定时按 stack mapping 分配 |
+| MC scheduler | bank state、timing engine、row policy | ACT/PRE/RD/WR/REF/RFM 等 `IssuedCommand` | JEDEC 命令级，不是 pin toggle |
+| `MemPhy` adapter | command/bus + `DramSpec` | HBM row/column 或 LPDDR unified CA 摘要、CA edge/WCK 统计、FIFO/完成拍 | 不提供厂商 CA bit/lane packing |
+| PHY completion | read/write FIFO 到期 | `MemoryImage::read/write` 的实际 payload 与 init mask | Behavioral 使用真实完成拍；Direct 是兼容完成语义 |
+| DFI exporter | `IssuedCommand` + 回填 payload/data cycle | `COMMAND`、`READ_DATA`、`WRITE_DATA` beat 与 signal-like CSV | `dfi_address` 是稳定的项目编码，不是逐 pin CA 映射 |
+
+因此，`dfi_wrdata` 来自请求写 payload，`dfi_rddata` 来自 `MemoryImage` 的实际读回；
+write mask 在存储模型中是“非零字节允许写”，导出的 `dfi_wrdata_mask` 则是项目定义的
+高电平屏蔽视图。二者的极性差异不可直接当成某厂商 DFI 电平定义。
 
 ## 4. DFI 版本口径
 
@@ -121,6 +141,12 @@ Behavioral 的性能结果不能把 RDA/WRA 场景当作逐周期等价差分；
 - LPDDR DVFS → WCKTRAIN 状态恢复；
 - HBM3/HBM4/LPDDR5/LPDDR6 的写入、读回、payload 校验；
 - 在线 PHY completion 生成的 DFI trace 自洽验证。
+
+`tests/phy_smoke.sh` 另外执行 6-stack HBM4 的真实数据路径：两个 stack 对同一局部
+地址写入不同 32B payload，延后从各自 stack 读回，检查 `data_mismatches=0`、命令/DFI
+validator 均通过，并解析 command 和 signal CSV，确认两端都有 `WRITE_DATA` 的
+`request_payload` 与 `READ_DATA` 的 `memory_image` payload。该检查避免把
+same-cycle write-forward 误当成后端读回。
 
 原有 sequence、timing boundary、smoke、性能曲线、敏感性和项目模型验证继续使用
 Direct 默认路径回归，以保证历史功能；四个运行配置另行验证 Behavioral 完整路径。

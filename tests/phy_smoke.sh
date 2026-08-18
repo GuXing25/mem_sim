@@ -45,4 +45,57 @@ multi_output=$(
 [[ $(value_of remaining_pending <<<"$multi_output") == 0 ]]
 [[ $(value_of data_mismatches <<<"$multi_output") == 0 ]]
 
+# 同一 stack-local 地址在不同 stack 必须保存独立 payload。此场景还验证从
+# Behavioral PHY completion 回填的实际 DFI 数据，而不是只检查“请求都完成”。
+printf '%s\n' \
+  '0 W 0x0000 stack=0 qos=0 data=000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f' \
+  '1 W 0x0000 stack=5 qos=7 data=f0f1f2f3f4f5f6f7f8f9fafbfcfdfeffe0e1e2e3e4e5e6e7e8e9eaebecedeeef' \
+  '400 R 0x0000 stack=0 qos=0 expect=000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f' \
+  '401 R 0x0000 stack=5 qos=7 expect=f0f1f2f3f4f5f6f7f8f9fafbfcfdfeffe0e1e2e3e4e5e6e7e8e9eaebecedeeef' \
+  > "$phy_tmp_dir/multistack_data.trace"
+multi_data_output=$(
+  "$phy_bin" \
+    --config "$phy_source/configs/run/hbm4_6stack.cfg" \
+    --trace "$phy_tmp_dir/multistack_data.trace" \
+    --requests 0 --max-cycles 500000 \
+    --validate-cmd-trace --validate-dfi-trace \
+    --cmd-trace "$phy_tmp_dir/multistack_commands.csv" \
+    --dfi-trace "$phy_tmp_dir/multistack_dfi.csv" \
+    --dfi-signal-trace "$phy_tmp_dir/multistack_dfi_signal.csv"
+)
+[[ $(value_of cmd_validation <<<"$multi_data_output") == pass ]]
+[[ $(value_of dfi_validation <<<"$multi_data_output") == pass ]]
+[[ $(value_of active_stacks <<<"$multi_data_output") == 2 ]]
+[[ $(value_of data_checked_reads <<<"$multi_data_output") == 2 ]]
+[[ $(value_of data_mismatches <<<"$multi_data_output") == 0 ]]
+[[ $(value_of data_write_commits <<<"$multi_data_output") == 2 ]]
+python3 - "$phy_tmp_dir/multistack_commands.csv" \
+  "$phy_tmp_dir/multistack_dfi_signal.csv" <<'PY'
+import csv
+import sys
+
+commands_path, signals_path = sys.argv[1:]
+with open(commands_path, newline='', encoding='utf-8') as source:
+    commands = list(csv.DictReader(source))
+assert {row['stack_id'] for row in commands} == {'0', '5'}, commands
+assert {row['command'] for row in commands} >= {'ACT', 'RD', 'WR'}, commands
+
+with open(signals_path, newline='', encoding='utf-8') as source:
+    signals = list(csv.DictReader(source))
+writes = [row for row in signals if row['kind'] == 'WRITE_DATA']
+reads = [row for row in signals if row['kind'] == 'READ_DATA']
+assert {row['stack_id'] for row in writes} == {'0', '5'}, writes
+assert {row['stack_id'] for row in reads} == {'0', '5'}, reads
+assert all(row['payload_source'] == 'request_payload' and row['dfi_wrdata']
+           for row in writes), writes
+assert all(row['payload_source'] == 'memory_image' and row['dfi_rddata']
+           for row in reads), reads
+assert {row['dfi_rddata'] for row in reads} == {
+    '000102030405060708090a0b0c0d0e0f',
+    '101112131415161718191a1b1c1d1e1f',
+    'f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff',
+    'e0e1e2e3e4e5e6e7e8e9eaebecedeeef',
+}, reads
+PY
+
 echo "phy smoke passed"

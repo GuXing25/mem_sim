@@ -7,7 +7,7 @@
 
 #include "hbm_sim/controller/controller.hpp"
 #include "hbm_sim/dram/spec.hpp"
-#include "hbm_sim/phy/mem_phy.hpp"
+#include "hbm_sim/dram/mem_phy.hpp"
 #include "hbm_sim/validation/dfi.hpp"
 
 namespace {

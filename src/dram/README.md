@@ -14,6 +14,9 @@ dram 层当前负责把 HBM3/HBM4/LPDDR5/LPDDR6 标准语义转成可运行 `Dra
 - `semantics.cpp`：命令分类、bus/scope 元数据。
 - `state.cpp`：ACT/PRE/RD/WR/REF/RFM/MR/WCK/DVFS/低功耗等合法性检查。
 - `interface.cpp`：payload、ECC、DBI、CRC、metadata lane 的接口占用计算。
+- `mem_phy.cpp`：在线 MC-to-stack 数据路径。Controller 仍负责 JEDEC 命令
+  合法性和调度；本文件负责行为级 PHY 生命周期、FIFO 反压、HBM/LPDDR 命令编码摘要
+  及异步 payload 完成。
 
 修改建议：
 
