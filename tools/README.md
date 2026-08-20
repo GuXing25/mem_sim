@@ -7,6 +7,8 @@
 主要文件：
 
 - `compare_stats.py`：比较两次仿真输出中的关键统计字段，用于轻量 golden/baseline 对比。
+- `view_stats.py`：把一份或多份 `key : value` 统计文件按指定字段输出为对齐表格。
+- `audit_case_backends.sh`：用相同配置、trace 和初始 image 审计 sparse/mmap/chunk 三种后端。
 - `model_validation.py`：运行项目原生 HBM4 配置，检查分析公式、性能阈值、真实存储、full-stack、DFI、来源和 project identity。
 - `timing_boundary_validation.py`：审计 C++ probe 生成的四标准 `t-1/t` Timing 边界矩阵。
 - `ramulator2_differential.py`：将本地 Ramulator2.1 作为非规范性外部参考，检查四标准共同命令面。
@@ -69,6 +71,24 @@ python3 tools/compare_stats.py baseline.txt candidate.txt \
 python3 tools/compare_stats.py baseline.txt candidate.txt \
   --keys achieved_bw_GBps --rel-tol 0.05
 ```
+
+只查看或并排阅读统计值时使用 `view_stats.py`；它不做 PASS/FAIL 判断：
+
+```bash
+python3 tools/view_stats.py outputs/a.txt outputs/b.txt \
+  --labels baseline,candidate \
+  --keys standard,completed_reads,system_cycles,achieved_bw_GBps,avg_read_latency
+```
+
+三后端审计是可直接重复调用的仓库脚本，不依赖当前 Bash 会话中是否定义过函数：
+
+```bash
+bash tools/audit_case_backends.sh configs/run/hbm4.cfg \
+  outputs/backend_audit_hbm4_run1
+```
+
+文件后端具有持久状态。为防止旧 image 污染新结果，若输出目录已经包含 `data.bin` 或
+`.meta`，脚本会明确失败；请换一个新目录，或由操作者确认后自行归档/删除旧目录。
 
 ## `model_validation.py`
 

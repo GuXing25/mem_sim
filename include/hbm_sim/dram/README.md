@@ -16,7 +16,7 @@ controller 层再消费这些描述做调度和发射。
 - `bank_state.hpp`：bank-local 状态结构。
 - `mem_phy.hpp`：MC 与 stack 之间的行为级 PHY。它定义 Direct/Behavioral
   模式、DFI 生命周期、FIFO、完成队列及 HBM/LPDDR 协议适配器；实现位于
-  `src/phy/mem_phy.cpp`。它不替代 JEDEC 调度器，也不声称是厂商 pin-accurate
+  `src/dram/mem_phy.cpp`。它不替代 JEDEC 调度器，也不声称是厂商 pin-accurate
   PHY，建模边界见 `堆叠存储模型交付手册.md` 的 2.5 节。
 
 修改建议：

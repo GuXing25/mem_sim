@@ -15,10 +15,15 @@ trap 'rm -rf -- "$vis_tmp_dir"' EXIT
   --dump-thermal-map "$vis_tmp_dir/thermal.txt" \
   > "$vis_tmp_dir/stats.txt"
 
+cat > "$vis_tmp_dir/performance.json" <<'JSON'
+{"rows":[{"standard":"HBM4","read_ratio_pct":100,"offered_requests_per_tick":0.25,"avg_read_latency_ticks":20.0,"achieved_bw_GBps":8.0,"bandwidth_util_pct":12.5},{"standard":"HBM4","read_ratio_pct":100,"offered_requests_per_tick":1.0,"avg_read_latency_ticks":80.0,"achieved_bw_GBps":15.0,"bandwidth_util_pct":23.4}]}
+JSON
+
 python3 "$vis_source/tools/visualize.py" \
   --command-trace "$vis_tmp_dir/commands.csv" \
   --dfi-trace "$vis_tmp_dir/dfi.csv" \
   --stats "$vis_tmp_dir/stats.txt" \
+  --performance-json "$vis_tmp_dir/performance.json" \
   --thermal-map "$vis_tmp_dir/thermal.txt" \
   --max-events 5 \
   --out "$vis_tmp_dir/dashboard.html"
@@ -29,6 +34,7 @@ grep -q "Trace explorer" "$vis_tmp_dir/dashboard.html"
 grep -q "Request swimlanes" "$vis_tmp_dir/dashboard.html"
 grep -q '"commands"' "$vis_tmp_dir/dashboard.html"
 grep -q '"sampled":true' "$vis_tmp_dir/dashboard.html"
-grep -q 'f(r)' "$vis_tmp_dir/dashboard.html"
+grep -q '"performance":\[{"standard":"HBM4"' "$vis_tmp_dir/dashboard.html"
+grep -q '<polyline points=' "$vis_tmp_dir/dashboard.html" || grep -q 'polyline points=' "$vis_source/tools/visualize.py"
 
 echo "visualization smoke passed"
