@@ -2,16 +2,18 @@
 # Run one configuration against all three memory backends with identical input.
 set -euo pipefail
 
-if (( $# < 2 || $# > 3 )); then
-  echo "usage: bash tools/audit_case_backends.sh CONFIG OUT_DIR [HBM_SIM_BINARY]" >&2
+if (( $# < 4 || $# > 5 )); then
+  echo "usage: bash tools/audit_case_backends.sh CONFIG STANDARD PRESET OUT_DIR [HBM_SIM_BINARY]" >&2
   exit 2
 fi
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd -- "$script_dir/.." && pwd)
 case_cfg=$1
-case_out=$2
-sim_binary=${3:-"$repo_root/build-clang-debug/hbm_sim"}
+case_standard=$2
+case_preset=$3
+case_out=$4
+sim_binary=${5:-"$repo_root/build-clang-debug/hbm_sim"}
 
 if [[ $case_cfg != /* ]]; then
   case_cfg="$repo_root/$case_cfg"
@@ -49,7 +51,8 @@ done
 
 mkdir -p "$case_out/sparse" "$case_out/mmap" "$case_out/chunk"
 
-common=(--config "$case_cfg" --trace "$trace_file" --requests 0
+common=(--config "$case_cfg" --standard "$case_standard" --preset "$case_preset"
+        --trace "$trace_file" --requests 0
         --memory-image "$image_file" --memory-capacity-bytes 1048576)
 
 "$sim_binary" "${common[@]}" --memory-backend sparse \

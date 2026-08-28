@@ -58,7 +58,8 @@ MemPhyMode parse_mem_phy_mode(std::string value) {
   if (value == "behavioral" || value == "behavioural" || value == "phy") {
     return MemPhyMode::Behavioral;
   }
-  throw std::invalid_argument("invalid mem_phy_mode: " + value);
+  throw std::invalid_argument("invalid mem_phy_mode: " + value +
+                              " (implemented: direct, behavioral)");
 }
 
 PhyCommandEncoding HbmPhyAdapter::encode(const DramSpec& spec,

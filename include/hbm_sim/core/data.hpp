@@ -16,6 +16,8 @@
 
 namespace hbm_sim {
 
+struct Stats;
+
 struct DataCheckResult {
   bool matched = true;
   bool initialized = true;
@@ -29,16 +31,14 @@ struct FloorplanKey {
   int tile_x = 0;
   int tile_y = 0;
 
-  bool operator==(const FloorplanKey& other) const {
-    return stack == other.stack &&
-           layer == other.layer &&
-           tile_x == other.tile_x &&
-           tile_y == other.tile_y;
+  bool operator==(const FloorplanKey &other) const {
+    return stack == other.stack && layer == other.layer &&
+           tile_x == other.tile_x && tile_y == other.tile_y;
   }
 };
 
 struct FloorplanKeyHash {
-  std::size_t operator()(const FloorplanKey& key) const;
+  std::size_t operator()(const FloorplanKey &key) const;
 };
 
 struct ThermalGridKey {
@@ -47,16 +47,14 @@ struct ThermalGridKey {
   int x = 0;
   int y = 0;
 
-  bool operator==(const ThermalGridKey& other) const {
-    return stack == other.stack &&
-           layer == other.layer &&
-           x == other.x &&
+  bool operator==(const ThermalGridKey &other) const {
+    return stack == other.stack && layer == other.layer && x == other.x &&
            y == other.y;
   }
 };
 
 struct ThermalGridKeyHash {
-  std::size_t operator()(const ThermalGridKey& key) const;
+  std::size_t operator()(const ThermalGridKey &key) const;
 };
 
 // 一个逻辑数据块在堆叠存储空间中的位置。数据保存在 MemoryImage 中，
@@ -165,6 +163,11 @@ struct PhysicalStorageStats {
   std::uint64_t ecc_injected_errors = 0;
   std::uint64_t ecc_parity_repairs = 0;
 };
+
+// 把物理存储快照覆盖到公共 Stats。Controller 和 MemorySystem 必须共用
+// 这一入口，避免两份字段映射在新增统计项后发生漂移。
+void apply_physical_storage_stats(Stats &stats,
+                                  const PhysicalStorageStats &storage);
 
 struct StorageModelOptions {
   MemoryBackendOptions memory_backend;
@@ -294,30 +297,29 @@ struct DataMismatchRecord {
 };
 
 class DataValidator {
- public:
-  DataCheckResult check_read(Cycle cycle,
-                             std::uint64_t request_id,
-                             Address address,
-                             const PhysicalAddress& physical,
-                             const ByteVector& expected,
-                             const ByteVector& actual,
-                             bool initialized,
+public:
+  DataCheckResult check_read(Cycle cycle, std::uint64_t request_id,
+                             Address address, const PhysicalAddress &physical,
+                             const ByteVector &expected,
+                             const ByteVector &actual, bool initialized,
                              bool forwarded,
                              std::optional<DataBlockMetadata> block);
 
   std::size_t mismatch_count() const { return mismatches_.size(); }
-  const std::vector<DataMismatchRecord>& mismatches() const { return mismatches_; }
-  void dump_text(const std::string& path) const;
+  const std::vector<DataMismatchRecord> &mismatches() const {
+    return mismatches_;
+  }
+  void dump_text(const std::string &path) const;
 
- private:
+private:
   std::vector<DataMismatchRecord> mismatches_;
 };
 
 class MemoryImage {
- public:
-  explicit MemoryImage(std::size_t line_size = 64, std::uint8_t default_value = 0);
-  explicit MemoryImage(DramSpec spec,
-                       std::uint8_t default_value = 0,
+public:
+  explicit MemoryImage(std::size_t line_size = 64,
+                       std::uint8_t default_value = 0);
+  explicit MemoryImage(DramSpec spec, std::uint8_t default_value = 0,
                        StorageModelOptions options = {});
   ~MemoryImage();
 
@@ -325,57 +327,59 @@ class MemoryImage {
   std::size_t allocated_lines() const {
     return static_cast<std::size_t>(backend_->allocated_lines());
   }
-  std::size_t allocated_bytes() const { return allocated_lines() * line_size_; }
+  std::size_t allocated_bytes() const;
   std::vector<Address> all_addresses() const;
-  const StorageModelOptions& options() const { return options_; }
+  const StorageModelOptions &options() const { return options_; }
   MemoryBackendKind backend_kind() const { return backend_->kind(); }
   void flush_backend();
 
-  PhysicalAddress physical_address(Address address, const DecodedAddress* decoded = nullptr) const;
-  StorageKey storage_key(Address address, const DecodedAddress* decoded = nullptr) const;
+  PhysicalAddress
+  physical_address(Address address,
+                   const DecodedAddress *decoded = nullptr) const;
+  StorageKey storage_key(Address address,
+                         const DecodedAddress *decoded = nullptr) const;
   PhysicalStorageStats storage_stats() const;
-  std::optional<DataBlockMetadata> metadata(Address address,
-                                            const DecodedAddress* decoded = nullptr) const;
-  std::optional<Address> address_for_storage_key(const StorageKey& key) const;
+  std::optional<DataBlockMetadata>
+  metadata(Address address, const DecodedAddress *decoded = nullptr) const;
+  std::optional<Address> address_for_storage_key(const StorageKey &key) const;
   std::size_t bank_storage_blocks() const { return allocated_lines(); }
-  void activate_row(const DecodedAddress& decoded, Cycle cycle);
-  void precharge_bank(const DecodedAddress& decoded, Cycle cycle);
-  void precharge_all(const DecodedAddress& decoded, Cycle cycle);
+  void activate_row(const DecodedAddress &decoded, Cycle cycle);
+  void precharge_bank(const DecodedAddress &decoded, Cycle cycle);
+  void precharge_all(const DecodedAddress &decoded, Cycle cycle);
+  // Checkpoint/正常运行收尾只把 dirty payload 写入持久化后端，保持 DRAM
+  // row-open 状态不变，使同一 Controller 后续继续 enqueue 时状态一致。
+  void flush_dirty_row_buffers(Cycle cycle);
+  // 析构/最终销毁路径关闭全部行为级 row buffer。
   void flush_all_row_buffers(Cycle cycle);
-  void record_command_event(Command command,
-                            const DecodedAddress& decoded,
-                            Cycle cycle,
-                            std::size_t payload_bytes = 0);
+  void record_command_event(Command command, const DecodedAddress &decoded,
+                            Cycle cycle, std::size_t payload_bytes = 0);
 
-  ByteVector read(Address address,
-                  std::size_t size,
-                  bool* initialized = nullptr,
-                  const DecodedAddress* decoded = nullptr);
-  ByteVector read_initialized_mask(Address address,
-                                   std::size_t size,
-                                   const DecodedAddress* decoded = nullptr) const;
-  void write(Address address,
-             const ByteVector& data,
-             const ByteVector* mask = nullptr,
-             const DecodedAddress* decoded = nullptr,
-             std::uint64_t request_id = 0,
-             Cycle cycle = 0);
-  void load_text(const std::string& path);
-  void dump_text(const std::string& path) const;
-  void dump_csv(const std::string& path) const;
-  void dump_thermal_text(const std::string& path) const;
+  ByteVector read(Address address, std::size_t size,
+                  bool *initialized = nullptr,
+                  const DecodedAddress *decoded = nullptr);
+  ByteVector
+  read_initialized_mask(Address address, std::size_t size,
+                        const DecodedAddress *decoded = nullptr) const;
+  void write(Address address, const ByteVector &data,
+             const ByteVector *mask = nullptr,
+             const DecodedAddress *decoded = nullptr,
+             std::uint64_t request_id = 0, Cycle cycle = 0);
+  void load_text(const std::string &path);
+  void dump_text(const std::string &path) const;
+  void dump_csv(const std::string &path) const;
+  void dump_thermal_text(const std::string &path) const;
 
   // 二进制持久化：稀疏格式，只存储写过数据的 cache line。
   // 适合大规模仿真场景的 checkpoint 和 golden 验证。
-  void load_binary(const std::string& path);
-  void dump_binary(const std::string& path) const;
+  void load_binary(const std::string &path);
+  void dump_binary(const std::string &path) const;
 
   // 自动检测格式加载：通过文件头 "HBMS" magic 探测二进制格式，否则回退到文本
-  void load_file(const std::string& path);
+  void load_file(const std::string &path);
   // 按扩展名选择导出格式：.bin → binary, .txt → text, .csv → csv
-  void dump_file(const std::string& path) const;
+  void dump_file(const std::string &path) const;
 
- private:
+private:
   struct RowBufferEntry {
     bool open = false;
     bool dirty = false;
@@ -396,30 +400,31 @@ class MemoryImage {
 
   Address line_base(Address address) const;
   std::size_t line_offset(Address address) const;
-  DataBlock make_line(Address base, const DecodedAddress* decoded) const;
-  void refresh_line_metadata(DataBlock& block);
-  bool load_backend_line(Address base, DataBlock& block, const DecodedAddress* decoded = nullptr) const;
-  bool store_backend_line(Address base, const DataBlock& block);
-  FloorplanKey floorplan_key(const PhysicalAddress& physical) const;
-  ThermalGridKey thermal_grid_key(const PhysicalAddress& physical) const;
-  StorageKey bank_key_from_decoded(const DecodedAddress& decoded) const;
-  StorageKey row_key_from_decoded(const DecodedAddress& decoded) const;
-  DataBlock* row_buffer_block(Address base, const DecodedAddress* decoded, Cycle cycle, bool create);
-  const DataBlock* row_buffer_block(Address base, const DecodedAddress* decoded) const;
+  DataBlock make_line(Address base, const DecodedAddress *decoded) const;
+  void refresh_line_metadata(DataBlock &block);
+  bool load_backend_line(Address base, DataBlock &block,
+                         const DecodedAddress *decoded = nullptr) const;
+  bool store_backend_line(Address base, const DataBlock &block);
+  FloorplanKey floorplan_key(const PhysicalAddress &physical) const;
+  ThermalGridKey thermal_grid_key(const PhysicalAddress &physical) const;
+  StorageKey bank_key_from_decoded(const DecodedAddress &decoded) const;
+  StorageKey row_key_from_decoded(const DecodedAddress &decoded) const;
+  DataBlock *row_buffer_block(Address base, const DecodedAddress *decoded,
+                              Cycle cycle, bool create);
+  const DataBlock *row_buffer_block(Address base,
+                                    const DecodedAddress *decoded) const;
   void writeback_row_buffer(StorageKey bank_key, Cycle cycle);
-  void refresh_ecc_shadow(DataBlock& block);
-  void maybe_inject_ecc_error(DataBlock& block);
-  void check_ecc_shadow(DataBlock& block);
-  void relax_thermal_tile(ThermalTileState& tile, Cycle cycle);
-  double vertical_coupling_alpha(const PhysicalAddress& physical) const;
-  void couple_thermal_neighbor(const ThermalGridKey& source_key,
-                               int dx,
-                               int dy,
-                               int dz,
-                               double alpha,
-                               Cycle cycle,
+  void refresh_ecc_shadow(DataBlock &block);
+  void maybe_inject_ecc_error(DataBlock &block);
+  void check_ecc_shadow(DataBlock &block);
+  void relax_thermal_tile(ThermalTileState &tile, Cycle cycle);
+  double vertical_coupling_alpha(const PhysicalAddress &physical) const;
+  void couple_thermal_neighbor(const ThermalGridKey &source_key, int dx, int dy,
+                               int dz, double alpha, Cycle cycle,
                                bool tsv_path);
-  void apply_thermal_event(const PhysicalAddress& physical, Cycle cycle, double energy_pj);
+  void record_thermal_peak(const ThermalTileState &tile);
+  void apply_thermal_event(const PhysicalAddress &physical, Cycle cycle,
+                           double energy_pj);
 
   std::size_t line_size_ = 64;
   std::uint8_t default_value_ = 0;
@@ -453,6 +458,12 @@ class MemoryImage {
   std::uint64_t thermal_vertical_transfers_ = 0;
   std::uint64_t thermal_tsv_transfers_ = 0;
   double thermal_coupled_delta_c_ = 0.0;
+  // 历史峰值与最终空间平均温度是不同口径。peak 在每次热更新时累计，不能
+  // 在 storage_stats() 中用已经冷却后的最终 tile 温度重新计算后覆盖。
+  double thermal_peak_temp_c_ = 40.0;
+  int thermal_hotspot_layer_ = -1;
+  int thermal_hotspot_x_ = -1;
+  int thermal_hotspot_y_ = -1;
   std::uint64_t ecc_shadow_updates_ = 0;
   std::uint64_t ecc_checked_reads_ = 0;
   std::uint64_t ecc_corrected_errors_ = 0;
@@ -460,13 +471,15 @@ class MemoryImage {
   std::uint64_t ecc_injected_errors_ = 0;
   std::uint64_t ecc_parity_repairs_ = 0;
   std::unordered_map<StorageKey, RowBufferEntry, StorageKeyHash> row_buffers_;
-  std::unordered_map<ThermalGridKey, ThermalTileState, ThermalGridKeyHash> thermal_tiles_;
+  std::unordered_map<ThermalGridKey, ThermalTileState, ThermalGridKeyHash>
+      thermal_tiles_;
 };
 
-ByteVector parse_hex_bytes(const std::string& text);
-std::string bytes_to_hex(const ByteVector& bytes);
+ByteVector parse_hex_bytes(const std::string &text);
+std::string bytes_to_hex(const ByteVector &bytes);
 std::string format_address(Address address);
-ByteVector make_request_payload(Address address, std::uint64_t request_id, std::size_t size);
-ByteVector normalize_mask(const ByteVector& mask, std::size_t size);
+ByteVector make_request_payload(Address address, std::uint64_t request_id,
+                                std::size_t size);
+ByteVector normalize_mask(const ByteVector &mask, std::size_t size);
 
-}  // namespace hbm_sim
+} // namespace hbm_sim

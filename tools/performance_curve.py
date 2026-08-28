@@ -10,14 +10,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+from config_selection import REFERENCE_PRESETS, selection_args
+
 
 ROOT = Path(__file__).resolve().parents[1]
-CONFIGS = {
-    "hbm3": ROOT / "configs/validation/hbm3_reference_1ch.cfg",
-    "hbm4": ROOT / "configs/validation/hbm4_reference_1ch.cfg",
-    "lpddr5": ROOT / "configs/validation/lpddr5_reference_1ch.cfg",
-    "lpddr6": ROOT / "configs/validation/lpddr6_reference_1ch.cfg",
-}
 
 
 def comma_ints(value: str) -> list[int]:
@@ -54,7 +50,7 @@ def main() -> int:
     read_ratios = comma_ints(args.read_ratios)
     if not args.binary.is_file():
         raise SystemExit(f"binary not found: {args.binary}")
-    if any(item not in CONFIGS for item in standards):
+    if any(item not in REFERENCE_PRESETS for item in standards):
         raise SystemExit(f"unsupported standards: {standards}")
     if not intervals or any(item < 1 for item in intervals):
         raise SystemExit("intervals must be positive controller ticks")
@@ -66,7 +62,7 @@ def main() -> int:
         for read_ratio in read_ratios:
             for interval in sorted(set(intervals), reverse=True):
                 command = [
-                    str(args.binary.resolve()), "--config", str(CONFIGS[standard]),
+                    str(args.binary.resolve()), *selection_args(standard),
                     "--requests", str(args.requests), "--pattern", args.pattern,
                     "--read-ratio", str(read_ratio), "--inject-interval", str(interval),
                     "--seed", str(args.seed), "--max-cycles", "100000000",

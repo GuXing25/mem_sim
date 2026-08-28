@@ -20,7 +20,8 @@ dram 层当前负责把 HBM3/HBM4/LPDDR5/LPDDR6 标准语义转成可运行 `Dra
 
 修改建议：
 
-- 手册或厂商表数值优先落在 `profiles.cpp` 或 `configs/profiles/`。
+- 跨器件公式优先落在 `profiles.cpp`；具体器件/模式数值落在
+  `configs/hbm.cfg` 或 `configs/lpddr.cfg` 的具名 preset。
 - 如果某个行为会影响命令能不能发，改 `state.cpp`；如果影响命令发出后的状态，改 `controller/executor.cpp`。
 - 带宽、接口传输率和 payload efficiency 相关开销统一从 `interface.cpp` 进入统计。
 - dram 层不保存真实 payload，也不直接计算热图；真实存储区、floorplan、power 和 thermal 由 `core/data.cpp` 根据 `DramSpec` 的组织结构消费。
@@ -37,7 +38,7 @@ dram 层当前负责把 HBM3/HBM4/LPDDR5/LPDDR6 标准语义转成可运行 `Dra
 `semantics.cpp`、`state.cpp` 和 controller 实现。因此：
 
 - 新 speed bin、density、stack height、mode 或 vendor 数据优先进入
-  `profiles.cpp`/`configs/profiles/`。
+  `profiles.cpp`/家族主配置 preset。
 - 新标准若仍属于现有 HBM/LPDDR 协议族，先增加 traits/profile 数据项。
 - 只有出现新的命令语义或状态迁移时，才修改协议实现。
 
@@ -61,7 +62,7 @@ REFdb 到 REFdb。这样数值偏保守，但不会比标准短。后续如果�
 
 `profiles.cpp` 用于把 `speed_bin_mbps + density_gb + stack_height + mode_profile + vendor_profile`
 展开成一组具体参数。它适合放通用规则或经常复用的 profile。单个实验临时表格更适合放在
-`configs/profiles/`。
+`configs/hbm.cfg` 或 `configs/lpddr.cfg` 的命名 preset；仓库不再维护独立 profile `.cfg`。
 
 ## `state.cpp`
 

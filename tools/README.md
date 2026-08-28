@@ -9,6 +9,7 @@
 - `compare_stats.py`：比较两次仿真输出中的关键统计字段，用于轻量 golden/baseline 对比。
 - `view_stats.py`：把一份或多份 `key : value` 统计文件按指定字段输出为对齐表格。
 - `audit_case_backends.sh`：用相同配置、trace 和初始 image 审计 sparse/mmap/chunk 三种后端。
+- `config_selection.py`：验证工具共享的 master/preset 选择表，避免重新维护配置路径。
 - `model_validation.py`：运行项目原生 HBM4 配置，检查分析公式、性能阈值、真实存储、full-stack、DFI、来源和 project identity。
 - `timing_boundary_validation.py`：审计 C++ probe 生成的四标准 `t-1/t` Timing 边界矩阵。
 - `ramulator2_differential.py`：将本地 Ramulator2.1 作为非规范性外部参考，检查四标准共同命令面。
@@ -26,7 +27,7 @@
 观测需求，可在此 HTML 数据格式之外增加独立 streamer，而不改变现有 trace 入口。
 
 ```bash
-./build-clang-debug/hbm_sim --config configs/run/hbm4.cfg --requests 128 \
+./build-clang-debug/hbm_sim --config configs/hbm.cfg --standard hbm4 --requests 128 \
   --cmd-trace outputs/visualization/commands.csv \
   --dfi-trace outputs/visualization/dfi.csv \
   --dump-thermal-map outputs/visualization/thermal_map.txt \
@@ -83,7 +84,8 @@ python3 tools/view_stats.py outputs/a.txt outputs/b.txt \
 三后端审计是可直接重复调用的仓库脚本，不依赖当前 Bash 会话中是否定义过函数：
 
 ```bash
-bash tools/audit_case_backends.sh configs/run/hbm4.cfg \
+bash tools/audit_case_backends.sh configs/hbm.cfg \
+  hbm4 baseline \
   outputs/backend_audit_hbm4_run1
 ```
 
@@ -120,7 +122,9 @@ Makefile 兼容入口为
 
 当前参考检查覆盖 HBM3/HBM4/LPDDR5/LPDDR6 的 timing、命令顺序、decoded 坐标、
 逐命令周期、same/different BG、双向总线换向、tFAW、refresh/RFM 和自动预充电。
-局部容差与规范化规则逐场景记录，不能表述为实现或器件等价。
+JSON 同时保存 Ramulator 根目录、Git commit/describe、dirty 状态和 Python 版本；局部容差
+与规范化规则逐场景记录，不能表述为实现或器件等价。`git_dirty=true` 时应保存外部仓库
+diff，或在干净 checkout 上复跑后再把结果作为归档基线。
 
 字段比较建议：
 

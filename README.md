@@ -116,11 +116,11 @@ code /path/to/hbm_sim
 ## 快速运行
 
 ```bash
-./build-clang-debug/hbm_sim --standard hbm4 --requests 1024
-./build-clang-debug/hbm_sim --standard hbm3 --pattern random --requests 1024
-./build-clang-debug/hbm_sim --standard lpddr6 --trace examples/sample.trace --requests 0
-./build-clang-debug/hbm_sim --config configs/run/hbm4.cfg
-./build-clang-debug/hbm_sim --config configs/run/hbm4_6stack.cfg --requests 1024
+./build-clang-debug/hbm_sim --config configs/hbm.cfg --standard hbm4 --preset baseline --requests 1024
+./build-clang-debug/hbm_sim --config configs/hbm.cfg --standard hbm3 --preset baseline --pattern random --requests 1024
+./build-clang-debug/hbm_sim --config configs/lpddr.cfg --standard lpddr6 --preset baseline --trace examples/sample.trace --requests 0
+./build-clang-debug/hbm_sim --config configs/hbm.cfg --standard hbm4 \
+  --stack-count 6 --requests 1024
 ```
 
 四类标准入口：
@@ -132,16 +132,36 @@ lpddr5
 lpddr6
 ```
 
-配置按用途分类：
+普通用户只需要两个家族主配置：
 
 ```text
-configs/run/          可运行实验
-configs/profiles/     时序和模式片段
-configs/calib/        校准入口
-configs/validation/   验证配置和证据清单
+configs/hbm.cfg       HBM3/HBM4 的完整配置入口
+configs/lpddr.cfg     LPDDR5/LPDDR6 的完整配置入口
 ```
 
-详细字段见 [configs/README.md](configs/README.md)。
+其中 `[override]` 可自由修改已实现的架构、时序、控制策略、PHY、后端、ECC、
+功耗和热参数。未知算法不会回退到默认值，而会报错并列出已实现项。校准、差分、
+多 Stack demo 和研究变体均已收进这两个 master 的命名 preset；仓库不再维护第三份
+可执行 `.cfg`。配置分层、可信度模式和审计命令见 [configs/README.md](configs/README.md)。
+
+四标准多 Stack 工程 demo：
+
+```bash
+bash examples/multistack_demos/hbm3_nstack.sh
+bash examples/multistack_demos/hbm4_nstack.sh
+bash examples/multistack_demos/lpddr5_nstack.sh
+bash examples/multistack_demos/lpddr6_nstack.sh
+```
+
+定制 bank/row-column/refresh 架构趋势实验：
+
+```bash
+python3 experiments/architecture_sweep/run.py
+```
+
+脚本使用定向 trace 激发目标结构，输出 `results.csv`、`checks.csv`、`summary.md` 和
+离线 `trends.html`；检查不通过时返回非零。详细口径见
+[experiments/architecture_sweep/README.md](experiments/architecture_sweep/README.md)。
 
 ## Trace
 
@@ -185,15 +205,15 @@ make visualize-example
 ## 存储后端
 
 ```bash
-./build-clang-debug/hbm_sim --config configs/run/hbm4.cfg \
+./build-clang-debug/hbm_sim --config configs/hbm.cfg --standard hbm4 \
   --memory-backend sparse
 
-./build-clang-debug/hbm_sim --config configs/run/hbm4.cfg \
+./build-clang-debug/hbm_sim --config configs/hbm.cfg --standard hbm4 \
   --memory-backend mmap_sparse \
   --memory-capacity-bytes 34359738368 \
   --memory-data-file outputs/hbm_data.bin
 
-./build-clang-debug/hbm_sim --config configs/run/hbm4.cfg \
+./build-clang-debug/hbm_sim --config configs/hbm.cfg --standard hbm4 \
   --memory-backend chunk_file \
   --memory-capacity-bytes 34359738368 \
   --memory-data-file outputs/hbm_chunks.bin
@@ -205,7 +225,7 @@ ECC、功耗和热模型语义。选择建议见 [存储后端](文档/多Stack�
 ## 数据与 DFI
 
 ```bash
-./build-clang-debug/hbm_sim --standard hbm4 \
+./build-clang-debug/hbm_sim --config configs/hbm.cfg --standard hbm4 --preset baseline \
   --trace examples/data_check.trace --requests 0 \
   --dump-memory-image outputs/final_memory.txt \
   --dump-memory-csv outputs/final_memory.csv \

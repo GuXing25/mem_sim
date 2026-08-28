@@ -7,7 +7,7 @@ vis_tmp_dir=$(mktemp -d)
 trap 'rm -rf -- "$vis_tmp_dir"' EXIT
 
 "$vis_bin" \
-  --config "$vis_source/configs/run/hbm4.cfg" \
+  --config "$vis_source/configs/hbm.cfg" --standard hbm4 \
   --requests 16 \
   --read-ratio 50 \
   --cmd-trace "$vis_tmp_dir/commands.csv" \

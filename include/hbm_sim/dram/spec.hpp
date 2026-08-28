@@ -1,12 +1,16 @@
 #pragma once
 
 // DRAM 规格描述：组织结构、timing table、约束作用域和构建结果都在这里定义。
-// 后续要补 JEDEC/vendor 表时，应优先扩展 DramSpec/TimingTable，而不是在 Controller
-// 中硬编码标准差异。
+// 后续要补 JEDEC/vendor 表时，应优先扩展 DramSpec/TimingTable，而不是在
+// Controller 中硬编码标准差异。
 
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <cstdint>
+#include <initializer_list>
+#include <limits>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -35,6 +39,9 @@ enum class TimingValueSource {
   Vendor,
   // 由其他 timing 推导得到，例如 nRC = nRAS + nRP。
   Derived,
+  // 来自 Ramulator/DRAMsim 等外部参考模型；适合差分和研究基线，但不等于
+  // JEDEC 或目标器件校准数据。
+  ExternalReference,
   // 研究默认值：用于让模拟器可运行，但做数值级对比前必须替换。
   ResearchDefault,
 };
@@ -43,12 +50,18 @@ enum class TimingValueSource {
 // 先看 source 分布比只看 nCK 数字更重要：research_default 项意味着“模型能跑，
 // 但不能声称对应真实器件”；vendor 项意味着用户已经用目标 speed-bin/density
 // 数据覆盖过该 timing。
-inline const char* to_string(TimingValueSource source) {
+inline const char *to_string(TimingValueSource source) {
   switch (source) {
-    case TimingValueSource::JEDEC: return "JEDEC";
-    case TimingValueSource::Vendor: return "vendor";
-    case TimingValueSource::Derived: return "derived";
-    case TimingValueSource::ResearchDefault: return "research_default";
+  case TimingValueSource::JEDEC:
+    return "JEDEC";
+  case TimingValueSource::Vendor:
+    return "vendor";
+  case TimingValueSource::Derived:
+    return "derived";
+  case TimingValueSource::ExternalReference:
+    return "external_reference";
+  case TimingValueSource::ResearchDefault:
+    return "research_default";
   }
   return "UNKNOWN";
 }
@@ -79,28 +92,35 @@ struct TimingTable {
   std::vector<TimingTableEntry> entries;
 
   int source_count(TimingValueSource source) const {
-    return static_cast<int>(std::count_if(entries.begin(), entries.end(), [source](const TimingTableEntry& entry) {
-      return entry.source == source;
-    }));
+    return static_cast<int>(
+        std::count_if(entries.begin(), entries.end(),
+                      [source](const TimingTableEntry &entry) {
+                        return entry.source == source;
+                      }));
   }
 
   int vendor_required_count() const {
-    return static_cast<int>(std::count_if(entries.begin(), entries.end(), [](const TimingTableEntry& entry) {
-      return entry.vendor_required_for_numeric;
-    }));
+    return static_cast<int>(std::count_if(
+        entries.begin(), entries.end(), [](const TimingTableEntry &entry) {
+          return entry.vendor_required_for_numeric;
+        }));
   }
 
   int provisional_count() const {
-    return static_cast<int>(std::count_if(entries.begin(), entries.end(), [](const TimingTableEntry& entry) {
-      return entry.vendor_required_for_numeric ||
-             (entry.required_for_model && entry.source == TimingValueSource::ResearchDefault);
-    }));
+    return static_cast<int>(std::count_if(
+        entries.begin(), entries.end(), [](const TimingTableEntry &entry) {
+          return entry.vendor_required_for_numeric ||
+                 (entry.required_for_model &&
+                  (entry.source == TimingValueSource::ResearchDefault ||
+                   entry.source == TimingValueSource::ExternalReference));
+        }));
   }
 
   bool complete_for_model() const {
-    return std::all_of(entries.begin(), entries.end(), [](const TimingTableEntry& entry) {
-      return !entry.required_for_model || entry.value_nck > 0;
-    });
+    return std::all_of(
+        entries.begin(), entries.end(), [](const TimingTableEntry &entry) {
+          return !entry.required_for_model || entry.value_nck > 0;
+        });
   }
 };
 
@@ -114,7 +134,8 @@ struct Timing {
   int nCL = 20;
   // Write CAS latency。WR 后到可 PRE 的路径会用到 nCWL + nBL + nWR。
   int nCWL = 10;
-  // ACT/ACT2 后到 RD 的最短等待。LPDDR split activate 会扣除 nAAD。
+  // ACT/ACT1 序列起点到 RD 的最短等待。LPDDR 的 ACT2 可以在 tAAD
+  // 合法窗口内发出，因而不能再从这里扣除一个固定 nAAD。
   int nRCDRD = 20;
   // ACT/ACT2 后到 WR 的最短等待。读写分开便于研究不对称时序。
   int nRCDWR = 14;
@@ -139,9 +160,11 @@ struct Timing {
   // Four activate window。当前模型在 activation_scope 内最多允许 4 次 ACT。
   int nFAW = 16;
 
-  // 当前简化模型把 nAAD 用作 LPDDR split activate 中 ACT1 到 ACT2 的间隔。
-  // 如果后续要更贴近标准，可继续拆分 tAAD min/max 或 deadline 行为。
-  int nAAD = 8;
+  // LPDDR split activate 的 ACT1 -> ACT2 允许窗口。JEDEC 的 tAAD 是最晚
+  // deadline，不是固定等待；最早值单独保留，便于研究命令总线插空。
+  // 旧配置键 nAAD/tAAD_ns 兼容映射到 nAADMax。
+  int nAADMin = 1;
+  int nAADMax = 8;
 
   // LPDDR5/LPDDR6 的 WCK/CAS 简化模型：CAS_RD/CAS_WR 打开 WCK 相位，
   // nWCK2CK 后允许 RD/WR，nWCKPST 表示本次 WCK 同步可覆盖的后续窗口。
@@ -192,8 +215,12 @@ struct TimingConstraint {
   std::vector<Command> following;
   int latency = 0;
   // window > 0 表示这是 nFAW 这类“窗口内最多 N 次”的约束，而不是普通
-  // preceding->following ready time。当前由 TimingEngine 用专门的 tFAW 窗口执行。
+  // preceding->following ready time。当前由 TimingEngine 用专门的 tFAW
+  // 窗口执行。
   int window = 0;
+  // false：preceding 只限制相同 scope bucket；true：只限制同一父级中的
+  // 其他 sibling bucket。例如 HBM tCCDR 在 SID scope 上只约束 different SID，
+  // 不应错误覆盖 consecutive READs to the same SID。
   bool sibling = false;
   std::string note;
   // 可审计的约束名称，例如 nRCDRD 或 nCWL+nBL+nWR。放在聚合尾部
@@ -320,13 +347,15 @@ struct DramSpec {
   bool full_stack_model = false;
   // supports_refresh 控制 RefreshManager 是否定期产生维护请求。
   bool supports_refresh = false;
-  // refresh_policy 决定 refresh 维护以 per-bank/dual-bank 轮转还是 all-bank 命令发出。
+  // refresh_policy 决定 refresh 维护以 per-bank/dual-bank 轮转还是 all-bank
+  // 命令发出。
   MaintenancePolicyKind refresh_policy = MaintenancePolicyKind::PerBank;
   // LPDDR6 REFdb 会刷新一个 dual-bank pair；HBM/HBM3/HBM4 通常保持 false。
   bool lpddr_dual_bank_refresh = false;
   // supports_rfm 控制 ACT 计数达到阈值后是否触发 RFM/PRAC 维护请求。
   bool supports_rfm = false;
-  // rfm_policy 决定 RFM 使用 RFMpb 还是 RFMab。RFMab 会要求 channel 内全部 bank idle。
+  // rfm_policy 决定 RFM 使用 RFMpb 还是 RFMab。RFMab 要求目标 rank 内全部
+  // bank idle；不同 rank 保持独立状态。
   MaintenancePolicyKind rfm_policy = MaintenancePolicyKind::PerBank;
   // supports_ecc 当前只作为接口开关和输出自描述；具体 ECC 码型仍待补。
   bool supports_ecc = false;
@@ -352,9 +381,11 @@ struct DramSpec {
   int hbm_ecc_bits_per_request = 0;
   // RAA/PRAC 触发阈值。达到该 ACT 次数后 RfmManager 会产生 RFM 维护请求。
   int rfm_act_threshold = 0;
-  // RFM 发出后对 ACT 计数的递减值。默认等于阈值时表示一次 RFM 清掉一次阈值积累。
+  // RFM 发出后对 ACT 计数的递减值。默认等于阈值时表示一次 RFM
+  // 清掉一次阈值积累。
   int rfm_decrement = 0;
-  // LPDDR link protection/efficiency 当前主要影响配置自描述和接口 overhead 入口。
+  // LPDDR link protection/efficiency 当前主要影响配置自描述和接口 overhead
+  // 入口。
   bool lpddr_link_protection = false;
   bool lpddr_dynamic_efficiency = false;
   LpddrEfficiencyMode lpddr_efficiency_mode = LpddrEfficiencyMode::Normal;
@@ -383,12 +414,13 @@ struct DramSpec {
   int low_power_entry_cycles = 0;
   int low_power_exit_cycles = 0;
   int self_refresh_exit_cycles = 0;
-  // Refresh credit/postpone/pull-in 和温度策略。credit 模型在 RefreshManager 中维护，
-  // 用于研究 refresh 与普通请求的仲裁，而不是只按固定间隔硬插 REF。
+  // Refresh credit/postpone/pull-in 和温度策略。credit 模型在 RefreshManager
+  // 中维护， 用于研究 refresh 与普通请求的仲裁，而不是只按固定间隔硬插 REF。
   int refresh_postpone_limit = 0;
   int refresh_pullin_limit = 0;
   int refresh_credit_limit = 0;
-  RefreshTemperatureMode refresh_temperature_mode = RefreshTemperatureMode::Normal;
+  RefreshTemperatureMode refresh_temperature_mode =
+      RefreshTemperatureMode::Normal;
   int refresh_high_temp_multiplier = 2;
   // 地址映射模板。做 Ramulator2.1/论文对比时必须保持和对方相同，否则 row hit
   // 和 bank/channel 分布会不可比。
@@ -396,11 +428,14 @@ struct DramSpec {
   // 每个请求携带的协议 metadata/ECC overhead，参与 interface_* byte 统计。
   int metadata_bits_per_request = 0;
   int ecc_bits_per_request = 0;
-  // 表驱动 timing 约束。Controller/TimingEngine 会按 scope 创建 ready-time bucket。
+  // 表驱动 timing 约束。Controller/TimingEngine 会按 scope 创建 ready-time
+  // bucket。
   std::vector<TimingConstraint> timing_constraints;
-  // 当前 preset 的 timing table 和来源元数据。输出、strict 检查和 CSV dump 都读这里。
+  // 当前 preset 的 timing table 和来源元数据。输出、strict 检查和 CSV dump
+  // 都读这里。
   TimingTable timing_table;
-  // 用户覆盖 timing 后记录在这里，再由 refresh_timing_table() 合并到 timing_table。
+  // 用户覆盖 timing 后记录在这里，再由 refresh_timing_table() 合并到
+  // timing_table。
   std::vector<TimingSourceOverride> timing_source_overrides;
 
   // Ramulator 风格的 timing 作用域声明。控制器会按这些层级创建独立状态，
@@ -412,26 +447,39 @@ struct DramSpec {
 
   // 单 channel 内的 bank 数，包含 pseudo-channel/rank/bank-group 维度。
   int banks_per_channel() const {
-    return org.pseudo_channels * org.sids * org.ranks * org.bank_groups * org.banks_per_group;
+    const std::uint64_t count =
+        checked_product({org.pseudo_channels, org.sids, org.ranks,
+                         org.bank_groups, org.banks_per_group},
+                        "banks_per_channel");
+    if (count > static_cast<std::uint64_t>(std::numeric_limits<int>::max())) {
+      throw std::overflow_error("banks_per_channel exceeds int range");
+    }
+    return static_cast<int>(count);
   }
 
   // 控制器用扁平数组保存全部 bank 状态，因此需要全局 bank 数。
   int total_banks() const {
-    return org.channels * banks_per_channel();
+    const std::uint64_t count =
+        checked_product({org.channels, org.pseudo_channels, org.sids, org.ranks,
+                         org.bank_groups, org.banks_per_group},
+                        "total_banks");
+    if (count > static_cast<std::uint64_t>(std::numeric_limits<int>::max())) {
+      throw std::overflow_error("total_banks exceeds int range");
+    }
+    return static_cast<int>(count);
   }
 
   // DRAM 地址几何中的 column transaction 数。每个位置对应一次单 PC/subchannel
   // RD/WR，而不是一个 host cache line。
   std::uint64_t total_addressable_transactions() const {
-    return static_cast<std::uint64_t>(total_banks()) *
-           static_cast<std::uint64_t>(std::max(1, org.rows)) *
-           static_cast<std::uint64_t>(std::max(1, org.columns));
+    return checked_product({org.channels, org.pseudo_channels, org.sids,
+                            org.ranks, org.bank_groups, org.banks_per_group,
+                            org.rows, org.columns},
+                           "total_addressable_transactions");
   }
 
   // host/frontend 默认请求大小，仍按 cache line 计。
-  int bytes_per_request() const {
-    return org.line_size;
-  }
+  int bytes_per_request() const { return org.line_size; }
 
   int transaction_bytes() const {
     return org.dram_transaction_bytes > 0 ? org.dram_transaction_bytes
@@ -439,8 +487,14 @@ struct DramSpec {
   }
 
   std::uint64_t addressable_capacity_bytes() const {
-    return total_addressable_transactions() *
-           static_cast<std::uint64_t>(transaction_bytes());
+    const std::uint64_t transactions = total_addressable_transactions();
+    const std::uint64_t bytes = static_cast<std::uint64_t>(transaction_bytes());
+    if (transactions != 0 &&
+        bytes > std::numeric_limits<std::uint64_t>::max() / transactions) {
+      throw std::overflow_error(
+          "addressable_capacity_bytes exceeds uint64 range");
+    }
+    return transactions * bytes;
   }
 
   // MemoryImage/backend 按 DRAM transaction 粒度分配块；对 HBM4 来说这是
@@ -454,7 +508,8 @@ struct DramSpec {
   }
 
   double peak_bandwidth_GBps() const {
-    return static_cast<double>(data_rate_mbps) * static_cast<double>(data_bus_bits) / 8000.0;
+    return static_cast<double>(data_rate_mbps) *
+           static_cast<double>(data_bus_bits) / 8000.0;
   }
 
   bool lpddr_requires_wck_retrain_after_dvfs() const {
@@ -462,7 +517,8 @@ struct DramSpec {
     // 每个 MR bit 展开成器件级状态机，而是先用 policy 字符串表达控制器是否认为
     // DVFS 后必须重新训练 WCK。默认 profile 使用 startup_and_dvfs_retrain，因此
     // 显式 DVFS 命令之后，CAS/RD/WR 必须等 WCK_TRAIN 清除该状态。
-    if (!lpddr_family || !lpddr_wck_training_required || lpddr_dvfs_mode == LpddrDvfsMode::Disabled) {
+    if (!lpddr_family || !lpddr_wck_training_required ||
+        lpddr_dvfs_mode == LpddrDvfsMode::Disabled) {
       return false;
     }
     return lpddr_wck_training_mode.find("dvfs") != std::string::npos ||
@@ -472,25 +528,45 @@ struct DramSpec {
   }
 
   double cycles_per_second() const {
-    return timing.tCK_ps <= 0.0 ? 0.0 : (1.0e12 / timing.tCK_ps) * std::max(1, tick_multiplier);
+    return timing.tCK_ps <= 0.0
+               ? 0.0
+               : (1.0e12 / timing.tCK_ps) * std::max(1, tick_multiplier);
+  }
+
+private:
+  static std::uint64_t checked_product(std::initializer_list<int> factors,
+                                       const char *context) {
+    std::uint64_t result = 1;
+    for (int factor : factors) {
+      if (factor <= 0) {
+        throw std::invalid_argument(std::string(context) +
+                                    " requires positive dimensions");
+      }
+      const std::uint64_t value = static_cast<std::uint64_t>(factor);
+      if (result > std::numeric_limits<std::uint64_t>::max() / value) {
+        throw std::overflow_error(std::string(context) +
+                                  " exceeds uint64 range");
+      }
+      result *= value;
+    }
+    return result;
   }
 };
 
-const StandardTraits& find_standard_traits(const std::string& name);
-void apply_standard_traits(DramSpec& spec, const StandardTraits& traits);
+const StandardTraits &find_standard_traits(const std::string &name);
+void apply_standard_traits(DramSpec &spec, const StandardTraits &traits);
 
 // Draft 只应用 traits，供 CLI 在 profile/config/CLI 覆盖后统一 finalize。
-DramSpec make_spec_draft(const std::string& name);
+DramSpec make_spec_draft(const std::string &name);
 // 完整默认模型：traits -> default profile -> finalize。
-DramSpec make_spec(const std::string& name);
-void finalize_spec(DramSpec& spec);
-void refresh_timing_constraints(DramSpec& spec);
-void refresh_timing_table(DramSpec& spec);
-void set_timing_source(DramSpec& spec,
-                       const std::string& name,
-                       TimingValueSource source,
-                       std::string note = {});
-std::vector<std::string> validate_timing_table(const DramSpec& spec, bool require_vendor_values);
+DramSpec make_spec(const std::string &name);
+void finalize_spec(DramSpec &spec);
+void refresh_timing_constraints(DramSpec &spec);
+void refresh_timing_table(DramSpec &spec);
+void set_timing_source(DramSpec &spec, const std::string &name,
+                       TimingValueSource source, std::string note = {});
+std::vector<std::string> validate_timing_table(const DramSpec &spec,
+                                               bool require_vendor_values);
 std::vector<std::string> supported_specs();
 
-}  // namespace hbm_sim
+} // namespace hbm_sim

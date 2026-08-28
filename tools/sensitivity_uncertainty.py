@@ -13,14 +13,10 @@ import sys
 import tempfile
 from pathlib import Path
 
+from config_selection import REFERENCE_PRESETS, selection_args
+
 
 ROOT = Path(__file__).resolve().parents[1]
-CONFIGS = {
-    "hbm3": ROOT / "configs/validation/hbm3_reference_1ch.cfg",
-    "hbm4": ROOT / "configs/validation/hbm4_reference_1ch.cfg",
-    "lpddr5": ROOT / "configs/validation/lpddr5_reference_1ch.cfg",
-    "lpddr6": ROOT / "configs/validation/lpddr6_reference_1ch.cfg",
-}
 PARAMETERS = ("nCL", "nRCDRD", "nRP", "nCCDS", "nRRDS", "nFAW")
 
 
@@ -46,10 +42,10 @@ def parse_stats(text: str) -> dict[str, str]:
     return result
 
 
-def timing_table(binary: Path, config: Path, temp: Path) -> dict[str, int]:
-    output = temp / (config.stem + "_timing.csv")
+def timing_table(binary: Path, standard: str, temp: Path) -> dict[str, int]:
+    output = temp / (standard + "_timing.csv")
     completed = subprocess.run(
-        [str(binary), "--config", str(config), "--requests", "0",
+        [str(binary), *selection_args(standard), "--requests", "0",
          "--dump-timing-table", str(output)], cwd=ROOT, text=True,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
     if completed.returncode:
@@ -58,16 +54,20 @@ def timing_table(binary: Path, config: Path, temp: Path) -> dict[str, int]:
         return {row["name"]: int(row["value_nck"]) for row in csv.DictReader(stream)}
 
 
-def derived_config(base: Path, overrides: dict[str, object], path: Path) -> None:
-    body = base.read_text(encoding="utf-8")
-    suffix = ["", "# Generated validation overrides", "timing_override_source = research_default"]
-    suffix += [f"{key} = {value}" for key, value in overrides.items()]
-    path.write_text(body.rstrip() + "\n" + "\n".join(suffix) + "\n", encoding="utf-8")
+def derived_config(overrides: dict[str, object], path: Path) -> None:
+    # 只生成小型 override，不复制权威 master，避免临时实验形成第三份参数源。
+    lines = ["[override]", "timing_override_source = research_default"]
+    lines += [f"{key} = {value}" for key, value in overrides.items()]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def simulate(binary: Path, config: Path, requests: int, seed: int,
+def simulate(binary: Path, standard: str, requests: int, seed: int,
+             overlay: Path | None = None,
              extra: list[str] | None = None) -> dict[str, float]:
-    command = [str(binary), "--config", str(config), "--requests", str(requests),
+    command = [str(binary), *selection_args(standard)]
+    if overlay is not None:
+        command += ["--config", str(overlay)]
+    command += ["--requests", str(requests),
                "--pattern", "random", "--read-ratio", "100", "--inject-interval", "2",
                "--seed", str(seed), "--max-cycles", "100000000"]
     command += extra or []
@@ -103,7 +103,7 @@ def main() -> int:
     standards = [item.strip().lower() for item in args.standards.split(",") if item.strip()]
     if not binary.is_file():
         raise SystemExit(f"binary not found: {binary}")
-    if any(item not in CONFIGS for item in standards):
+    if any(item not in REFERENCE_PRESETS for item in standards):
         raise SystemExit(f"unsupported standards: {standards}")
     if not 0.0 < args.fraction < 1.0 or args.samples < 3:
         raise SystemExit("fraction must be in (0,1) and samples must be >= 3")
@@ -113,8 +113,8 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="hbm_sensitivity_") as temp_name:
         temp = Path(temp_name)
         for standard in standards:
-            nominal = timing_table(binary, CONFIGS[standard], temp)
-            base_stats = simulate(binary, CONFIGS[standard], args.requests, args.seed)
+            nominal = timing_table(binary, standard, temp)
+            base_stats = simulate(binary, standard, args.requests, args.seed)
             for parameter in PARAMETERS:
                 center = nominal[parameter]
                 values = {
@@ -125,8 +125,9 @@ def main() -> int:
                 case_results = {}
                 for level, value in values.items():
                     config = temp / f"{standard}_{parameter}_{level}.cfg"
-                    derived_config(CONFIGS[standard], {parameter: value}, config)
-                    case_results[level] = simulate(binary, config, args.requests, args.seed)
+                    derived_config({parameter: value}, config)
+                    case_results[level] = simulate(
+                        binary, standard, args.requests, args.seed, overlay=config)
                     sensitivity.append({
                         "standard": standard.upper(), "parameter": parameter,
                         "level": level, "value_nck": value,
@@ -159,8 +160,9 @@ def main() -> int:
                     factor = 1.0 + rng.uniform(-args.fraction, args.fraction)
                     overrides[parameter] = max(1, round(nominal[parameter] * factor))
                 config = temp / f"{standard}_uncertainty_{sample_index}.cfg"
-                derived_config(CONFIGS[standard], overrides, config)
-                samples.append(simulate(binary, config, args.requests, args.seed))
+                derived_config(overrides, config)
+                samples.append(simulate(
+                    binary, standard, args.requests, args.seed, overlay=config))
             entry = {"standard": standard.upper(), "samples": args.samples,
                      "fraction": args.fraction}
             for metric in ("latency_ticks", "throughput_GBps"):
@@ -186,9 +188,9 @@ def main() -> int:
         power_results = {}
         for label, scale in (("low", 0.9), ("nominal", 1.0), ("high", 1.1)):
             power_results[label] = simulate(
-                binary, CONFIGS["hbm4"], args.requests, args.seed,
-                ["--floorplan", "true", "--power-model", "true", "--thermal-model", "true",
-                 "--power-scale", str(scale)])
+                binary, "hbm4", args.requests, args.seed,
+                extra=["--floorplan", "true", "--power-model", "true",
+                       "--thermal-model", "true", "--power-scale", str(scale)])
         checks.append({
             "name": "power_scale_energy_monotonic",
             "passed": (power_results["low"]["energy_pJ"] <

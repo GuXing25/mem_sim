@@ -6,12 +6,18 @@
 
 namespace hbm_sim {
 
-void RfmManager::reset(std::size_t bank_count) {
+void RfmManager::reset(const DramSpec& spec) {
   // 每个 bank 一份 ACT 计数和 pending 标记。pending 标记用于避免阈值已触发但
   // RFMPB/RFMAB 还没发出前，连续 ACT 反复生成重复维护请求。
+  const std::size_t bank_count = static_cast<std::size_t>(spec.total_banks());
   act_count_since_rfm_.assign(bank_count, 0);
   rfm_pending_bank_.assign(bank_count, false);
-  rfm_pending_all_bank_ = false;
+  const std::size_t rank_count =
+      static_cast<std::size_t>(std::max(1, spec.org.channels) *
+                               std::max(1, spec.org.pseudo_channels) *
+                               std::max(1, spec.org.sids) *
+                               std::max(1, spec.org.ranks));
+  rfm_pending_all_bank_.assign(rank_count, false);
 }
 
 std::optional<RfmMaintenanceCommand> RfmManager::on_activate(
@@ -36,11 +42,14 @@ std::optional<RfmMaintenanceCommand> RfmManager::on_activate(
   }
 
   if (spec.rfm_policy == MaintenancePolicyKind::AllBank) {
-    if (rfm_pending_all_bank_) {
+    const int target_rank = rank_index(spec, decoded);
+    if (target_rank < 0 ||
+        target_rank >= static_cast<int>(rfm_pending_all_bank_.size()) ||
+        rfm_pending_all_bank_[static_cast<std::size_t>(target_rank)]) {
       return std::nullopt;
     }
-    rfm_pending_all_bank_ = true;
-    // all-bank RFM 只需要一个 pending 标记，因为 RFMAB 会覆盖整个 channel/stack slice。
+    rfm_pending_all_bank_[static_cast<std::size_t>(target_rank)] = true;
+    // RFMab 的 all-bank 作用域是目标 rank；其他 rank 可以独立触发自己的维护。
     stats.rfm_events++;
     stats.rfm_all_bank_events++;
     return RfmMaintenanceCommand{Command::RFMAB, decoded};
@@ -70,15 +79,49 @@ void RfmManager::on_rfmpb(const DramSpec& spec, const DecodedAddress& decoded, S
   stats.rfm_decrements++;
 }
 
-void RfmManager::on_rfmab(const DramSpec& spec, Stats& stats) {
+void RfmManager::on_rfmab(const DramSpec& spec,
+                          const DecodedAddress& decoded,
+                          Stats& stats) {
   int decrement = decrement_value(spec);
-  // RFMAB 覆盖全部 bank，因此所有 bank 计数一起递减，并清掉所有 per-bank pending。
-  for (auto& count : act_count_since_rfm_) {
-    count = std::max(0, count - decrement);
+  const auto [begin, end] = rank_bank_range(spec, decoded);
+  for (int flat = begin; flat < end; ++flat) {
+    act_count_since_rfm_[static_cast<std::size_t>(flat)] =
+        std::max(0, act_count_since_rfm_[static_cast<std::size_t>(flat)] -
+                        decrement);
+    rfm_pending_bank_[static_cast<std::size_t>(flat)] = false;
   }
-  std::fill(rfm_pending_bank_.begin(), rfm_pending_bank_.end(), false);
-  rfm_pending_all_bank_ = false;
+  const int target_rank = rank_index(spec, decoded);
+  if (target_rank >= 0 &&
+      target_rank < static_cast<int>(rfm_pending_all_bank_.size())) {
+    rfm_pending_all_bank_[static_cast<std::size_t>(target_rank)] = false;
+  }
   stats.rfm_decrements++;
+}
+
+int RfmManager::rank_index(const DramSpec& spec,
+                           const DecodedAddress& decoded) const {
+  const int channel =
+      std::clamp(decoded.channel, 0, std::max(1, spec.org.channels) - 1);
+  const int pc = std::clamp(decoded.pseudo_channel, 0,
+                            std::max(1, spec.org.pseudo_channels) - 1);
+  const int sid =
+      std::clamp(decoded.sid, 0, std::max(1, spec.org.sids) - 1);
+  const int rank =
+      std::clamp(decoded.rank, 0, std::max(1, spec.org.ranks) - 1);
+  return ((channel * std::max(1, spec.org.pseudo_channels) + pc) *
+              std::max(1, spec.org.sids) +
+          sid) *
+             std::max(1, spec.org.ranks) +
+         rank;
+}
+
+std::pair<int, int> RfmManager::rank_bank_range(
+    const DramSpec& spec, const DecodedAddress& decoded) const {
+  const int banks_per_rank =
+      std::max(1, spec.org.bank_groups * spec.org.banks_per_group);
+  const int begin = rank_index(spec, decoded) * banks_per_rank;
+  return {begin, std::min(static_cast<int>(act_count_since_rfm_.size()),
+                          begin + banks_per_rank)};
 }
 
 bool RfmManager::valid_bank(int flat_bank) const {

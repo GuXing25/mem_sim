@@ -1,5 +1,7 @@
 #pragma once
 
+#include "hbm_sim/config/document.hpp"
+
 // hbm_sim 公共聚合头文件。
 //
 // 外部小实验、smoke test 或辅助工具可以直接 include 这个文件，避免关心

@@ -4,6 +4,7 @@
 // 它记录 ACT 累计次数并选择 RFMpb/RFMab，具体发射仍由 Controller 仲裁。
 
 #include <optional>
+#include <utility>
 #include <vector>
 
 #include "hbm_sim/core/addr_map.hpp"
@@ -25,7 +26,7 @@ struct RfmMaintenanceCommand {
 class RfmManager {
  public:
   // bank_count 通常等于 spec.total_banks()。每个 flat bank 独立维护 ACT 计数。
-  void reset(std::size_t bank_count);
+  void reset(const DramSpec& spec);
   // Controller 在每次 ACT/ACT1 成功发出后调用。达到阈值时返回需要排队的 RFM 命令；
   // 未达到阈值或已有 pending RFM 时返回 nullopt。
   std::optional<RfmMaintenanceCommand> on_activate(const DramSpec& spec,
@@ -33,11 +34,14 @@ class RfmManager {
                                                    Stats& stats);
   // RFMpb 真正发出后调用，执行 per-bank 计数递减并清 pending 标志。
   void on_rfmpb(const DramSpec& spec, const DecodedAddress& decoded, Stats& stats);
-  // RFMab 真正发出后调用，执行 channel/global 计数递减并清全部 pending 标志。
-  void on_rfmab(const DramSpec& spec, Stats& stats);
+  // RFMab 真正发出后调用，只递减目标 rank 的计数并清该 rank pending 标志。
+  void on_rfmab(const DramSpec& spec, const DecodedAddress& decoded, Stats& stats);
 
  private:
   bool valid_bank(int flat_bank) const;
+  int rank_index(const DramSpec& spec, const DecodedAddress& decoded) const;
+  std::pair<int, int> rank_bank_range(const DramSpec& spec,
+                                      const DecodedAddress& decoded) const;
   // RFM decrement 使用显式配置；若未配置则退回阈值，表示一次 RFM 抵消一轮阈值积累。
   int decrement_value(const DramSpec& spec) const;
 
@@ -45,8 +49,8 @@ class RfmManager {
   std::vector<int> act_count_since_rfm_;
   // 防止同一 bank 在 RFM 尚未服务时重复插入 RFMpb。
   std::vector<bool> rfm_pending_bank_;
-  // all-bank 策略下防止 RFMab 尚未服务时重复插入。
-  bool rfm_pending_all_bank_ = false;
+  // all-bank 策略下每个 rank 独立防止尚未服务的 RFMab 重复插入。
+  std::vector<bool> rfm_pending_all_bank_;
 };
 
 }  // namespace hbm_sim

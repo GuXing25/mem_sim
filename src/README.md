@@ -34,9 +34,9 @@ dram -> common
 
 常见修改入口：
 
-- 新增或校准 JEDEC/vendor timing：标准身份/能力放在 `dram/standard_traits.cpp`，organization/timing 和标准公式放在 `dram/profiles.cpp`，`TimingTable` 来源标注和 `configs/calib/*.cfg` 要同步更新。
-- 从手册摘录某个 speed-bin/density/stack-height/mode 的 timing 表片段：优先新增 `configs/profiles/<standard>/*.cfg`，再通过 `timing_profile_file` 加载；只有当该规则会影响一整类器件或需要公式推导时，才把逻辑沉到 `dram/profiles.cpp`。
-- 维护 profile 覆盖矩阵：新增文件后同步更新 `configs/profiles/index.csv`，明确 `standard + speed-bin + density + stack-height + mode + vendor + source`，避免后续不知道某个 timing 数值来自 JEDEC、vendor 还是研究默认值。
+- 新增或校准 JEDEC/vendor timing：标准身份/能力放在 `dram/standard_traits.cpp`，organization/timing 和标准公式放在 `dram/profiles.cpp`，并同步更新 `configs/hbm.cfg` 或 `configs/lpddr.cfg` 的具名 preset 与 `TimingTable` 来源。
+- 从手册摘录某个 speed-bin/density/stack-height/mode 的 timing 表：增加家族主配置中的具名 preset；只有当规则影响一整类器件或需要公式推导时，才把逻辑沉到 `dram/profiles.cpp`。
+- 每个 preset 必须明确 `standard + speed-bin + density + stack-height + mode + vendor + source`，避免 JEDEC、vendor、外部仿真器和研究默认数值混用。
 - 新增命令类别：先改 `include/hbm_sim/core/common.hpp` 的 `Command`，再改 `dram/semantics.cpp`、`dram/state.cpp`、`controller/executor.cpp` 和 `validation/validator.cpp`。MRW/MRR/WCK_SYNC/WCK_TRAIN/DVFS/PDE/PDX/SREFEN/SREFEX/ECC_SCRUB/RAS_ERR 这类控制命令也要同步补 `Stats` 和 sequence test。
 - 新增调度策略：扩展 `include/hbm_sim/core/common.hpp` 的 `SchedulerKind` 和 `controller/scheduler.cpp`，保持 Controller 只提供候选视图。
 - 新增地址映射：扩展 `AddressMappingKind`、`core/addr_map.cpp` 和相关 sequence test。
@@ -76,7 +76,7 @@ cli/main.cpp
 | 新增 CLI 参数 | `cli/` | README、smoke、配置字段 |
 | 新增 workload 或 trace 格式 | `frontend/` | examples、tests |
 | 新增地址映射 | `core/` | sequence test、channel 分布统计 |
-| 新增 JEDEC/vendor timing | `dram/`、`configs/profiles/` | strict timing、dump timing table |
+| 新增 JEDEC/vendor timing | `dram/`、`configs/hbm.cfg`/`lpddr.cfg` | config tests、strict timing、dump timing table |
 | 新增 DFI trace/signal 字段 | `validation/`、`cli/` | smoke、README、CSV 兼容 |
 | 新增命令语义 | `dram/` | executor、validator、stats |
 | 新增调度策略 | `controller/` | sequence test、smoke |

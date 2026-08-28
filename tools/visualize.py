@@ -30,8 +30,8 @@ def parse_args() -> argparse.Namespace:
                         help="optional stdout capture from hbm_sim")
     parser.add_argument("--performance-json", type=Path,
                         help="optional JSON produced by tools/performance_curve.py")
-    parser.add_argument("--thermal-map", type=Path,
-                        help="optional text map produced by --dump-thermal-map")
+    parser.add_argument("--thermal-map", type=Path, action="append",
+                        help="optional text map produced by --dump-thermal-map; repeat for multiple stacks")
     parser.add_argument("--out", type=Path, required=True, help="output standalone HTML")
     parser.add_argument("--title", default="hbm_sim validation dashboard")
     parser.add_argument("--max-events", type=int, default=100_000,
@@ -162,27 +162,28 @@ def read_performance(path: Path | None) -> list[dict[str, Any]]:
             if isinstance(row, dict)]
 
 
-def read_thermal(path: Path | None) -> list[dict[str, Any]]:
-    if path is None:
+def read_thermal(paths: list[Path] | None) -> list[dict[str, Any]]:
+    if not paths:
         return []
-    if not path.is_file():
-        raise SystemExit(f"thermal map not found: {path}")
     result = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line or line.startswith("#"):
-            continue
-        fields = line.split()
-        if len(fields) < 13:
-            continue
-        try:
-            result.append({
-                "stack": int(fields[0]), "layer": int(fields[1]),
-                "x": int(fields[2]), "y": int(fields[3]),
-                "temperature": float(fields[10]), "energy": float(fields[11]),
-                "events": int(fields[12]),
-            })
-        except ValueError:
-            continue
+    for path in paths:
+        if not path.is_file():
+            raise SystemExit(f"thermal map not found: {path}")
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line or line.startswith("#"):
+                continue
+            fields = line.split()
+            if len(fields) < 13:
+                continue
+            try:
+                result.append({
+                    "stack": int(fields[0]), "layer": int(fields[1]),
+                    "x": int(fields[2]), "y": int(fields[3]),
+                    "temperature": float(fields[10]), "energy": float(fields[11]),
+                    "events": int(fields[12]),
+                })
+            except ValueError:
+                continue
     return result
 
 
@@ -209,7 +210,7 @@ HTML_TEMPLATE = r"""<!doctype html>
 <section class="card"><h2>Command mix</h2><div id="mix" class="bars"></div></section>
 <section class="card"><h2>DFI activity</h2><div id="dfi" class="grid"></div></section>
 <section class="card"><h2>Injection-rate / latency / throughput</h2><p class="hint">Shown when <code>tools/performance_curve.py --json-out</code> is supplied.</p><svg id="curve" viewBox="0 0 1200 290" preserveAspectRatio="none"></svg><p id="curveHint" class="hint"></p></section>
-<section class="card"><h2>Thermal map</h2><p class="hint">Shown when <code>--dump-thermal-map</code> is supplied. Thermal-grid cells, rather than floorplan tile coordinates, are coloured by absolute temperature.</p><div class="controls"><label>Layer<select id="layer"></select></label></div><div id="thermal" class="thermal"></div></section>
+<section class="card"><h2>Thermal map</h2><p class="hint">Shown when <code>--dump-thermal-map</code> is supplied. Repeat <code>--thermal-map</code> when visualizing multiple Stack files. Thermal-grid cells, rather than floorplan tile coordinates, are coloured by absolute temperature.</p><div class="controls"><label>Stack<select id="thermalStack"></select></label><label>Layer<select id="layer"></select></label></div><div id="thermal" class="thermal"></div></section>
 </main><script>
 const DATA=__DATA__;
 const COLORS={act:'#4ade80',read:'#60a5fa',write:'#fb923c',pre:'#f87171',refresh:'#c084fc',other:'#94a3b8'};
@@ -236,7 +237,7 @@ function drawCurve(){
   svg.innerHTML=out;el('curveHint').textContent=`${numeric.length} deterministic sweep points. Left scale max ${ymax.toFixed(1)} GB/s; right scale max ${lmax.toFixed(1)} ticks.`
 }
 function thermalColor(t,min,max){const f=max===min?.5:(t-min)/(max-min);return `hsl(${220-220*f} 78% ${78-30*f}%)`}
-function drawThermal(){const tiles=DATA.thermal,select=el('layer');if(!tiles.length){select.innerHTML='<option>n/a</option>';el('thermal').innerHTML='<p class="empty">No thermal map supplied.</p>';return}const layers=[...new Set(tiles.map(x=>x.layer))].sort((a,b)=>a-b);option(select,layers);const render=()=>{const rows=tiles.filter(x=>String(x.layer)===select.value),temps=rows.map(x=>x.temperature),min=Math.min(...temps),max=Math.max(...temps);el('thermal').innerHTML=rows.sort((a,b)=>a.y-b.y||a.x-b.x).map(x=>`<div class="tile" title="stack ${x.stack}, layer ${x.layer}, thermal grid (${x.x},${x.y}) • ${x.temperature.toFixed(2)} °C • ${x.energy.toFixed(2)} pJ • ${x.events} events" style="background:${thermalColor(x.temperature,min,max)}">${x.temperature.toFixed(1)}</div>`).join('')};select.onchange=render;render()}
+function drawThermal(){const tiles=DATA.thermal,stackSelect=el('thermalStack'),layerSelect=el('layer');if(!tiles.length){stackSelect.innerHTML='<option>n/a</option>';layerSelect.innerHTML='<option>n/a</option>';el('thermal').innerHTML='<p class="empty">No thermal map supplied.</p>';return}const stacks=[...new Set(tiles.map(x=>x.stack))].sort((a,b)=>a-b);option(stackSelect,stacks);const updateLayers=()=>{const layers=[...new Set(tiles.filter(x=>String(x.stack)===stackSelect.value).map(x=>x.layer))].sort((a,b)=>a-b);option(layerSelect,layers);render()};const render=()=>{const rows=tiles.filter(x=>String(x.stack)===stackSelect.value&&String(x.layer)===layerSelect.value),temps=rows.map(x=>x.temperature),min=Math.min(...temps),max=Math.max(...temps);el('thermal').innerHTML=rows.sort((a,b)=>a.y-b.y||a.x-b.x).map(x=>`<div class="tile" title="stack ${x.stack}, layer ${x.layer}, thermal grid (${x.x},${x.y}) • ${x.temperature.toFixed(2)} °C • ${x.energy.toFixed(2)} pJ • ${x.events} events" style="background:${thermalColor(x.temperature,min,max)}">${x.temperature.toFixed(1)}</div>`).join('')};stackSelect.onchange=updateLayers;layerSelect.onchange=render;updateLayers()}
 metrics();drawMix();drawDfi();drawCurve();drawThermal();
 // Enhanced explorer: mirrors the useful offline portions of Ramulator's visualizer
 // while retaining the project-specific DFI, payload and thermal panels above.

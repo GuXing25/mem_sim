@@ -670,6 +670,7 @@ class ChunkFileMemoryBackend final : public MemoryBackend {
 
   ~ChunkFileMemoryBackend() override {
     try {
+      // 正常仿真通过 MemoryImage::flush_backend() 显式传播失败；析构只兜底。
       flush();
     } catch (...) {
     }
@@ -907,7 +908,8 @@ MemoryBackendKind parse_memory_backend_kind(const std::string& value) {
   if (normalized == "sparse") return MemoryBackendKind::Sparse;
   if (normalized == "mmap_sparse" || normalized == "mmap") return MemoryBackendKind::MmapSparse;
   if (normalized == "chunk_file" || normalized == "chunk") return MemoryBackendKind::ChunkFile;
-  throw std::invalid_argument("unsupported memory backend: " + value);
+  throw std::invalid_argument("unsupported memory backend: " + value +
+                              " (implemented: sparse, mmap_sparse, chunk_file)");
 }
 
 std::unique_ptr<MemoryBackend> make_memory_backend(std::size_t line_size,

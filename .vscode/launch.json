@@ -9,7 +9,9 @@
       "program": "${workspaceFolder}/build-clang-debug/hbm_sim",
       "args": [
         "--config",
-        "configs/run/hbm4.cfg",
+        "configs/hbm.cfg",
+        "--standard",
+        "hbm4",
         "--requests",
         "128",
         "--max-cycles",
@@ -27,7 +29,13 @@
       "program": "${workspaceFolder}/build-clang-debug/hbm_sim",
       "args": [
         "--config",
-        "configs/run/hbm4_storage.cfg"
+        "configs/hbm.cfg",
+        "--standard",
+        "hbm4",
+        "--trace",
+        "examples/data_check.trace",
+        "--requests",
+        "0"
       ],
       "cwd": "${workspaceFolder}",
       "stopOnEntry": false,
@@ -41,7 +49,11 @@
       "program": "${workspaceFolder}/build-clang-debug/hbm_sim",
       "args": [
         "--config",
-        "configs/run/hbm4_storage_mmap.cfg",
+        "configs/hbm.cfg",
+        "--standard",
+        "hbm4",
+        "--memory-backend",
+        "mmap_sparse",
         "--memory-capacity-bytes",
         "1048576",
         "--memory-data-file",
@@ -59,7 +71,11 @@
       "program": "${workspaceFolder}/build-clang-debug/hbm_sim",
       "args": [
         "--config",
-        "configs/run/hbm4_storage_chunk.cfg",
+        "configs/hbm.cfg",
+        "--standard",
+        "hbm4",
+        "--memory-backend",
+        "chunk_file",
         "--memory-capacity-bytes",
         "1048576",
         "--memory-data-file",
@@ -81,7 +97,9 @@
       "program": "${workspaceFolder}/build-clang-debug/hbm_sim",
       "args": [
         "--config",
-        "configs/run/lpddr6.cfg",
+        "configs/lpddr.cfg",
+        "--standard",
+        "lpddr6",
         "--requests",
         "128",
         "--max-cycles",

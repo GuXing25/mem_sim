@@ -54,6 +54,9 @@
         "${workspaceFolder}/build-clang-debug",
         "--target",
         "sequence_tests",
+        "timing_boundary_tests",
+        "phy_tests",
+        "config_tests",
         "--parallel"
       ],
       "options": {

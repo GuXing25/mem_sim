@@ -13,9 +13,12 @@ import sys
 import tempfile
 from pathlib import Path
 
+from config_selection import DRAMSIM3_HBM2, explicit_selection_args
+
 
 ROOT = Path(__file__).resolve().parents[1]
-PROJECT_CONFIG = ROOT / "configs/validation/dramsim3_hbm2_common.cfg"
+PROJECT_CONFIG = DRAMSIM3_HBM2[0]
+PROJECT_SELECTION = explicit_selection_args(DRAMSIM3_HBM2)
 
 
 def parse_args() -> argparse.Namespace:
@@ -126,7 +129,7 @@ def main() -> int:
         project_trace.write_text("0 R 0x0\n", encoding="ascii")
         project_csv = temp / "project_commands.csv"
         project_run = subprocess.run(
-            [str(binary), "--config", str(PROJECT_CONFIG), "--trace", str(project_trace),
+            [str(binary), *PROJECT_SELECTION, "--trace", str(project_trace),
              "--cmd-trace", str(project_csv), "--validate-cmd-trace"], cwd=ROOT,
             text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
         if project_run.returncode:
@@ -181,7 +184,7 @@ def main() -> int:
         project_write_trace = temp / "project_write.trace"
         project_write_trace.write_text("0 W 0x0\n", encoding="ascii")
         project_write_run = subprocess.run(
-            [str(binary), "--config", str(PROJECT_CONFIG), "--trace",
+            [str(binary), *PROJECT_SELECTION, "--trace",
              str(project_write_trace)], cwd=ROOT, text=True, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, check=False)
         if project_write_run.returncode:
@@ -213,7 +216,7 @@ def main() -> int:
         project_refresh_trace = temp / "project_refresh.trace"
         project_refresh_trace.write_text("0 M REFab 0x0\n", encoding="ascii")
         project_refresh_run = subprocess.run(
-            [str(binary), "--config", str(PROJECT_CONFIG), "--trace",
+            [str(binary), *PROJECT_SELECTION, "--trace",
              str(project_refresh_trace)], cwd=ROOT, text=True, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, check=False)
         if project_refresh_run.returncode:
@@ -249,7 +252,7 @@ def main() -> int:
                     newline="", encoding="utf-8") as stream:
                 external_peak = max(float(row["temperature"]) for row in csv.DictReader(stream))
             project_thermal = subprocess.run(
-                [str(binary), "--config", str(PROJECT_CONFIG), "--requests", "2000",
+                [str(binary), *PROJECT_SELECTION, "--requests", "2000",
                  "--pattern", "random", "--read-ratio", "70", "--inject-interval", "1",
                  "--seed", "20260816", "--max-cycles", "100000000"], cwd=ROOT,
                 text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
@@ -282,6 +285,7 @@ def main() -> int:
         "scope": "dramsim3_older_hbm_idd_thermal_auxiliary_validation",
         "dramsim3_root": str(dramsim_root), "dramsim3_commit": commit,
         "reference_config": str(hbm2_ini), "project_config": str(PROJECT_CONFIG),
+        "project_preset": DRAMSIM3_HBM2[2],
         "formula_expected_pJ": expected, "project_observed_pJ": observed,
         "thermal": thermal_result, "checks": checks,
         "passed": all(check["passed"] for check in checks),

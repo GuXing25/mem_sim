@@ -4,6 +4,7 @@
 // 它是命令状态转换的唯一集中入口，避免 ACT/RD/REF/RFM 的副作用散落到调度代码。
 
 #include <optional>
+#include <utility>
 #include <vector>
 
 #include "hbm_sim/dram/bank_state.hpp"
@@ -36,9 +37,9 @@ class CommandExecutor {
 
  private:
   Cycle timing_delay(int cycles) const;
-  DecodedAddress dual_bank_partner(const DecodedAddress& decoded) const;
-  void close_all_banks(const DecodedAddress& decoded, Cycle clk);
-  void gate_all_banks_after(const DecodedAddress& decoded, Cycle ready_at);
+  void close_rank_banks(const DecodedAddress& decoded, Cycle clk);
+  void gate_rank_banks_after(const DecodedAddress& decoded, Cycle ready_at);
+  std::pair<int, int> rank_bank_range(const DecodedAddress& decoded) const;
 
   const DramSpec& spec_;
   std::vector<BankState>& banks_;

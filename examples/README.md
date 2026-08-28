@@ -4,7 +4,8 @@
 
 当前示例重点覆盖：普通 trace、timed trace、真实 payload trace、初始 memory
 image、final memory txt/CSV 导出、DFI beat/signal trace 以及 storage model 参数。
-大规模实验建议使用 `configs/run`，而不是把长 trace 或后端大文件放在 examples 中。
+大规模实验选择 `configs/hbm.cfg` 或 `configs/lpddr.cfg` 的 preset，不要把长 trace 或
+后端大文件放在 examples 中。
 
 主要文件：
 
@@ -16,6 +17,7 @@ image、final memory txt/CSV 导出、DFI beat/signal trace 以及 storage model
 - `timed.trace`：带显式注入 cycle 的 trace 输入样例，格式为 `CYCLE R|W ADDRESS`。
 - `memory_image.txt`：稀疏真实存储区初始内容样例。
 - `data_check.trace`：带 `data=`、`expect=` 和 `mask=` 的数据正确性 trace 样例。
+- `multistack_demos/`：四种标准的多 Stack 工程脚本、共享数据闭环 trace 和使用说明。
 
 修改建议：
 
@@ -190,12 +192,14 @@ For sensitivity studies, the first-version floorplan/power/thermal model can be 
   --thermal-rise-c-per-pj 0.00003
 ```
 
-The same keys can be placed in `configs/run/*.cfg` or `configs/calib/*.cfg`. The default values are research defaults; replace them with device/vendor data before making numeric power or thermal claims.
+The same keys can be placed in the `[override]` section of `configs/hbm.cfg` or
+`configs/lpddr.cfg`. The default values are research defaults; replace them with
+device/vendor data before making numeric power or thermal claims.
 
 For a DRAMsim3-style power calibration path, use:
 
 ```bash
-./build-clang-debug/hbm_sim --config configs/run/hbm4_storage.cfg \
+./build-clang-debug/hbm_sim --config configs/hbm.cfg --standard hbm4 \
   --power-source dramsim3_idd \
   --thermal-grid-cols-per-tile 4 --thermal-grid-rows-per-tile 4
 ```

@@ -82,71 +82,6 @@ bool ranges_overlap(Address a_start, std::size_t a_size, Address b_start,
          b_start < range_end(a_start, a_size);
 }
 
-void apply_storage_stats(Stats &stats, const PhysicalStorageStats &storage) {
-  stats.storage_lines_allocated = storage.lines_allocated;
-  stats.unique_written_lines = storage.unique_written_lines;
-  stats.storage_bytes_allocated = storage.bytes_allocated;
-  stats.storage_topology_lines_scanned = storage.topology_lines_scanned;
-  stats.storage_topology_scan_skipped = storage.topology_scan_skipped;
-  stats.storage_stacks_touched = storage.stacks_touched;
-  stats.storage_dies_touched = storage.dies_touched;
-  stats.storage_layers_touched = storage.layers_touched;
-  stats.storage_channels_touched = storage.channels_touched;
-  stats.storage_pseudo_channels_touched = storage.pseudo_channels_touched;
-  stats.storage_sids_touched = storage.sids_touched;
-  stats.storage_ranks_touched = storage.ranks_touched;
-  stats.storage_bank_groups_touched = storage.bank_groups_touched;
-  stats.storage_banks_touched = storage.banks_touched;
-  stats.storage_rows_touched = storage.rows_touched;
-  stats.storage_columns_touched = storage.columns_touched;
-  stats.storage_subarrays_touched = storage.subarrays_touched;
-  stats.storage_mats_touched = storage.mats_touched;
-  stats.storage_cells_touched = storage.cells_touched;
-  stats.storage_microbumps_touched = storage.microbumps_touched;
-  stats.floorplan_tiles_touched = storage.floorplan_tiles_touched;
-  stats.thermal_tiles_touched = storage.thermal_tiles_touched;
-  stats.thermal_grid_cells_touched = storage.thermal_grid_cells_touched;
-  stats.storage_read_line_accesses = storage.read_line_accesses;
-  stats.storage_write_line_accesses = storage.write_line_accesses;
-  stats.rowbuf_activations = storage.row_buffer_activations;
-  stats.rowbuf_precharges = storage.row_buffer_precharges;
-  stats.rowbuf_dirty_writebacks = storage.row_buffer_dirty_writebacks;
-  stats.rowbuf_clean_precharges = storage.row_buffer_clean_precharges;
-  stats.rowbuf_hits = storage.row_buffer_hits;
-  stats.rowbuf_misses = storage.row_buffer_misses;
-  stats.rowbuf_lazy_loads = storage.row_buffer_lazy_loads;
-  stats.rowbuf_reads = storage.row_buffer_reads;
-  stats.rowbuf_writes = storage.row_buffer_writes;
-  stats.rowbuf_forced_closes = storage.row_buffer_forced_closes;
-  stats.rowbuf_open_rows = storage.row_buffer_open_rows;
-  stats.rowbuf_dirty_rows = storage.row_buffer_dirty_rows;
-  stats.power_events = storage.power_events;
-  stats.thermal_updates = storage.thermal_updates;
-  stats.power_energy_pj = storage.power_energy_pj;
-  stats.power_act_energy_pj = storage.power_act_energy_pj;
-  stats.power_pre_energy_pj = storage.power_pre_energy_pj;
-  stats.power_read_energy_pj = storage.power_read_energy_pj;
-  stats.power_write_energy_pj = storage.power_write_energy_pj;
-  stats.power_refresh_energy_pj = storage.power_refresh_energy_pj;
-  stats.power_rfm_energy_pj = storage.power_rfm_energy_pj;
-  stats.power_control_energy_pj = storage.power_control_energy_pj;
-  stats.thermal_peak_temp_c = storage.thermal_peak_temp_c;
-  stats.thermal_avg_temp_c = storage.thermal_avg_temp_c;
-  stats.thermal_hotspot_layer = storage.thermal_hotspot_layer;
-  stats.thermal_hotspot_x = storage.thermal_hotspot_x;
-  stats.thermal_hotspot_y = storage.thermal_hotspot_y;
-  stats.thermal_lateral_transfers = storage.thermal_lateral_transfers;
-  stats.thermal_vertical_transfers = storage.thermal_vertical_transfers;
-  stats.thermal_tsv_transfers = storage.thermal_tsv_transfers;
-  stats.thermal_coupled_delta_c = storage.thermal_coupled_delta_c;
-  stats.ecc_shadow_updates = storage.ecc_shadow_updates;
-  stats.ecc_checked_reads = storage.ecc_checked_reads;
-  stats.ecc_corrected_errors = storage.ecc_corrected_errors;
-  stats.ecc_uncorrectable_errors = storage.ecc_uncorrectable_errors;
-  stats.ecc_injected_errors = storage.ecc_injected_errors;
-  stats.ecc_parity_repairs = storage.ecc_parity_repairs;
-}
-
 } // namespace
 
 Controller::Controller(DramSpec spec, ControllerOptions options)
@@ -171,7 +106,7 @@ Controller::Controller(DramSpec spec, ControllerOptions options)
   row_policy_.reset(static_cast<std::size_t>(spec_.total_banks()),
                     options_.row_policy_cap);
   refresh_manager_.reset(spec_, clk_);
-  rfm_manager_.reset(static_cast<std::size_t>(spec_.total_banks()));
+  rfm_manager_.reset(spec_);
   timing_engine_.reset(spec_);
 }
 
@@ -213,16 +148,12 @@ bool Controller::enqueue(Request req) {
       ByteVector initialized_mask;
       const PhysicalStorageStats storage_before =
           memory_image_->storage_stats();
-      req.payload =
-          read_forward_payload(req, &initialized, &initialized_mask);
-      const PhysicalStorageStats storage_after =
-          memory_image_->storage_stats();
-      req.response_ecc_corrected =
-          storage_after.ecc_corrected_errors >
-          storage_before.ecc_corrected_errors;
-      req.response_ecc_uncorrectable =
-          storage_after.ecc_uncorrectable_errors >
-          storage_before.ecc_uncorrectable_errors;
+      req.payload = read_forward_payload(req, &initialized, &initialized_mask);
+      const PhysicalStorageStats storage_after = memory_image_->storage_stats();
+      req.response_ecc_corrected = storage_after.ecc_corrected_errors >
+                                   storage_before.ecc_corrected_errors;
+      req.response_ecc_uncorrectable = storage_after.ecc_uncorrectable_errors >
+                                       storage_before.ecc_uncorrectable_errors;
       req.has_payload = true;
       // bypass 读在下一拍才对响应端可见；把快照存在 Request 中，避免后续
       // 写缓冲变化改变已经接受的读结果。
@@ -259,21 +190,36 @@ bool Controller::enqueue(Request req) {
       // 同地址写请求合并到已有 write/active entry，不再占用队列和总线。
       auto existing = buffered_writes_.find(req.address);
       if (existing == buffered_writes_.end() || !req.has_byte_mask) {
-        buffered_writes_[req.address] = req;
+        BufferedWriteState state;
+        state.request = req;
+        state.byte_sequence.assign(req.payload.size(), req.controller_sequence);
+        buffered_writes_[req.address] = std::move(state);
       } else {
-        ensure_write_payload(existing->second);
+        Request &merged = existing->second.request;
+        ensure_write_payload(merged);
         req.byte_mask = normalize_mask(req.byte_mask, req.payload.size());
-        if (existing->second.payload.size() < req.payload.size()) {
-          existing->second.payload.resize(req.payload.size(), 0);
+        if (merged.payload.size() < req.payload.size()) {
+          merged.payload.resize(req.payload.size(), 0);
         }
+        ByteVector merged_mask =
+            merged.has_byte_mask
+                ? normalize_mask(merged.byte_mask, merged.payload.size())
+                : ByteVector(merged.payload.size(), 0xff);
+        merged_mask.resize(merged.payload.size(), 0);
+        existing->second.byte_sequence.resize(merged.payload.size(), 0);
         for (std::size_t i = 0; i < req.payload.size(); i++) {
           if (req.byte_mask[i] != 0) {
-            existing->second.payload[i] = req.payload[i];
+            merged.payload[i] = req.payload[i];
+            merged_mask[i] = 0xff;
+            existing->second.byte_sequence[i] = req.controller_sequence;
           }
         }
-        existing->second.has_payload = true;
-        existing->second.has_byte_mask = false;
-        existing->second.byte_mask.clear();
+        merged.has_payload = true;
+        merged.has_byte_mask =
+            !std::all_of(merged_mask.begin(), merged_mask.end(),
+                         [](std::uint8_t byte) { return byte != 0; });
+        merged.byte_mask =
+            merged.has_byte_mask ? std::move(merged_mask) : ByteVector{};
       }
       stats_.writes++;
       stats_.injected_requests++;
@@ -290,7 +236,17 @@ bool Controller::enqueue(Request req) {
     stats_.writes++;
     stats_.injected_requests++;
     buffered_write_addrs_.insert(req.address);
-    buffered_writes_[req.address] = req;
+    BufferedWriteState state;
+    state.request = req;
+    ByteVector mask = req.has_byte_mask
+                          ? normalize_mask(req.byte_mask, req.payload.size())
+                          : ByteVector(req.payload.size(), 0xff);
+    state.byte_sequence.resize(req.payload.size(), 0);
+    for (std::size_t i = 0; i < mask.size(); i++) {
+      if (mask[i] != 0)
+        state.byte_sequence[i] = req.controller_sequence;
+    }
+    buffered_writes_[req.address] = std::move(state);
     write_buffer_.push_back(req);
     return true;
   }
@@ -391,6 +347,7 @@ void Controller::run_until_done(Cycle max_cycles) {
 }
 
 void Controller::finalize_run_stats() {
+  flush_storage();
   // 单 controller 模式中 system_cycles 和 aggregate_controller_cycles 相同。
   // 多 controller 模式会在 MemorySystem::finalize_run_stats() 中重新聚合。
   stats_.cycles = clk_;
@@ -453,7 +410,7 @@ void Controller::finalize_run_stats() {
     stats_.phy_total_write_service_cycles = phy.total_write_service_cycles;
   }
   if (memory_image_) {
-    apply_storage_stats(stats_, memory_image_->storage_stats());
+    apply_physical_storage_stats(stats_, memory_image_->storage_stats());
   }
   stats_.total_addressable_lines = spec_.total_addressable_lines();
   stats_.storage_density_pct =
@@ -461,6 +418,13 @@ void Controller::finalize_run_stats() {
           ? 0.0
           : 100.0 * static_cast<double>(stats_.unique_written_lines) /
                 static_cast<double>(stats_.total_addressable_lines);
+}
+
+void Controller::flush_storage() {
+  if (!memory_image_)
+    return;
+  memory_image_->flush_dirty_row_buffers(clk_);
+  memory_image_->flush_backend();
 }
 
 bool Controller::done() const {
@@ -491,22 +455,25 @@ bool Controller::response_queue_full() const {
          responses_.size() >= options_.response_queue_capacity;
 }
 
-TransactionResponse Controller::make_response(
-    const Request &req, ByteVector data, ByteVector initialized_mask,
-    bool initialized, bool forwarded, bool coalesced,
-    ResponseStatus status) const {
+TransactionResponse Controller::make_response(const Request &req,
+                                              ByteVector data,
+                                              ByteVector initialized_mask,
+                                              bool initialized, bool forwarded,
+                                              bool coalesced,
+                                              ResponseStatus status) const {
   TransactionResponse response;
   response.request_id = req.id;
   response.host_request_id = req.host_request_id;
   response.transaction_index = req.transaction_index;
-  response.transaction_count = std::max<std::uint32_t>(1, req.transaction_count);
+  response.transaction_count =
+      std::max<std::uint32_t>(1, req.transaction_count);
   response.type = req.type;
   response.system_address =
       req.has_system_address ? req.system_address : req.address;
   response.local_address = req.address;
   response.stack = req.target_stack;
-  response.channel = req.target_channel >= 0 ? req.target_channel
-                                             : options_.global_channel_id;
+  response.channel =
+      req.target_channel >= 0 ? req.target_channel : options_.global_channel_id;
   response.arrival_cycle = req.arrival;
   response.issued_cycle = req.issued_cycle;
   response.completion_cycle = req.completion;
@@ -685,8 +652,9 @@ void Controller::complete_pending() {
   }
 }
 
-TransactionResponse Controller::complete_read(
-    Request &req, const MemPhyCompletion *phy_completion) {
+TransactionResponse
+Controller::complete_read(Request &req,
+                          const MemPhyCompletion *phy_completion) {
   const std::size_t size = request_data_size(spec_, req);
   bool initialized = true;
   DecodedAddress storage = storage_decoded_for(req);
@@ -706,13 +674,11 @@ TransactionResponse Controller::complete_read(
     ecc_corrected = phy_completion->ecc_corrected;
     ecc_uncorrectable = phy_completion->ecc_uncorrectable;
   } else {
-    const PhysicalStorageStats storage_before =
-        memory_image_->storage_stats();
+    const PhysicalStorageStats storage_before = memory_image_->storage_stats();
     actual = memory_image_->read(req.address, size, &initialized, &storage);
     initialized_mask = memory_image_->read_initialized_mask(
         req.address, actual.size(), &storage);
-    const PhysicalStorageStats storage_after =
-        memory_image_->storage_stats();
+    const PhysicalStorageStats storage_after = memory_image_->storage_stats();
     ecc_corrected = storage_after.ecc_corrected_errors >
                     storage_before.ecc_corrected_errors;
     ecc_uncorrectable = storage_after.ecc_uncorrectable_errors >
@@ -738,8 +704,10 @@ TransactionResponse Controller::complete_read(
   if (ecc_uncorrectable) {
     status = merge_response_status(status, ResponseStatus::EccUncorrectable);
   }
-  if (!req.bypass_dram && phy_completion != nullptr &&
-      data_cmd == Command::RDA) {
+  // MemoryImage 的自动预充统一落在数据完成点。Controller 的 BankState 会在
+  // RDA 发射时立即关闭（调度语义），但物理数据/row-buffer 必须先完成读取，
+  // Direct 和 Behavioral PHY 才会得到相同的存储统计与数据顺序。
+  if (!req.bypass_dram && data_cmd == Command::RDA) {
     memory_image_->precharge_bank(storage, clk_);
   }
   TransactionResponse response =
@@ -750,11 +718,11 @@ TransactionResponse Controller::complete_read(
   return response;
 }
 
-TransactionResponse Controller::complete_write(
-    Request &req, const MemPhyCompletion *phy_completion) {
+TransactionResponse
+Controller::complete_write(Request &req,
+                           const MemPhyCompletion *phy_completion) {
   if (req.bypass_dram) {
-    return make_response(req, {}, {}, true, false, true,
-                         ResponseStatus::Ok);
+    return make_response(req, {}, {}, true, false, true, ResponseStatus::Ok);
   }
   if (phy_completion != nullptr) {
     ensure_write_payload(req);
@@ -780,6 +748,13 @@ TransactionResponse Controller::complete_write(
   }
   if (!req.data_committed) {
     commit_write_data(req);
+  }
+  const Command data_cmd = req.issued_data_command == Command::NOP
+                               ? Command::WR
+                               : req.issued_data_command;
+  if (data_cmd == Command::WRA) {
+    DecodedAddress storage = storage_decoded_for(req);
+    memory_image_->precharge_bank(storage, clk_);
   }
   return make_response(req);
 }
@@ -808,14 +783,12 @@ void Controller::commit_write_data(Request &req) {
 
 ResponseStatus Controller::check_read_data(const Request &req,
                                            const ByteVector &actual,
-                                           bool initialized,
-                                           bool forwarded) {
+                                           bool initialized, bool forwarded) {
   if (!initialized) {
     stats_.data_uninitialized_reads++;
   }
   if (!req.has_expected_payload) {
-    return initialized ? ResponseStatus::Ok
-                       : ResponseStatus::UninitializedData;
+    return initialized ? ResponseStatus::Ok : ResponseStatus::UninitializedData;
   }
   stats_.data_checked_reads++;
   if (forwarded) {
@@ -832,15 +805,13 @@ ResponseStatus Controller::check_read_data(const Request &req,
       stats_.data_mismatches++;
       return ResponseStatus::DataMismatch;
     }
-    return initialized ? ResponseStatus::Ok
-                       : ResponseStatus::UninitializedData;
+    return initialized ? ResponseStatus::Ok : ResponseStatus::UninitializedData;
   }
   if (actual != req.expected_payload) {
     stats_.data_mismatches++;
     return ResponseStatus::DataMismatch;
   }
-  return initialized ? ResponseStatus::Ok
-                     : ResponseStatus::UninitializedData;
+  return initialized ? ResponseStatus::Ok : ResponseStatus::UninitializedData;
 }
 
 void Controller::ensure_write_payload(Request &req) {
@@ -856,7 +827,8 @@ void Controller::ensure_write_payload(Request &req) {
 
 bool Controller::read_hits_buffered_write(const Request &req) const {
   const std::size_t read_size = request_data_size(spec_, req);
-  for (const auto &[write_addr, write_req] : buffered_writes_) {
+  for (const auto &[write_addr, state] : buffered_writes_) {
+    const Request &write_req = state.request;
     const std::size_t write_size = request_data_size(spec_, write_req);
     if (!ranges_overlap(req.address, read_size, write_addr, write_size)) {
       continue;
@@ -909,49 +881,52 @@ bool Controller::has_unresolved_overlapping_write(const Request &read) const {
       });
 }
 
-ByteVector Controller::read_forward_payload(const Request &req,
-                                            bool *initialized,
-                                            ByteVector *initialized_mask) const {
+ByteVector
+Controller::read_forward_payload(const Request &req, bool *initialized,
+                                 ByteVector *initialized_mask) const {
   const std::size_t size = request_data_size(spec_, req);
   DecodedAddress storage = storage_decoded_for(req);
   ByteVector actual = memory_image_->read(req.address, size, nullptr, &storage);
   ByteVector result_mask = memory_image_->read_initialized_mask(
       req.address, actual.size(), &storage);
 
-  std::vector<const Request *> writes;
+  std::vector<const BufferedWriteState *> writes;
   writes.reserve(buffered_writes_.size());
-  for (const auto &[write_addr, write_req] : buffered_writes_) {
+  for (const auto &[write_addr, state] : buffered_writes_) {
+    const Request &write_req = state.request;
     if (ranges_overlap(req.address, size, write_addr,
                        request_data_size(spec_, write_req))) {
-      writes.push_back(&write_req);
+      writes.push_back(&state);
     }
   }
-  std::sort(writes.begin(), writes.end(),
-            [](const Request *a, const Request *b) {
-              if (a->arrival != b->arrival) {
-                return a->arrival < b->arrival;
-              }
-              return a->id < b->id;
-            });
 
-  for (const Request *write_req : writes) {
-    const std::size_t write_size = request_data_size(spec_, *write_req);
-    if (!write_req->has_payload || write_req->payload.empty()) {
+  // 每个目标 byte 独立选择最新的 buffered write。一次 masked merge 只会
+  // 更新 mask 覆盖的 byte_sequence，因而不会错误改变同一请求中旧 byte
+  // 相对于其他重叠写的顺序。
+  std::vector<std::uint64_t> newest_sequence(actual.size(), 0);
+  for (const BufferedWriteState *state : writes) {
+    const Request &write_req = state->request;
+    const std::size_t write_size = request_data_size(spec_, write_req);
+    if (!write_req.has_payload || write_req.payload.empty()) {
       continue;
     }
     ByteVector mask =
-        write_req->has_byte_mask
-            ? normalize_mask(write_req->byte_mask, write_req->payload.size())
-            : ByteVector(write_req->payload.size(), 0xff);
-    const Address begin = std::max(req.address, write_req->address);
+        write_req.has_byte_mask
+            ? normalize_mask(write_req.byte_mask, write_req.payload.size())
+            : ByteVector(write_req.payload.size(), 0xff);
+    const Address begin = std::max(req.address, write_req.address);
     const Address end = std::min(range_end(req.address, size),
-                                 range_end(write_req->address, write_size));
+                                 range_end(write_req.address, write_size));
     for (Address pos = begin; pos < end; pos++) {
-      std::size_t src = static_cast<std::size_t>(pos - write_req->address);
+      std::size_t src = static_cast<std::size_t>(pos - write_req.address);
       std::size_t dst = static_cast<std::size_t>(pos - req.address);
-      if (src < write_req->payload.size() && src < mask.size() &&
-          dst < actual.size() && mask[src] != 0) {
-        actual[dst] = write_req->payload[src];
+      const std::uint64_t sequence =
+          src < state->byte_sequence.size() ? state->byte_sequence[src] : 0;
+      if (src < write_req.payload.size() && src < mask.size() &&
+          dst < actual.size() && mask[src] != 0 &&
+          sequence >= newest_sequence[dst]) {
+        actual[dst] = write_req.payload[src];
+        newest_sequence[dst] = sequence;
         if (dst < result_mask.size()) {
           result_mask[dst] = 0xff;
         }
@@ -1065,6 +1040,11 @@ Controller::pick_urgent_act2(BusClass bus,
       continue;
     }
     const BankState &bank = banks_[req.decoded.flat_bank(spec_)];
+    if (clk_ > bank.act2_deadline) {
+      throw std::runtime_error(
+          "LPDDR ACT2 missed nAADMax deadline for request " +
+          std::to_string(req.id));
+    }
     if (clk_ < bank.act2_deadline ||
         !candidate_eligible(req, *cmd, bus, BufferKind::Active, false) ||
         !timing_ok(req, *cmd) || !phy_admission_ok(*cmd, phy_block)) {
@@ -1274,7 +1254,7 @@ std::optional<Command> Controller::next_command(Request &req) {
     // REFpb/RFMab。若当前状态不允许直接发， Controller 会先插入
     // PREpb/PREab，使维护路径仍复用统一状态机和 timing gate。
     if ((req.next == Command::REFAB || req.next == Command::RFMAB) &&
-        any_bank_busy_in_channel(req.decoded)) {
+        any_bank_busy_in_rank(req.decoded)) {
       return Command::PREAB;
     }
     if ((req.next == Command::REFPB || req.next == Command::REFDB ||
@@ -1283,7 +1263,7 @@ std::optional<Command> Controller::next_command(Request &req) {
       return Command::PREPB;
     }
     if (req.next == Command::REFDB && !dual_bank_target_idle(req.decoded) &&
-        any_bank_busy_in_channel(req.decoded)) {
+        any_bank_busy_in_rank(req.decoded)) {
       return Command::PREAB;
     }
     return req.next;
@@ -1362,8 +1342,14 @@ bool Controller::timing_ok(const Request &req, Command cmd) const {
 
   switch (cmd) {
   case Command::ACT:
-  case Command::ACT1:
     return !bank.activating && clk_ >= bank.next_act && clk_ >= row.next_row &&
+           clk_ >= row.next_act && clk_ >= bg.next_act &&
+           timing_engine_.faw_ready(spec_, req.decoded);
+  case Command::ACT1:
+    // JESD209-6 要求已经发出的 ACT1 必须先由 ACT2 完成，才能在同一 rank
+    // 发出另一条 ACT1。普通 RD/WR/PRE/REF（不同 bank）仍可在 tAAD 窗口插空。
+    return !bank.activating && !any_bank_activating_in_rank(req.decoded) &&
+           clk_ >= bank.next_act && clk_ >= row.next_row &&
            clk_ >= row.next_act && clk_ >= bg.next_act &&
            timing_engine_.faw_ready(spec_, req.decoded);
   case Command::ACT2:
@@ -1402,7 +1388,7 @@ bool Controller::timing_ok(const Request &req, Command cmd) const {
     return clk_ >= row.next_row;
   case Command::REFAB:
   case Command::RFMAB:
-    return !any_bank_busy_in_channel(req.decoded) && clk_ >= row.next_row;
+    return !any_bank_busy_in_rank(req.decoded) && clk_ >= row.next_row;
   case Command::MRW:
   case Command::MRR:
   case Command::WCKTRAIN:
@@ -1471,12 +1457,7 @@ bool Controller::would_close_active(const Request &req, Command cmd,
     // priority buffer 中的 PREab/REFab/RFMab 不能关闭仍有 active request 的
     // bank， 否则 active_buffer 里的普通请求会在 row 被维护命令关闭后继续发
     // RD/WR。
-    int banks_per_channel = std::max(1, spec_.banks_per_channel());
-    int channel =
-        std::clamp(req.decoded.channel, 0, std::max(1, spec_.org.channels) - 1);
-    int begin = channel * banks_per_channel;
-    int end = std::min(static_cast<int>(active_per_bank_.size()),
-                       begin + banks_per_channel);
+    const auto [begin, end] = rank_bank_range(req.decoded);
     return std::any_of(active_per_bank_.begin() + begin,
                        active_per_bank_.begin() + end,
                        [](int count) { return count > 0; });
@@ -1640,13 +1621,13 @@ void Controller::retire_or_advance(Candidate cand, Command issued) {
   if (done_req.type == RequestType::Write) {
     auto pending_write = buffered_writes_.find(done_req.address);
     if (pending_write != buffered_writes_.end()) {
-      done_req.payload = pending_write->second.payload;
-      done_req.expected_payload = pending_write->second.expected_payload;
-      done_req.byte_mask = pending_write->second.byte_mask;
-      done_req.has_payload = pending_write->second.has_payload;
-      done_req.has_expected_payload =
-          pending_write->second.has_expected_payload;
-      done_req.has_byte_mask = pending_write->second.has_byte_mask;
+      const Request &merged = pending_write->second.request;
+      done_req.payload = merged.payload;
+      done_req.expected_payload = merged.expected_payload;
+      done_req.byte_mask = merged.byte_mask;
+      done_req.has_payload = merged.has_payload;
+      done_req.has_expected_payload = merged.has_expected_payload;
+      done_req.has_byte_mask = merged.has_byte_mask;
       buffered_writes_.erase(pending_write);
     }
     buffered_write_addrs_.erase(done_req.address);
@@ -1654,17 +1635,25 @@ void Controller::retire_or_advance(Candidate cand, Command issued) {
       commit_write_data(done_req);
     }
   }
-  if ((issued == Command::RDA || issued == Command::WRA) &&
-      (!mem_phy_ || !mem_phy_->behavioral())) {
-    DecodedAddress storage = storage_decoded_for(done_req);
-    memory_image_->precharge_bank(storage, clk_);
-  }
   if (mem_phy_ && mem_phy_->behavioral()) {
     done_req.completion = mem_phy_->submit_data(done_req, issued, clk_);
   } else {
     done_req.completion = (issued == Command::RD || issued == Command::RDA)
                               ? clk_ + timing_delay(spec_.timing.read_latency())
                               : clk_ + 1;
+  }
+  if (issued == Command::RDA) {
+    done_req.completion =
+        std::max(done_req.completion,
+                 clk_ + timing_delay(std::max(0, spec_.timing.nRTP)));
+  } else if (issued == Command::WRA) {
+    // WRA 的内部 PRE 不能早于写数据、burst 和 write recovery 完成。把
+    // MemoryImage 的关闭点绑定到这个 gate，可避免 Direct 的一拍完成路径比
+    // Behavioral PHY 更早关闭物理 row buffer。
+    done_req.completion =
+        std::max(done_req.completion,
+                 clk_ + timing_delay(spec_.timing.nCWL + spec_.timing.nBL +
+                                     spec_.timing.nWR));
   }
   // pending_ 是“已发数据命令但上层尚未看到完成”的队列。它让读延迟统计和
   // DRAM 命令发射解耦，便于后续扩展 callback 或 out-of-order completion。
@@ -1837,6 +1826,44 @@ bool Controller::any_bank_busy_in_channel(const DecodedAddress &decoded) const {
                      });
 }
 
+std::pair<int, int>
+Controller::rank_bank_range(const DecodedAddress &decoded) const {
+  const int banks_per_rank =
+      std::max(1, spec_.org.bank_groups * spec_.org.banks_per_group);
+  const int channel =
+      std::clamp(decoded.channel, 0, std::max(1, spec_.org.channels) - 1);
+  const int pc = std::clamp(decoded.pseudo_channel, 0,
+                            std::max(1, spec_.org.pseudo_channels) - 1);
+  const int sid = std::clamp(decoded.sid, 0, std::max(1, spec_.org.sids) - 1);
+  const int rank =
+      std::clamp(decoded.rank, 0, std::max(1, spec_.org.ranks) - 1);
+  const int rank_index =
+      ((channel * std::max(1, spec_.org.pseudo_channels) + pc) *
+           std::max(1, spec_.org.sids) +
+       sid) *
+          std::max(1, spec_.org.ranks) +
+      rank;
+  const int begin = rank_index * banks_per_rank;
+  const int end =
+      std::min(static_cast<int>(banks_.size()), begin + banks_per_rank);
+  return {begin, end};
+}
+
+bool Controller::any_bank_busy_in_rank(const DecodedAddress &decoded) const {
+  const auto [begin, end] = rank_bank_range(decoded);
+  return std::any_of(banks_.begin() + begin, banks_.begin() + end,
+                     [](const BankState &bank) {
+                       return bank.activating || bank.open_row >= 0;
+                     });
+}
+
+bool Controller::any_bank_activating_in_rank(
+    const DecodedAddress &decoded) const {
+  const auto [begin, end] = rank_bank_range(decoded);
+  return std::any_of(banks_.begin() + begin, banks_.begin() + end,
+                     [](const BankState &bank) { return bank.activating; });
+}
+
 Cycle Controller::timing_delay(int cycles) const {
   if (cycles <= 0) {
     return 0;
@@ -1994,25 +2021,12 @@ DecodedAddress Controller::decoded_from_flat_bank(int flat_bank) const {
   return decoded;
 }
 
-DecodedAddress
-Controller::dual_bank_partner(const DecodedAddress &decoded) const {
-  DecodedAddress partner = decoded;
-  int banks_per_group = std::max(1, spec_.org.banks_per_group);
-  if (banks_per_group > 1) {
-    partner.bank = decoded.bank ^ 1;
-    if (partner.bank >= banks_per_group) {
-      partner.bank = decoded.bank;
-    }
-  }
-  return partner;
-}
-
 bool Controller::dual_bank_target_idle(const DecodedAddress &decoded) const {
   const BankState &bank = banks_[decoded.flat_bank(spec_)];
   if (bank.activating || bank.open_row >= 0 || clk_ < bank.next_act) {
     return false;
   }
-  DecodedAddress partner = dual_bank_partner(decoded);
+  DecodedAddress partner = lpddr_refdb_partner(spec_, decoded);
   const BankState &partner_bank = banks_[partner.flat_bank(spec_)];
   return !partner_bank.activating && partner_bank.open_row < 0 &&
          clk_ >= partner_bank.next_act;
@@ -2037,7 +2051,12 @@ bool Controller::state_ok(const Request &req, Command cmd) const {
   }
   snapshot.row_hit = bank.open_row == req.decoded.row;
   snapshot.wck_ready = wck_ready_for_data(req);
-  snapshot.any_bank_busy = any_bank_busy_in_channel(req.decoded);
+  // PREab/REFab/RFMab 的 all-bank 作用域是目标 rank。若这里使用整个
+  // channel，另一 pseudo-channel 的打开行会让目标 rank 无限重复 PREab。
+  snapshot.any_bank_busy =
+      (cmd == Command::PREAB || cmd == Command::REFAB || cmd == Command::RFMAB)
+          ? any_bank_busy_in_rank(req.decoded)
+          : any_bank_busy_in_channel(req.decoded);
   snapshot.split_activate = spec_.split_activate;
   snapshot.lpddr_family = spec_.lpddr_family;
   snapshot.maintenance = is_maintenance_request(req);

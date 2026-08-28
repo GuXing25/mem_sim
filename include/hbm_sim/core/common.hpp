@@ -182,7 +182,8 @@ enum class LpddrWckMode {
   CasSync,
   // WCK 视为持续开启，row-hit 后可直接发 RD/WR。用于比较 always-on WCK 开销/收益。
   AlwaysOn,
-  // 预留 burst-sync 模式；当前与 CAS sync 相同，但配置和输出已区分。
+  // 预留 burst-sync 模式；没有独立状态机前配置层必须拒绝，不能静默按
+  // CAS sync 执行并产生看似有效的结果。
   BurstSync,
 };
 

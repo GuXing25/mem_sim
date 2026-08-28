@@ -11,14 +11,17 @@ namespace hbm_sim {
 namespace {
 
 bool is_read_command(Command command) {
-  return command == Command::RD || command == Command::RDA || command == Command::CASRD;
+  return command == Command::RD || command == Command::RDA ||
+         command == Command::CASRD;
 }
 
 bool is_write_command(Command command) {
-  return command == Command::WR || command == Command::WRA || command == Command::CASWR;
+  return command == Command::WR || command == Command::WRA ||
+         command == Command::CASWR;
 }
 
-std::size_t command_payload_bytes(const DramSpec& spec, const StackCommand& command) {
+std::size_t command_payload_bytes(const DramSpec &spec,
+                                  const StackCommand &command) {
   if (command.payload_bytes != 0) {
     return command.payload_bytes;
   }
@@ -31,17 +34,19 @@ std::size_t command_payload_bytes(const DramSpec& spec, const StackCommand& comm
   return 0;
 }
 
-StorageModelOptions options_for_stack(StorageModelOptions options, int stack_id) {
+StorageModelOptions options_for_stack(StorageModelOptions options,
+                                      int stack_id) {
   options.stack_id = stack_id;
   return options;
 }
 
-}  // namespace
+} // namespace
 
-StackModel::StackModel(int stack_id, DramSpec spec, StorageModelOptions storage_options)
-    : stack_id_(stack_id),
-      spec_(std::move(spec)),
-      memory_image_(spec_, 0, options_for_stack(std::move(storage_options), stack_id_)) {
+StackModel::StackModel(int stack_id, DramSpec spec,
+                       StorageModelOptions storage_options)
+    : stack_id_(stack_id), spec_(std::move(spec)),
+      memory_image_(spec_, 0,
+                    options_for_stack(std::move(storage_options), stack_id_)) {
   if (stack_id_ < 0) {
     throw std::invalid_argument("stack_id must be non-negative");
   }
@@ -49,14 +54,14 @@ StackModel::StackModel(int stack_id, DramSpec spec, StorageModelOptions storage_
 
 void StackModel::check_stack_id(int stack_id) const {
   if (stack_id != stack_id_) {
-    throw std::out_of_range("stack command targets stack " + std::to_string(stack_id) +
-                            ", but this StackModel is stack " + std::to_string(stack_id_));
+    throw std::out_of_range(
+        "stack command targets stack " + std::to_string(stack_id) +
+        ", but this StackModel is stack " + std::to_string(stack_id_));
   }
 }
 
-StackReadResult StackModel::read(Address address,
-                                 std::size_t size,
-                                 const DecodedAddress* decoded) {
+StackReadResult StackModel::read(Address address, std::size_t size,
+                                 const DecodedAddress *decoded) {
   StackReadResult result;
   result.stack_id = stack_id_;
   result.address = address;
@@ -65,16 +70,13 @@ StackReadResult StackModel::read(Address address,
   return result;
 }
 
-void StackModel::write(Address address,
-                       const ByteVector& data,
-                       const ByteVector* mask,
-                       const DecodedAddress* decoded,
-                       std::uint64_t request_id,
-                       Cycle cycle) {
+void StackModel::write(Address address, const ByteVector &data,
+                       const ByteVector *mask, const DecodedAddress *decoded,
+                       std::uint64_t request_id, Cycle cycle) {
   memory_image_.write(address, data, mask, decoded, request_id, cycle);
 }
 
-StackCommandResult StackModel::issue_command(const StackCommand& command) {
+StackCommandResult StackModel::issue_command(const StackCommand &command) {
   check_stack_id(command.stack_id);
 
   StackCommandResult result;
@@ -82,112 +84,115 @@ StackCommandResult StackModel::issue_command(const StackCommand& command) {
   const std::size_t bytes = command_payload_bytes(spec_, command);
   // 这里是被动器件事件入口：命令合法性和发令时机由外部 MC slice 保证，
   // 本模型只记录命令事件并更新数据、行缓冲、功耗和热状态。
-  memory_image_.record_command_event(command.command, command.decoded, command.cycle, bytes);
+  memory_image_.record_command_event(command.command, command.decoded,
+                                     command.cycle, bytes);
 
   switch (command.command) {
-    case Command::ACT:
-    case Command::ACT2:
-      memory_image_.activate_row(command.decoded, command.cycle);
-      break;
-    case Command::ACT1:
-      // LPDDR split activate 的第一拍只记录事件；完整 row 打开在 ACT2。
-      break;
-    case Command::PREPB:
-      memory_image_.precharge_bank(command.decoded, command.cycle);
-      break;
-    case Command::PREAB:
-      memory_image_.precharge_all(command.decoded, command.cycle);
-      break;
-    default:
-      break;
+  case Command::ACT:
+  case Command::ACT2:
+    memory_image_.activate_row(command.decoded, command.cycle);
+    break;
+  case Command::ACT1:
+    // LPDDR split activate 的第一拍只记录事件；完整 row 打开在 ACT2。
+    break;
+  case Command::PREPB:
+    memory_image_.precharge_bank(command.decoded, command.cycle);
+    break;
+  case Command::PREAB:
+    memory_image_.precharge_all(command.decoded, command.cycle);
+    break;
+  default:
+    break;
   }
 
-  if (is_write_command(command.command) && command.has_address && !command.payload.empty()) {
-    const ByteVector* mask = command.has_mask ? &command.mask : nullptr;
-    memory_image_.write(command.address,
-                        command.payload,
-                        mask,
-                        &command.decoded,
-                        command.request_id,
-                        command.cycle);
+  if (is_write_command(command.command) && command.has_address &&
+      !command.payload.empty()) {
+    const ByteVector *mask = command.has_mask ? &command.mask : nullptr;
+    memory_image_.write(command.address, command.payload, mask,
+                        &command.decoded, command.request_id, command.cycle);
   }
 
   if (is_read_command(command.command) && command.has_address) {
     result.read_data_valid = true;
-    result.read_data = memory_image_.read(command.address, bytes, &result.initialized, &command.decoded);
+    result.read_data = memory_image_.read(
+        command.address, bytes, &result.initialized, &command.decoded);
     result.metadata = memory_image_.metadata(command.address, &command.decoded);
   }
 
-  if ((command.command == Command::RDA || command.command == Command::WRA) && command.has_address) {
+  if ((command.command == Command::RDA || command.command == Command::WRA) &&
+      command.has_address) {
     memory_image_.precharge_bank(command.decoded, command.cycle);
   }
   return result;
 }
 
-MultiStackMemoryModel::MultiStackMemoryModel(DramSpec spec,
-                                             StorageModelOptions storage_options)
-    : MultiStackMemoryModel(std::move(spec), kDefaultStackCount, std::move(storage_options)) {}
+MultiStackMemoryModel::MultiStackMemoryModel(
+    DramSpec spec, StorageModelOptions storage_options)
+    : MultiStackMemoryModel(std::move(spec), kDefaultStackCount,
+                            std::move(storage_options)) {}
 
-MultiStackMemoryModel::MultiStackMemoryModel(DramSpec spec,
-                                             int stack_count,
-                                             StorageModelOptions storage_options)
+MultiStackMemoryModel::MultiStackMemoryModel(
+    DramSpec spec, int stack_count, StorageModelOptions storage_options)
     : spec_(std::move(spec)) {
   if (stack_count <= 0) {
     throw std::invalid_argument("stack_count must be positive");
   }
   stacks_.reserve(static_cast<std::size_t>(stack_count));
   for (int stack_id = 0; stack_id < stack_count; stack_id++) {
-    stacks_.push_back(std::make_unique<StackModel>(stack_id, spec_, storage_options));
+    stacks_.push_back(
+        std::make_unique<StackModel>(stack_id, spec_, storage_options));
   }
 }
 
-StackModel& MultiStackMemoryModel::checked_stack(int stack_id) {
+StackModel &MultiStackMemoryModel::checked_stack(int stack_id) {
   if (stack_id < 0 || stack_id >= stack_count()) {
-    throw std::out_of_range("stack_id out of range: " + std::to_string(stack_id));
+    throw std::out_of_range("stack_id out of range: " +
+                            std::to_string(stack_id));
   }
   return *stacks_[static_cast<std::size_t>(stack_id)];
 }
 
-const StackModel& MultiStackMemoryModel::checked_stack(int stack_id) const {
+const StackModel &MultiStackMemoryModel::checked_stack(int stack_id) const {
   if (stack_id < 0 || stack_id >= stack_count()) {
-    throw std::out_of_range("stack_id out of range: " + std::to_string(stack_id));
+    throw std::out_of_range("stack_id out of range: " +
+                            std::to_string(stack_id));
   }
   return *stacks_[static_cast<std::size_t>(stack_id)];
 }
 
-StackModel& MultiStackMemoryModel::stack(int stack_id) {
+StackModel &MultiStackMemoryModel::stack(int stack_id) {
   return checked_stack(stack_id);
 }
 
-const StackModel& MultiStackMemoryModel::stack(int stack_id) const {
+const StackModel &MultiStackMemoryModel::stack(int stack_id) const {
   return checked_stack(stack_id);
 }
 
-StackReadResult MultiStackMemoryModel::read(int stack_id,
-                                            Address address,
+StackReadResult MultiStackMemoryModel::read(int stack_id, Address address,
                                             std::size_t size,
-                                            const DecodedAddress* decoded) {
+                                            const DecodedAddress *decoded) {
   return checked_stack(stack_id).read(address, size, decoded);
 }
 
-void MultiStackMemoryModel::write(int stack_id,
-                                  Address address,
-                                  const ByteVector& data,
-                                  const ByteVector* mask,
-                                  const DecodedAddress* decoded,
-                                  std::uint64_t request_id,
-                                  Cycle cycle) {
-  checked_stack(stack_id).write(address, data, mask, decoded, request_id, cycle);
+void MultiStackMemoryModel::write(int stack_id, Address address,
+                                  const ByteVector &data,
+                                  const ByteVector *mask,
+                                  const DecodedAddress *decoded,
+                                  std::uint64_t request_id, Cycle cycle) {
+  checked_stack(stack_id).write(address, data, mask, decoded, request_id,
+                                cycle);
 }
 
-StackCommandResult MultiStackMemoryModel::issue_command(const StackCommand& command) {
+StackCommandResult
+MultiStackMemoryModel::issue_command(const StackCommand &command) {
   return checked_stack(command.stack_id).issue_command(command);
 }
 
-std::vector<PhysicalStorageStats> MultiStackMemoryModel::per_stack_storage_stats() const {
+std::vector<PhysicalStorageStats>
+MultiStackMemoryModel::per_stack_storage_stats() const {
   std::vector<PhysicalStorageStats> stats;
   stats.reserve(stacks_.size());
-  for (const auto& stack : stacks_) {
+  for (const auto &stack : stacks_) {
     stats.push_back(stack->storage_stats());
   }
   return stats;
@@ -197,13 +202,14 @@ PhysicalStorageStats MultiStackMemoryModel::storage_stats() const {
   return merge_physical_storage_stats(per_stack_storage_stats());
 }
 
-PhysicalStorageStats merge_physical_storage_stats(const std::vector<PhysicalStorageStats>& stats) {
+PhysicalStorageStats
+merge_physical_storage_stats(const std::vector<PhysicalStorageStats> &stats) {
   PhysicalStorageStats total;
   bool saw_temp = false;
   double weighted_temp_sum = 0.0;
   std::uint64_t temp_weight = 0;
 
-  for (const PhysicalStorageStats& src : stats) {
+  for (const PhysicalStorageStats &src : stats) {
     total.lines_allocated += src.lines_allocated;
     total.unique_written_lines += src.unique_written_lines;
     total.bytes_allocated += src.bytes_allocated;
@@ -270,15 +276,17 @@ PhysicalStorageStats merge_physical_storage_stats(const std::vector<PhysicalStor
       total.thermal_hotspot_y = src.thermal_hotspot_y;
     }
 
-    const std::uint64_t weight = std::max<std::uint64_t>(1, src.thermal_grid_cells_touched);
+    const std::uint64_t weight =
+        std::max<std::uint64_t>(1, src.thermal_grid_cells_touched);
     weighted_temp_sum += src.thermal_avg_temp_c * static_cast<double>(weight);
     temp_weight += weight;
   }
 
   if (temp_weight != 0) {
-    total.thermal_avg_temp_c = weighted_temp_sum / static_cast<double>(temp_weight);
+    total.thermal_avg_temp_c =
+        weighted_temp_sum / static_cast<double>(temp_weight);
   }
   return total;
 }
 
-}  // namespace hbm_sim
+} // namespace hbm_sim

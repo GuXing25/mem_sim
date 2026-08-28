@@ -8,6 +8,7 @@ TARGET := $(BUILD_DIR)/hbm_sim
 SEQUENCE_TEST := $(BUILD_DIR)/sequence_tests
 TIMING_BOUNDARY_TEST := $(BUILD_DIR)/timing_boundary_tests
 PHY_TEST := $(BUILD_DIR)/phy_tests
+CONFIG_TEST := $(BUILD_DIR)/config_tests
 # 主程序需要 src/cli/main.cpp；测试程序需要复用库代码但不能链接 CLI main。
 SRCS := $(shell find src -name '*.cpp' | sort)
 LIB_SRCS := $(filter-out src/cli/main.cpp,$(SRCS))
@@ -15,7 +16,7 @@ OBJS := $(patsubst src/%.cpp,$(BUILD_DIR)/%.o,$(SRCS))
 LIB_OBJS := $(patsubst src/%.cpp,$(BUILD_DIR)/%.o,$(LIB_SRCS))
 DEPS := $(OBJS:.o=.d)
 
-.PHONY: all clean clean-outputs delete run test smoke sequence-test phy-test phy-smoke visualization-smoke visualize-example timing-boundary-validation \
+.PHONY: all clean clean-outputs delete run test smoke sequence-test phy-test config-test phy-smoke visualization-smoke multistack-backend-smoke multistack-demos-smoke architecture-sweep-smoke architecture-sweep visualize-example timing-boundary-validation \
 	model-validation performance-validation sensitivity-validation reference-validation ramulator-validation \
 	examples examples_hbm4 examples_hbm3 examples_lpddr6 examples_lpddr5
 
@@ -42,11 +43,15 @@ $(TIMING_BOUNDARY_TEST): $(LIB_OBJS) tests/timing_boundary_tests.cpp | $(BUILD_D
 $(PHY_TEST): $(LIB_OBJS) tests/phy_tests.cpp | $(BUILD_DIR)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LIB_OBJS) tests/phy_tests.cpp -o $@
 
+$(CONFIG_TEST): $(LIB_OBJS) tests/config_tests.cpp | $(BUILD_DIR)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LIB_OBJS) tests/config_tests.cpp -o $@
+
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
 run: $(TARGET)
-	./$(TARGET) --standard hbm4 --pattern stream --requests 10000
+	./$(TARGET) --config configs/hbm.cfg --standard hbm4 --preset baseline \
+		--pattern stream --requests 10000
 
 # examples/test 都显式用 bash 运行，避免依赖脚本文件执行位。
 examples: $(TARGET)
@@ -73,11 +78,26 @@ sequence-test: $(SEQUENCE_TEST)
 phy-test: $(PHY_TEST)
 	./$(PHY_TEST)
 
+config-test: $(CONFIG_TEST)
+	./$(CONFIG_TEST) .
+
 phy-smoke: $(TARGET)
 	HBM_SIM_BIN=./$(TARGET) HBM_SIM_SOURCE_DIR=. bash ./tests/phy_smoke.sh
 
 visualization-smoke: $(TARGET)
 	HBM_SIM_BIN=./$(TARGET) HBM_SIM_SOURCE_DIR=. bash ./tests/visualization_smoke.sh
+
+multistack-backend-smoke: $(TARGET)
+	HBM_SIM_BIN=./$(TARGET) HBM_SIM_SOURCE_DIR=. bash ./tests/multistack_backend_smoke.sh
+
+multistack-demos-smoke: $(TARGET)
+	HBM_SIM_BIN=./$(TARGET) HBM_SIM_SOURCE_DIR=. bash ./tests/multistack_demos_smoke.sh
+
+architecture-sweep-smoke: $(TARGET)
+	HBM_SIM_BIN=./$(TARGET) HBM_SIM_SOURCE_DIR=. bash ./tests/architecture_sweep_smoke.sh
+
+architecture-sweep: $(TARGET)
+	python3 ./experiments/architecture_sweep/run.py --binary ./$(TARGET)
 
 visualize-example: $(TARGET)
 	HBM_SIM_BIN=./$(TARGET) HBM_SIM_SOURCE_DIR=. bash ./tools/visualize_example.sh
@@ -102,11 +122,11 @@ reference-validation: $(TARGET)
 # external reference for the shared command surface.
 ramulator-validation: reference-validation
 
-# test 同时跑 smoke 和 sequence-test：
-# - smoke 关注 CLI 主路径和输出字段
-# - sequence-test 关注精确命令顺序和 timing 间隔
-# - model-validation 关注理论公式、DFI、来源审计和敏感性阈值
-test: smoke sequence-test phy-test phy-smoke visualization-smoke timing-boundary-validation model-validation
+# Make 兼容验收覆盖核心单元、CLI、配置、可视化、多 Stack/后端和架构实验。
+# 性能/敏感性 sweep 与外部 Ramulator 参考仍是显式目标，避免默认验收意外拉长。
+test: smoke sequence-test phy-test config-test phy-smoke visualization-smoke \
+	multistack-backend-smoke multistack-demos-smoke architecture-sweep-smoke \
+	timing-boundary-validation model-validation
 
 clean:
 	rm -rf $(BUILD_DIR)

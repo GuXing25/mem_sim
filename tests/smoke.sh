@@ -271,22 +271,97 @@ run_and_check hbm4_link_crc_cli "$HBM_SIM_BIN" --standard hbm4 --requests 32 \
   --hbm-link-crc crc16 --hbm-link-crc-bits 16 --hbm-ras-metadata-bits 16 \
   --hbm-link-retry true --refresh-postpone-limit 2 --refresh-pullin-limit 1 \
   --refresh-credit-limit 4
-run_and_check hbm4_config "$HBM_SIM_BIN" --config configs/run/hbm4.cfg --requests 128
+
+# schema-v2 主配置：四种标准均可选择；CLI 始终高于配置文件且与参数顺序无关。
+config_tmp_dir="$(mktemp -d)"
+for standard in hbm3 hbm4; do
+  "$HBM_SIM_BIN" --config configs/hbm.cfg --standard "$standard" --check-config \
+    | grep -Eq '^config_validation=pass$'
+  "$HBM_SIM_BIN" --config configs/hbm.cfg --standard "$standard" --preset baseline \
+    --dump-resolved-config "$config_tmp_dir/resolved_${standard}.cfg" --check-config >/dev/null
+  "$HBM_SIM_BIN" --config "$config_tmp_dir/resolved_${standard}.cfg" --check-config \
+    | grep -Eq '^config_validation=pass$'
+done
+for standard in lpddr5 lpddr6; do
+  "$HBM_SIM_BIN" --config configs/lpddr.cfg --standard "$standard" --check-config \
+    | grep -Eq '^config_validation=pass$'
+  "$HBM_SIM_BIN" --config configs/lpddr.cfg --standard "$standard" --preset baseline \
+    --dump-resolved-config "$config_tmp_dir/resolved_${standard}.cfg" --check-config >/dev/null
+  "$HBM_SIM_BIN" --config "$config_tmp_dir/resolved_${standard}.cfg" --check-config \
+    | grep -Eq '^config_validation=pass$'
+done
+"$HBM_SIM_BIN" --requests 5 --config configs/hbm.cfg --standard hbm4 \
+  --dump-resolved-config "$config_tmp_dir/resolved.cfg" --check-config >/dev/null
+grep -Eq '^requests[[:space:]]*=[[:space:]]*5$' "$config_tmp_dir/resolved.cfg"
+"$HBM_SIM_BIN" --config "$config_tmp_dir/resolved.cfg" --requests 1 \
+  --max-cycles 100000 --check-config | grep -Eq '^config_validation=pass$'
+
+printf '%s\n' '[controller.scheduler]' 'type = not_implemented' \
+  >"$config_tmp_dir/unknown_scheduler.cfg"
+if "$HBM_SIM_BIN" --config configs/hbm.cfg \
+    --config "$config_tmp_dir/unknown_scheduler.cfg" --check-config \
+    >"$config_tmp_dir/unknown_scheduler.out" 2>&1; then
+  echo "expected an unknown scheduler to fail" >&2
+  exit 1
+fi
+grep -F "invalid scheduler: not_implemented" "$config_tmp_dir/unknown_scheduler.out" >/dev/null
+grep -F "implemented: fcfs, frfcfs" "$config_tmp_dir/unknown_scheduler.out" >/dev/null
+
+if "$HBM_SIM_BIN" --config configs/hbm.cfg --standard hbm4 \
+    --preset does_not_exist --check-config >"$config_tmp_dir/unknown_preset.out" 2>&1; then
+  echo "expected an unknown preset to fail" >&2
+  exit 1
+fi
+grep -F "preset 'does_not_exist' does not exist" "$config_tmp_dir/unknown_preset.out" >/dev/null
+
+printf '%s\n' '[override]' 'channels = 24' 'nCL = 28' \
+  >"$config_tmp_dir/exploration.cfg"
+"$HBM_SIM_BIN" --config configs/hbm.cfg --config "$config_tmp_dir/exploration.cfg" \
+  --validation-mode exploratory --check-config | grep -Eq '^config_validation=pass$'
+if "$HBM_SIM_BIN" --config configs/hbm.cfg \
+    --config "$config_tmp_dir/exploration.cfg" --validation-mode standard --check-config \
+    >"$config_tmp_dir/standard_override.out" 2>&1; then
+  echo "expected standard mode to reject preset deviations" >&2
+  exit 1
+fi
+grep -F "strict conformance mode rejects" "$config_tmp_dir/standard_override.out" >/dev/null
+"$HBM_SIM_BIN" --config configs/lpddr.cfg --standard lpddr6 \
+  --validation-mode standard --check-config | grep -Eq '^config_validation=pass$'
+if "$HBM_SIM_BIN" --config configs/lpddr.cfg --standard lpddr6 \
+    --validation-mode device --check-config >"$config_tmp_dir/device_without_vendor.out" 2>&1; then
+  echo "expected device mode without vendor timing to fail" >&2
+  exit 1
+fi
+grep -F "requires a named vendor_profile and vendor-sourced timing" \
+  "$config_tmp_dir/device_without_vendor.out" >/dev/null
+
+printf '%s\n' '[override]' 'lpddr_ca_parity_enabled = false' \
+  >"$config_tmp_dir/wrong_family.cfg"
+if "$HBM_SIM_BIN" --config configs/hbm.cfg --config "$config_tmp_dir/wrong_family.cfg" \
+    --check-config >"$config_tmp_dir/wrong_family.out" 2>&1; then
+  echo "expected an LPDDR-only key in an HBM model to fail" >&2
+  exit 1
+fi
+grep -F "has no executable semantics for HBM4" "$config_tmp_dir/wrong_family.out" >/dev/null
+rm -rf "$config_tmp_dir"
+
+run_and_check hbm4_config "$HBM_SIM_BIN" --config configs/hbm.cfg --standard hbm4 --requests 128
 multistack_out="$(mktemp)"
-"$HBM_SIM_BIN" --config configs/run/hbm4_6stack.cfg --requests 24 >"$multistack_out"
+"$HBM_SIM_BIN" --config configs/hbm.cfg --standard hbm4 --stack-count 6 \
+  --requests 24 >"$multistack_out"
 grep -Eq "^stack_count[[:space:]]*: 6" "$multistack_out"
 grep -Eq "^active_stacks[[:space:]]*: 6" "$multistack_out"
 grep -Eq "^controller_count[[:space:]]*: 192" "$multistack_out"
 grep -Eq "^stack_5_reads[[:space:]]*: [1-9]" "$multistack_out"
 rm -f "$multistack_out"
 multistack_qos_out="$(mktemp)"
-"$HBM_SIM_BIN" --config configs/run/hbm4_6stack.cfg \
+"$HBM_SIM_BIN" --config configs/hbm.cfg --standard hbm4 --stack-count 6 \
   --trace examples/multistack_qos.trace --requests 0 --max-cycles 4000 >"$multistack_qos_out"
 grep -Eq "^active_stacks[[:space:]]*: 2" "$multistack_qos_out"
 grep -Eq "^qos_priority_dispatches[[:space:]]*: [1-9]" "$multistack_qos_out"
 grep -Eq "^data_mismatches[[:space:]]*: 0" "$multistack_qos_out"
 rm -f "$multistack_qos_out"
-run_and_check hbm4_storage_config "$HBM_SIM_BIN" --config configs/run/hbm4_storage.cfg
+run_and_check hbm4_storage_config "$HBM_SIM_BIN" --config configs/hbm.cfg --standard hbm4
 backend_dir="$(mktemp -d)"
 run_and_check hbm4_mmap_backend "$HBM_SIM_BIN" --standard hbm4 \
   --trace examples/data_check.trace --requests 0 --max-cycles 4000 \
@@ -309,29 +384,28 @@ backend_verify="$backend_dir/verify.out"
 grep -Eq "^golden_verified[[:space:]]*: 2" "$backend_verify"
 grep -Eq "^golden_mismatches[[:space:]]*: 0" "$backend_verify"
 rm -rf "$backend_dir"
-run_and_check hbm4_dramsim3_idd_grid "$HBM_SIM_BIN" --config configs/run/hbm4.cfg \
+run_and_check hbm4_dramsim3_idd_grid "$HBM_SIM_BIN" --config configs/hbm.cfg --standard hbm4 \
   --requests 64 --power-source dramsim3_idd \
   --thermal-grid-cols-per-tile 4 --thermal-grid-rows-per-tile 4
-run_and_check hbm3_config "$HBM_SIM_BIN" --config configs/run/hbm3.cfg --requests 128
-run_and_check lpddr5_config "$HBM_SIM_BIN" --config configs/run/lpddr5.cfg --requests 128
-run_and_check lpddr6_config "$HBM_SIM_BIN" --config configs/run/lpddr6.cfg --requests 128
-run_and_check hbm4_jedec_template "$HBM_SIM_BIN" --config configs/calib/hbm4.cfg --requests 64
-run_and_check hbm4_synthetic_vendor "$HBM_SIM_BIN" --standard hbm4 --requests 32 \
-  --timing-profile-file configs/profiles/hbm4/synthetic_vendor_9000_48gb_16hi.cfg \
+run_and_check hbm3_config "$HBM_SIM_BIN" --config configs/hbm.cfg --standard hbm3 --requests 128
+run_and_check lpddr5_config "$HBM_SIM_BIN" --config configs/lpddr.cfg --standard lpddr5 --requests 128
+run_and_check lpddr6_config "$HBM_SIM_BIN" --config configs/lpddr.cfg --standard lpddr6 --requests 128
+run_and_check hbm4_jedec_template "$HBM_SIM_BIN" --config configs/hbm.cfg \
+  --standard hbm4 --preset baseline --requests 64
+run_and_check hbm4_synthetic_vendor "$HBM_SIM_BIN" --config configs/hbm.cfg \
+  --standard hbm4 --preset synthetic_vendor_9000_48gb_16hi --requests 32 \
   --strict-timing-table
-run_and_check hbm3_calib "$HBM_SIM_BIN" --config configs/calib/hbm3.cfg --requests 64
-run_and_check hbm3_profile_file "$HBM_SIM_BIN" --standard hbm3 --requests 64 \
-  --timing-profile-file configs/profiles/hbm3/ramulator2_6400_16gb_8hi.cfg
-run_and_check lpddr5_calib "$HBM_SIM_BIN" --config configs/calib/lpddr5.cfg --requests 64
-run_and_check lpddr5_profile_file "$HBM_SIM_BIN" --standard lpddr5 --requests 64 \
-  --timing-profile-file configs/profiles/lpddr5/ramulator2_6400_16gb.cfg
-run_and_check lpddr6_profile_file "$HBM_SIM_BIN" --standard lpddr6 --requests 64 \
-  --timing-profile-file configs/profiles/lpddr6/jedec_linkprot_eff_10667_16gb.cfg
-run_and_check lpddr6_synthetic_vendor "$HBM_SIM_BIN" --standard lpddr6 --requests 32 \
-  --timing-profile-file configs/profiles/lpddr6/synthetic_vendor_10667_16gb_linkprot.cfg \
+run_and_check hbm3_reference "$HBM_SIM_BIN" --config configs/hbm.cfg --standard hbm3 \
+  --preset ramulator2_reference_1ch --requests 64
+run_and_check lpddr5_reference "$HBM_SIM_BIN" --config configs/lpddr.cfg --standard lpddr5 \
+  --preset ramulator2_reference_1ch --requests 64
+run_and_check lpddr6_link_protection "$HBM_SIM_BIN" --config configs/lpddr.cfg \
+  --standard lpddr6 --preset link_protection --requests 64
+run_and_check lpddr6_synthetic_vendor "$HBM_SIM_BIN" --config configs/lpddr.cfg \
+  --standard lpddr6 --preset synthetic_vendor_linkprot --requests 32 \
   --strict-timing-table
-run_and_check lpddr6_lowdvfs_profile_file "$HBM_SIM_BIN" --standard lpddr6 --requests 32 \
-  --timing-profile-file configs/profiles/lpddr6/jedec_lowdvfs_4267_16gb.cfg
+run_and_check lpddr6_lowdvfs "$HBM_SIM_BIN" --config configs/lpddr.cfg \
+  --standard lpddr6 --preset low_dvfs_4267 --requests 32
 run_and_check lpddr6_ca_parity "$HBM_SIM_BIN" --standard lpddr6 --requests 32 \
   --lpddr-wck always_on --lpddr-ca-parity true --validate-cmd-trace
 if "$HBM_SIM_BIN" --standard lpddr6 --requests 1 --lpddr-ca-parity true >/tmp/hbm_sim_bad_ca_parity.out 2>&1; then
@@ -380,7 +454,8 @@ cat >"$maintenance_trace" <<'TRACE'
 0 M REFpb 0x0
 1000 M RFMpb 0x40
 TRACE
-"$HBM_SIM_BIN" --config configs/validation/hbm4_reference_1ch.cfg \
+"$HBM_SIM_BIN" --config configs/hbm.cfg --standard hbm4 \
+  --preset ramulator2_reference_1ch \
   --trace "$maintenance_trace" --cmd-trace "$maintenance_cmds" \
   --validate-cmd-trace >"$maintenance_out"
 grep -F ",REFpb," "$maintenance_cmds" >/dev/null

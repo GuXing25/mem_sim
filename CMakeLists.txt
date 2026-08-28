@@ -16,6 +16,10 @@ set(HBM_SIM_CONTROLLER_SOURCES
   src/controller/timing.cpp
 )
 
+set(HBM_SIM_CONFIG_SOURCES
+  src/config/document.cpp
+)
+
 set(HBM_SIM_CORE_SOURCES
   src/core/addr_map.cpp
   src/core/data.cpp
@@ -50,6 +54,7 @@ set(HBM_SIM_VALIDATION_SOURCES
 )
 
 add_library(hbm_sim_core
+  ${HBM_SIM_CONFIG_SOURCES}
   ${HBM_SIM_CONTROLLER_SOURCES}
   ${HBM_SIM_CORE_SOURCES}
   ${HBM_SIM_DRAM_SOURCES}
@@ -80,10 +85,15 @@ add_executable(phy_tests tests/phy_tests.cpp)
 target_link_libraries(phy_tests PRIVATE hbm_sim_core)
 target_compile_options(phy_tests PRIVATE -Wall -Wextra -pedantic)
 
+add_executable(config_tests tests/config_tests.cpp)
+target_link_libraries(config_tests PRIVATE hbm_sim_core)
+target_compile_options(config_tests PRIVATE -Wall -Wextra -pedantic)
+
 enable_testing()
 add_test(NAME sequence_tests COMMAND sequence_tests)
 add_test(NAME timing_boundary_tests COMMAND timing_boundary_tests)
 add_test(NAME phy_tests COMMAND phy_tests)
+add_test(NAME config_tests COMMAND config_tests ${CMAKE_CURRENT_SOURCE_DIR})
 add_test(NAME phy_smoke COMMAND ${CMAKE_COMMAND} -E env
   HBM_SIM_BIN=$<TARGET_FILE:hbm_sim>
   HBM_SIM_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
@@ -96,6 +106,21 @@ add_test(NAME visualization_smoke COMMAND ${CMAKE_COMMAND} -E env
   HBM_SIM_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
   bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/visualization_smoke.sh)
 set_tests_properties(visualization_smoke PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME multistack_backend_smoke COMMAND ${CMAKE_COMMAND} -E env
+  HBM_SIM_BIN=$<TARGET_FILE:hbm_sim>
+  HBM_SIM_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+  bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/multistack_backend_smoke.sh)
+set_tests_properties(multistack_backend_smoke PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME multistack_demos_smoke COMMAND ${CMAKE_COMMAND} -E env
+  HBM_SIM_BIN=$<TARGET_FILE:hbm_sim>
+  HBM_SIM_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+  bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/multistack_demos_smoke.sh)
+set_tests_properties(multistack_demos_smoke PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME architecture_sweep_smoke COMMAND ${CMAKE_COMMAND} -E env
+  HBM_SIM_BIN=$<TARGET_FILE:hbm_sim>
+  HBM_SIM_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+  bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/architecture_sweep_smoke.sh)
+set_tests_properties(architecture_sweep_smoke PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 add_test(NAME smoke COMMAND ${CMAKE_COMMAND} -E env
   HBM_SIM_BIN=$<TARGET_FILE:hbm_sim>
   bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/smoke.sh

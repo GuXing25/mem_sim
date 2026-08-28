@@ -10,6 +10,7 @@
 #include <optional>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "hbm_sim/controller/command.hpp"
@@ -21,8 +22,8 @@
 #include "hbm_sim/core/request.hpp"
 #include "hbm_sim/core/response.hpp"
 #include "hbm_sim/dram/bank_state.hpp"
-#include "hbm_sim/dram/spec.hpp"
 #include "hbm_sim/dram/mem_phy.hpp"
+#include "hbm_sim/dram/spec.hpp"
 #include "hbm_sim/stats/stats.hpp"
 
 namespace hbm_sim {
@@ -87,8 +88,11 @@ public:
   // done。
   bool done() const;
   // 计算带宽、remaining、cycle-limit 等收尾统计。run()/run_until_done()
-  // 会自动调用。
+  // 会自动调用。该函数会显式写回 dirty row buffer（不改变 open-row 状态）
+  // 并 flush 持久化后端；失败会
+  // 通过异常返回给调用方，不能仅依赖析构函数的 noexcept 兜底。
   void finalize_run_stats();
+  void flush_storage();
   Cycle clock() const { return clk_; }
 
   // Controller 级事务完成端口。front_response() 返回的对象在 pop_response()
@@ -144,6 +148,15 @@ private:
     bool data = false;
   };
 
+  // 同地址写可以合并成一条 DRAM 写命令，但重叠地址转发仍必须保持逐 byte
+  // 的先后关系。request 保存最终待提交的数据/mask；byte_sequence[i] 记录
+  // 该 byte 最后一次被 Controller 接受时的单调序号。仅按整个 Request 的
+  // arrival/id 排序会把一次 masked merge 错当成所有 byte 同时更新。
+  struct BufferedWriteState {
+    Request request;
+    std::vector<std::uint64_t> byte_sequence;
+  };
+
   // DramSpec 是控制器的“配置快照”。构造后不再从外部修改，保证仿真一致性。
   DramSpec spec_;
   ControllerOptions options_;
@@ -164,7 +177,7 @@ private:
   // - 后续读同地址可直接转发，不发 DRAM RD
   // - 后续写同地址可合并，不再占用 write buffer
   std::unordered_set<Address> buffered_write_addrs_;
-  std::unordered_map<Address, Request> buffered_writes_;
+  std::unordered_map<Address, BufferedWriteState> buffered_writes_;
   std::shared_ptr<MemoryImage> memory_image_;
   std::shared_ptr<DataValidator> data_validator_;
   std::unique_ptr<MemPhy> mem_phy_;
@@ -199,10 +212,11 @@ private:
 
   // 扫描 pending_，把 completion <= clk_ 的请求转入完成统计。
   void complete_pending();
-  TransactionResponse complete_read(
-      Request &req, const MemPhyCompletion *phy_completion = nullptr);
-  TransactionResponse complete_write(
-      Request &req, const MemPhyCompletion *phy_completion = nullptr);
+  TransactionResponse
+  complete_read(Request &req, const MemPhyCompletion *phy_completion = nullptr);
+  TransactionResponse
+  complete_write(Request &req,
+                 const MemPhyCompletion *phy_completion = nullptr);
   ResponseStatus check_read_data(const Request &req, const ByteVector &actual,
                                  bool initialized, bool forwarded);
   void ensure_write_payload(Request &req);
@@ -213,11 +227,11 @@ private:
   ByteVector read_forward_payload(const Request &req, bool *initialized,
                                   ByteVector *initialized_mask) const;
   bool response_queue_full() const;
-  TransactionResponse make_response(
-      const Request &req, ByteVector data = {}, ByteVector initialized_mask = {},
-      bool initialized = true, bool forwarded = false,
-      bool coalesced = false,
-      ResponseStatus status = ResponseStatus::Ok) const;
+  TransactionResponse
+  make_response(const Request &req, ByteVector data = {},
+                ByteVector initialized_mask = {}, bool initialized = true,
+                bool forwarded = false, bool coalesced = false,
+                ResponseStatus status = ResponseStatus::Ok) const;
   DecodedAddress storage_decoded_for(const Request &req) const;
   void apply_storage_command_event(const Request &req, Command issued);
   void commit_write_data(Request &req);
@@ -293,6 +307,9 @@ private:
   bool is_all_bank_row_command(Command cmd) const;
   bool any_bank_busy() const;
   bool any_bank_busy_in_channel(const DecodedAddress &decoded) const;
+  bool any_bank_busy_in_rank(const DecodedAddress &decoded) const;
+  bool any_bank_activating_in_rank(const DecodedAddress &decoded) const;
+  std::pair<int, int> rank_bank_range(const DecodedAddress &decoded) const;
 
   Cycle timing_delay(int cycles) const;
   Cycle burst_delay() const;
@@ -303,7 +320,6 @@ private:
   void try_upgrade_row_policy_command(Candidate &cand);
   void on_row_policy_issue(const Request &req, Command issued);
   DecodedAddress decoded_from_flat_bank(int flat_bank) const;
-  DecodedAddress dual_bank_partner(const DecodedAddress &decoded) const;
   bool dual_bank_target_idle(const DecodedAddress &decoded) const;
   // LPDDR WCK 窗口检查：RD/WR 只能发生在 ready_at 和 active_until 之间。
   bool wck_ready_for_data(const Request &req) const;

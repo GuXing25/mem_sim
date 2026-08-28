@@ -99,7 +99,7 @@ topology_stats_scan_limit = 100000
 等价 CLI：
 
 ```bash
-./build-cmake/hbm_sim --standard hbm4 \
+./build-cmake/hbm_sim --config configs/hbm.cfg --standard hbm4 \
   --memory-backend chunk_file \
   --memory-capacity-bytes 34359738368 \
   --memory-data-file outputs/hbm_data.bin \
@@ -234,10 +234,10 @@ stack 仍可继续。这是明确的 head-of-line 语义，不是 stack 之间�
 统一示例：
 
 ```bash
-./build-clang-debug/hbm_sim --config configs/run/hbm4_6stack.cfg \
+./build-clang-debug/hbm_sim --config configs/hbm.cfg --standard hbm4 --stack-count 6 \
   --trace examples/multistack_qos.trace --requests 0
 
-./build-clang-debug/hbm_sim --config configs/run/hbm4_storage.cfg \
+./build-clang-debug/hbm_sim --config configs/hbm.cfg --standard hbm4 \
   --memory-backend mmap_sparse --memory-capacity-bytes 1073741824 \
   --memory-data-file outputs/hbm4.bin
 ```

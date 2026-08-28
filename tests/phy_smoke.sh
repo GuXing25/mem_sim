@@ -12,9 +12,15 @@ value_of() {
 }
 
 for standard in hbm3 hbm4 lpddr5 lpddr6; do
+  if [[ "$standard" == hbm* ]]; then
+    family_config=hbm.cfg
+  else
+    family_config=lpddr.cfg
+  fi
   output=$(
     "$phy_bin" \
-      --config "$phy_source/configs/run/${standard}.cfg" \
+      --config "$phy_source/configs/$family_config" \
+      --standard "$standard" \
       --requests 24 \
       --read-ratio 50 \
       --max-cycles 500000 \
@@ -33,7 +39,7 @@ done
 
 multi_output=$(
   "$phy_bin" \
-    --config "$phy_source/configs/run/hbm4_6stack.cfg" \
+    --config "$phy_source/configs/hbm.cfg" --standard hbm4 --stack-count 6 \
     --requests 24 \
     --read-ratio 50 \
     --max-cycles 500000
@@ -55,7 +61,7 @@ printf '%s\n' \
   > "$phy_tmp_dir/multistack_data.trace"
 multi_data_output=$(
   "$phy_bin" \
-    --config "$phy_source/configs/run/hbm4_6stack.cfg" \
+    --config "$phy_source/configs/hbm.cfg" --standard hbm4 --stack-count 6 \
     --trace "$phy_tmp_dir/multistack_data.trace" \
     --requests 0 --max-cycles 500000 \
     --validate-cmd-trace --validate-dfi-trace \

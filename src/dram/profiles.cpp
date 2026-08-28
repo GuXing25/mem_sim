@@ -82,6 +82,8 @@ TimingValueSource parse_profile_source(std::string value) {
   if (value == "jedec" || value == "standard") return TimingValueSource::JEDEC;
   if (value == "vendor" || value == "datasheet") return TimingValueSource::Vendor;
   if (value == "derived") return TimingValueSource::Derived;
+  if (value == "external_reference" || value == "reference" || value == "ramulator2" ||
+      value == "dramsim3") return TimingValueSource::ExternalReference;
   if (value == "research" || value == "research_default") return TimingValueSource::ResearchDefault;
   throw std::invalid_argument("invalid timing source in profile file: " + value);
 }
@@ -103,7 +105,9 @@ std::string profile_timing_name_for_key(const std::string& key) {
   if (key == "nrrds" || key == "trrds_ns" || key == "trrd_ns") return "nRRDS";
   if (key == "nrrdl" || key == "trrdl_ns") return "nRRDL";
   if (key == "nfaw" || key == "tfaw_ns") return "nFAW";
-  if (key == "naad" || key == "taad_ns") return "nAAD";
+  if (key == "naadmin" || key == "taad_min_ns") return "nAADMin";
+  if (key == "naad" || key == "naadmax" || key == "taad_ns" ||
+      key == "taad_max_ns") return "nAADMax";
   if (key == "nwck2ck" || key == "twck2ck_ns") return "nWCK2CK";
   if (key == "nwckpst" || key == "twckpst_ns") return "nWCKPST";
   if (key == "ncas" || key == "tcas_ns") return "nCAS";
@@ -157,7 +161,8 @@ void set_profile_timing(DramSpec& spec,
   else if (name == "nRRDS") spec.timing.nRRDS = value;
   else if (name == "nRRDL") spec.timing.nRRDL = value;
   else if (name == "nFAW") spec.timing.nFAW = value;
-  else if (name == "nAAD") spec.timing.nAAD = value;
+  else if (name == "nAADMin") spec.timing.nAADMin = value;
+  else if (name == "nAADMax") spec.timing.nAADMax = value;
   else if (name == "nWCK2CK") spec.timing.nWCK2CK = value;
   else if (name == "nWCKPST") spec.timing.nWCKPST = value;
   else if (name == "nCAS") spec.timing.nCAS = value;
@@ -562,7 +567,8 @@ void apply_hbm4_profile(DramSpec& spec) {
   spec.timing.nCCDS = 2;
   spec.timing.nCCDL = jedec::hbm_tccdl_nck(spec.timing.tCK_ps);
   spec.timing.nCCDR = spec.hbm_sid_interleave ? spec.timing.nCCDS + 1 : spec.timing.nCCDS;
-  spec.timing.nAAD = 8;
+  spec.timing.nAADMin = 1;
+  spec.timing.nAADMax = 8;
   spec.timing.nWCK2CK = 1;
   spec.timing.nWCKPST = 8;
   spec.timing.nCAS = 0;
@@ -666,7 +672,8 @@ void apply_hbm3_profile(DramSpec& spec) {
   spec.timing.nRRDS = 8;
   spec.timing.nRRDL = 8;
   spec.timing.nFAW = 24;
-  spec.timing.nAAD = 8;
+  spec.timing.nAADMin = 1;
+  spec.timing.nAADMax = 8;
   spec.timing.nWCK2CK = 1;
   spec.timing.nWCKPST = 8;
   spec.timing.nCAS = 0;
@@ -790,7 +797,8 @@ void apply_lpddr6_profile(DramSpec& spec) {
   spec.timing.nRRDS = jedec::max_ns_or_nck(3.75, 4, spec.timing.tCK_ps);
   spec.timing.nRRDL = spec.timing.nRRDS;
   spec.timing.nFAW = 4 * spec.timing.nRRDS;
-  spec.timing.nAAD = 8;
+  spec.timing.nAADMin = 1;
+  spec.timing.nAADMax = 8;
   spec.timing.nWCK2CK = spec.lpddr_wck_mode == LpddrWckMode::AlwaysOn ? 0 : (speed >= 10000 ? 22 : 18);
   spec.timing.nWCKPST = spec.lpddr_wck_mode == LpddrWckMode::AlwaysOn ? 0 : 3;
   spec.timing.nCAS = spec.lpddr_wck_mode == LpddrWckMode::AlwaysOn ? 0 : spec.timing.nWCK2CK;
@@ -847,7 +855,8 @@ void apply_lpddr6_profile(DramSpec& spec) {
 
   mark_many(spec,
             {"nBL", "nCL", "nCWL", "nRCDRD", "nRCDWR", "nRP", "nRPab", "nRAS",
-             "nRTP", "nWR", "nCCDS", "nCCDL", "nRRDS", "nRRDL", "nAAD",
+             "nRTP", "nWR", "nCCDS", "nCCDL", "nRRDS", "nRRDL",
+             "nAADMin", "nAADMax",
              "nWCK2CK", "nWCKPST", "nCAS", "nWTRS", "nWTRL", "nRREFD", "nRFC",
              "nREFDB2ACT", "nREFDB2REFDBS", "nREFDB2REFDBL",
              "nRFCpb", "nRFMab", "nRFMpb", "nREFI", "nREFIpb"},
@@ -911,7 +920,8 @@ void apply_lpddr5_profile(DramSpec& spec) {
   spec.timing.nRRDS = 4;
   spec.timing.nRRDL = 4;
   spec.timing.nFAW = 16;
-  spec.timing.nAAD = 8;
+  spec.timing.nAADMin = 1;
+  spec.timing.nAADMax = 8;
   spec.timing.nWCK2CK = 1;
   spec.timing.nWCKPST = 8;
   spec.timing.nCAS = 0;
@@ -944,7 +954,8 @@ void apply_lpddr5_profile(DramSpec& spec) {
   spec.timing.nLINKRETRY = 16;
 
   mark_many(spec,
-            {"nBL", "nCCDS", "nCCDL", "nRRDS", "nRRDL", "nAAD",
+            {"nBL", "nCCDS", "nCCDL", "nRRDS", "nRRDL", "nAADMin",
+             "nAADMax",
              "nWCK2CK", "nWCKPST", "nCAS", "nCS", "nPPD", "nREFI", "nREFIpb"},
             TimingValueSource::JEDEC,
             "LPDDR5 generic profile; select a vendor profile for device-specific RL/WL and row timing.");

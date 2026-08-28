@@ -7,7 +7,7 @@ vis_out=${HBM_SIM_VIS_OUT:-outputs/visualization/example}
 mkdir -p "$vis_out"
 
 "$vis_bin" \
-  --config "$vis_source/configs/run/hbm4.cfg" \
+  --config "$vis_source/configs/hbm.cfg" --standard hbm4 \
   --requests 128 \
   --read-ratio 50 \
   --cmd-trace "$vis_out/commands.csv" \

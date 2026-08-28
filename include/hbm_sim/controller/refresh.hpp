@@ -42,16 +42,26 @@ class RefreshManager {
   RefreshTickResult tick(const DramSpec& spec, Cycle clk, bool prefer_postpone, bool allow_pull_in);
 
  private:
+  struct RankRefreshState {
+    Cycle next_refresh_cycle = 0;
+    int sid_cursor = 0;
+    int flat_bank_cursor = 0;
+    // 正数是已经到期但尚未执行的 obligation；负数是提前执行、等待未来
+    // deadline 抵消的 refresh。该定义使 postpone/pull-in 都满足账本守恒。
+    int credit = 0;
+    int postpone_count = 0;
+    int pullin_count = 0;
+  };
+
   Cycle timing_delay(const DramSpec& spec, int cycles) const;
   int refresh_interval(const DramSpec& spec) const;
-  std::vector<MaintenanceCommand> seed_refresh_batch(const DramSpec& spec);
+  std::vector<MaintenanceCommand> seed_refresh_batch(const DramSpec& spec,
+                                                      int rank,
+                                                      RankRefreshState& state);
+  int aggregate_credit() const;
 
-  Cycle next_refresh_cycle_ = 0;  // 下一次允许生成 refresh batch 的 controller cycle。
-  int sid_cursor_ = 0;            // HBM4 SID 轮转游标。
-  int flat_bank_cursor_ = 0;      // bank-group/bank 组合的轮转游标。
-  int refresh_credit_ = 0;        // 正数表示已 postpone 欠下的 refresh，负数表示 pull-in 预支。
-  int postpone_count_ = 0;
-  int pullin_count_ = 0;
+  std::vector<RankRefreshState> rank_states_;
+  int rank_cursor_ = 0;
 };
 
 }  // namespace hbm_sim

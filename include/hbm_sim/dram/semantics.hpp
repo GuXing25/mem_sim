@@ -7,12 +7,17 @@
 
 namespace hbm_sim {
 
+struct DecodedAddress;
+struct DramSpec;
+
 struct CommandMeta {
   // 可读命令名，CSV trace 和统计输出都使用它。
-  const char* name = "NOP";
-  // 是否占用 row/command path。HBM dual bus 模式下 row_command 必须发到 Row bus。
+  const char *name = "NOP";
+  // 是否占用 row/command path。HBM dual bus 模式下 row_command 必须发到 Row
+  // bus。
   bool row_command = false;
-  // 是否占用 column/data command path。HBM dual bus 模式下 column_command 必须发到 Column bus。
+  // 是否占用 column/data command path。HBM dual bus 模式下 column_command
+  // 必须发到 Column bus。
   bool column_command = false;
   // ACT/ACT1 类命令，用于 tFAW、RFM activation count 和 row policy 统计。
   bool activate = false;
@@ -47,11 +52,16 @@ struct CommandMeta {
 };
 
 // 返回命令语义元数据。所有模块判断命令类别都应走这个接口，避免重复硬编码。
-const CommandMeta& command_meta(Command cmd);
+const CommandMeta &command_meta(Command cmd);
 
 // 根据 row policy 选择读/写终端命令。ClosedPage 直接用 auto-precharge；
 // ClosedCap 的动态升级在 Controller::try_upgrade_row_policy_command() 中完成。
 Command read_command_for(RowPolicyKind row_policy);
 Command write_command_for(RowPolicyKind row_policy);
 
-}  // namespace hbm_sim
+// LPDDR6 REFdb 的两个目标使用相同 BA、相邻的一对 BG（0<->1、2<->3）。
+// 集中在语义层，避免 Controller、Executor 和离线 Validator 各维护一份不同表。
+DecodedAddress lpddr_refdb_partner(const DramSpec &spec,
+                                   const DecodedAddress &decoded);
+
+} // namespace hbm_sim

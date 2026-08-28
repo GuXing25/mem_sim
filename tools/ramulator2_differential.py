@@ -13,12 +13,15 @@ import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from config_selection import REFERENCE_PRESETS, selection_args
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
 STANDARD_CONFIG = {
     "hbm3": {
-        "config": ROOT / "configs/validation/hbm3_reference_1ch.cfg",
+        "config": REFERENCE_PRESETS["hbm3"][0],
+        "preset": REFERENCE_PRESETS["hbm3"][1],
         "ramulator_class": "HBM3", "org_preset": "HBM3_16Gb_8hi",
         "timing_preset": "HBM3_6400Mbps", "controller": "hbm34",
         "cycle_tolerance": 2, "latency_tolerance": 2.0,
@@ -37,7 +40,8 @@ STANDARD_CONFIG = {
         },
     },
     "hbm4": {
-        "config": ROOT / "configs/validation/hbm4_reference_1ch.cfg",
+        "config": REFERENCE_PRESETS["hbm4"][0],
+        "preset": REFERENCE_PRESETS["hbm4"][1],
         "ramulator_class": "HBM4", "org_preset": "HBM4_32Gb_8Hi",
         "timing_preset": "HBM4_8000Mbps", "controller": "hbm34",
         "cycle_tolerance": 2, "latency_tolerance": 2.0,
@@ -57,7 +61,8 @@ STANDARD_CONFIG = {
         },
     },
     "lpddr5": {
-        "config": ROOT / "configs/validation/lpddr5_reference_1ch.cfg",
+        "config": REFERENCE_PRESETS["lpddr5"][0],
+        "preset": REFERENCE_PRESETS["lpddr5"][1],
         "ramulator_class": "LPDDR5", "org_preset": "LPDDR5_16Gb_x16",
         "timing_preset": "LPDDR5_6400", "controller": "lpddr5",
         "cycle_tolerance": 8, "latency_tolerance": 2.0,
@@ -72,12 +77,13 @@ STANDARD_CONFIG = {
             "nCCDL": "nCCDL", "nRRDS": "nRRDS", "nRRDL": "nRRDL",
             "nFAW": "nFAW", "nWTRS": "nWTRS", "nWTRL": "nWTRL",
             "nRFC": "nRFC", "nRFCpb": "nRFCpb", "nREFI": "nREFI",
-            "nREFIpb": "nREFIpb", "nAAD": "nAAD", "nCAS": "nCAS",
+            "nREFIpb": "nREFIpb", "nAADMax": "nAAD", "nCAS": "nCAS",
             "nWCKPST": "nWCKPST", "nCS": "nCS", "nPPD": "nPPD",
         },
     },
     "lpddr6": {
-        "config": ROOT / "configs/validation/lpddr6_reference_1ch.cfg",
+        "config": REFERENCE_PRESETS["lpddr6"][0],
+        "preset": REFERENCE_PRESETS["lpddr6"][1],
         "ramulator_class": "LPDDR6", "org_preset": "LPDDR6_16Gb_x12",
         "timing_preset": "LPDDR6_10667_BL24", "controller": "lpddr6",
         "cycle_tolerance": 8, "latency_tolerance": 2.0,
@@ -91,7 +97,7 @@ STANDARD_CONFIG = {
             "nRTP": "nRTP", "nCCDS": "nCCDS", "nCCDL": "nCCDL",
             "nRRDS": "nRRD", "nRRDL": "nRRD", "nFAW": "nFAW",
             "nWTRS": "nWTRS", "nWTRL": "nWTRL", "nRFC": "nRFC",
-            "nREFI": "nREFI", "nAAD": "nAAD", "nCAS": "nCAS",
+            "nREFI": "nREFI", "nAADMax": "nAAD", "nCAS": "nCAS",
             "nWCKPST": "nWCKPST", "nCS": "nCS", "nPPD": "nPPD",
         },
     },
@@ -301,6 +307,27 @@ def run_ramulator(root: Path, standards: list[str]) -> dict:
     return json.loads(completed.stdout)
 
 
+def ramulator_identity(root: Path) -> dict[str, object]:
+    """Capture the external reference revision without requiring a Git checkout."""
+    def git(*arguments: str) -> str | None:
+        completed = subprocess.run(
+            ["git", "-C", str(root), *arguments], text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False)
+        return completed.stdout.strip() if completed.returncode == 0 else None
+
+    commit = git("rev-parse", "HEAD")
+    describe = git("describe", "--always", "--dirty", "--tags")
+    status = git("status", "--porcelain")
+    return {
+        "declared_version": "Ramulator 2.1",
+        "git_commit": commit,
+        "git_describe": describe,
+        "git_dirty": bool(status) if status is not None else None,
+        "python_version": sys.version.split()[0],
+        "root": str(root),
+    }
+
+
 def address_for(event: dict[str, object], dimensions: dict[str, int]) -> int:
     value = int(event.get("row", 0))
     for field, count in (
@@ -330,7 +357,7 @@ def normalize_command(standard: str, command: str) -> str:
     return normalized
 
 
-def run_project_scenario(binary: Path, config: Path, standard: str, name: str,
+def run_project_scenario(binary: Path, config_args: list[str], standard: str, name: str,
                          scenario: dict[str, object], dimensions: dict[str, int],
                          temp: Path) -> tuple[list[dict[str, object]], dict[str, str]]:
     trace = temp / f"{standard}_{name}.trace"
@@ -351,7 +378,7 @@ def run_project_scenario(binary: Path, config: Path, standard: str, name: str,
         else:
             lines.append(f"{event_cycle} M {event['command']} 0x{address:x}")
     trace.write_text("\n".join(lines) + "\n", encoding="ascii")
-    command = [str(binary), "--config", str(config), "--trace", str(trace),
+    command = [str(binary), *config_args, "--trace", str(trace),
                "--cmd-trace", str(command_csv), "--validate-cmd-trace"]
     if scenario.get("row_policy") == "closed":
         command += ["--row-policy", "closed_page"]
@@ -409,10 +436,11 @@ def canonical_events(standard: str, scenario_name: str,
     return canonical
 
 
-def read_project_timings(binary: Path, config: Path, temp: Path) -> tuple[dict[str, int], int]:
-    output = temp / (config.stem + "_timing.csv")
+def read_project_timings(binary: Path, config_args: list[str], standard: str,
+                         temp: Path) -> tuple[dict[str, int], int]:
+    output = temp / (standard + "_timing.csv")
     completed = subprocess.run(
-        [str(binary), "--config", str(config), "--requests", "0",
+        [str(binary), *config_args, "--requests", "0",
          "--dump-timing-table", str(output)], cwd=ROOT, text=True,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
     if completed.returncode != 0:
@@ -444,6 +472,7 @@ def main() -> int:
     with args.identity_manifest.open(newline="", encoding="utf-8") as stream:
         capabilities = list(csv.DictReader(stream))
 
+    reference_identity = ramulator_identity(root)
     ramulator = run_ramulator(root, standards)
     checks: list[Check] = []
     standard_results = {}
@@ -452,7 +481,10 @@ def main() -> int:
         for standard in standards:
             meta = STANDARD_CONFIG[standard]
             config = (args.config or meta["config"]).resolve()
-            project_timings, multiplier = read_project_timings(binary, config, temp)
+            config_args = (["--config", str(config)] if args.config
+                           else selection_args(standard, str(meta["preset"])))
+            project_timings, multiplier = read_project_timings(
+                binary, config_args, standard, temp)
             ram = ramulator["standards"][standard]
             timing_diffs = {}
             for project_name, ram_name in meta["timing_map"].items():
@@ -468,7 +500,7 @@ def main() -> int:
             results = {}
             for name, scenario in scenarios_for(standard).items():
                 project_events, project_stats = run_project_scenario(
-                    binary, config, standard, name, scenario, meta["dimensions"], temp)
+                    binary, config_args, standard, name, scenario, meta["dimensions"], temp)
                 ram_result = ram["scenarios"][name]
                 ram_events = ram_result["events"]
                 raw_project_events = project_events
@@ -535,7 +567,8 @@ def main() -> int:
                     "ramulator_stats": ram_result["stats"],
                 }
             standard_results[standard] = {
-                "config": str(config), "tick_multiplier": multiplier,
+                "config": str(config), "preset": None if args.config else meta["preset"],
+                "tick_multiplier": multiplier,
                 "timing_mapping": meta["timing_map"], "timing_differences": timing_diffs,
                 "cycle_tolerance": args.cycle_tolerance if args.cycle_tolerance is not None
                                    else meta["cycle_tolerance"],
@@ -548,14 +581,17 @@ def main() -> int:
         "schema_version": 2,
         "scope": "external_reference_overlap_four_standards_commands_timing_maintenance",
         "relationship": "non_normative_external_reference",
-        "standards": standard_results, "ramulator_root": str(root),
+        "standards": standard_results,
+        "ramulator_root": str(root),
+        "ramulator_reference": reference_identity,
         "checks": [asdict(check) for check in checks],
         "project_specific_capabilities": capabilities,
         "passed": all(check.passed for check in checks),
         "known_abstractions": {
             "lpddr_split_activate": (
-                "hbm_sim treats nAAD as an ACT1-to-ACT2 minimum; Ramulator permits an "
-                "earlier ACT2. The bounded intermediate-command delta is retained."),
+                "hbm_sim models ACT2 in the inclusive [nAADMin,nAADMax] issue window. "
+                "The timing-table comparison maps Ramulator nAAD to hbm_sim nAADMax; "
+                "nAADMin is a project execution-granularity bound."),
             "lpddr6_burst": (
                 "Only the BL24 short-command overlap is compared; Ramulator BL48 and "
                 "min/max array-cycle distinctions are outside hbm_sim's single-nBL abstraction."),
@@ -573,6 +609,9 @@ def main() -> int:
         args.json_out.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     failed = [check for check in checks if not check.passed]
     print(f"\nRamulator2.1 four-standard overlap: {len(checks)-len(failed)}/{len(checks)} checks passed")
+    print("Ramulator reference: "
+          f"commit={reference_identity['git_commit'] or 'unavailable'} "
+          f"dirty={reference_identity['git_dirty']}")
     print(f"Project authority: hbm_sim; preserved project-specific capabilities: {len(capabilities)}")
     return 1 if failed else 0
 
