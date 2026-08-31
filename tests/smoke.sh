@@ -277,7 +277,7 @@ config_tmp_dir="$(mktemp -d)"
 for standard in hbm3 hbm4; do
   "$HBM_SIM_BIN" --config configs/hbm.cfg --standard "$standard" --check-config \
     | grep -Eq '^config_validation=pass$'
-  "$HBM_SIM_BIN" --config configs/hbm.cfg --standard "$standard" --preset baseline \
+  "$HBM_SIM_BIN" --config configs/hbm.cfg --standard "$standard" \
     --dump-resolved-config "$config_tmp_dir/resolved_${standard}.cfg" --check-config >/dev/null
   "$HBM_SIM_BIN" --config "$config_tmp_dir/resolved_${standard}.cfg" --check-config \
     | grep -Eq '^config_validation=pass$'
@@ -285,7 +285,7 @@ done
 for standard in lpddr5 lpddr6; do
   "$HBM_SIM_BIN" --config configs/lpddr.cfg --standard "$standard" --check-config \
     | grep -Eq '^config_validation=pass$'
-  "$HBM_SIM_BIN" --config configs/lpddr.cfg --standard "$standard" --preset baseline \
+  "$HBM_SIM_BIN" --config configs/lpddr.cfg --standard "$standard" \
     --dump-resolved-config "$config_tmp_dir/resolved_${standard}.cfg" --check-config >/dev/null
   "$HBM_SIM_BIN" --config "$config_tmp_dir/resolved_${standard}.cfg" --check-config \
     | grep -Eq '^config_validation=pass$'
@@ -391,19 +391,19 @@ run_and_check hbm3_config "$HBM_SIM_BIN" --config configs/hbm.cfg --standard hbm
 run_and_check lpddr5_config "$HBM_SIM_BIN" --config configs/lpddr.cfg --standard lpddr5 --requests 128
 run_and_check lpddr6_config "$HBM_SIM_BIN" --config configs/lpddr.cfg --standard lpddr6 --requests 128
 run_and_check hbm4_jedec_template "$HBM_SIM_BIN" --config configs/hbm.cfg \
-  --standard hbm4 --preset baseline --requests 64
-run_and_check hbm4_synthetic_vendor "$HBM_SIM_BIN" --config configs/hbm.cfg \
-  --standard hbm4 --preset synthetic_vendor_9000_48gb_16hi --requests 32 \
-  --strict-timing-table
-run_and_check hbm3_reference "$HBM_SIM_BIN" --config configs/hbm.cfg --standard hbm3 \
+  --standard hbm4 --requests 64
+run_and_check hbm4_synthetic_research "$HBM_SIM_BIN" --config configs/hbm.cfg \
+  --config configs/developer.cfg --standard hbm4 \
+  --preset synthetic_9000_48gb_16hi --requests 32
+run_and_check hbm3_reference "$HBM_SIM_BIN" --config configs/validation/hbm3.cfg --standard hbm3 \
   --preset ramulator2_reference_1ch --requests 64
-run_and_check lpddr5_reference "$HBM_SIM_BIN" --config configs/lpddr.cfg --standard lpddr5 \
+run_and_check lpddr5_reference "$HBM_SIM_BIN" --config configs/validation/lpddr5.cfg --standard lpddr5 \
   --preset ramulator2_reference_1ch --requests 64
 run_and_check lpddr6_link_protection "$HBM_SIM_BIN" --config configs/lpddr.cfg \
   --standard lpddr6 --preset link_protection --requests 64
-run_and_check lpddr6_synthetic_vendor "$HBM_SIM_BIN" --config configs/lpddr.cfg \
-  --standard lpddr6 --preset synthetic_vendor_linkprot --requests 32 \
-  --strict-timing-table
+run_and_check lpddr6_synthetic_research "$HBM_SIM_BIN" --config configs/lpddr.cfg \
+  --config configs/developer.cfg --standard lpddr6 \
+  --preset synthetic_linkprot --requests 32
 run_and_check lpddr6_lowdvfs "$HBM_SIM_BIN" --config configs/lpddr.cfg \
   --standard lpddr6 --preset low_dvfs_4267 --requests 32
 run_and_check lpddr6_ca_parity "$HBM_SIM_BIN" --standard lpddr6 --requests 32 \
@@ -454,7 +454,7 @@ cat >"$maintenance_trace" <<'TRACE'
 0 M REFpb 0x0
 1000 M RFMpb 0x40
 TRACE
-"$HBM_SIM_BIN" --config configs/hbm.cfg --standard hbm4 \
+"$HBM_SIM_BIN" --config configs/validation/hbm4.cfg --standard hbm4 \
   --preset ramulator2_reference_1ch \
   --trace "$maintenance_trace" --cmd-trace "$maintenance_cmds" \
   --validate-cmd-trace >"$maintenance_out"

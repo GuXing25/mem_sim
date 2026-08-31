@@ -29,6 +29,21 @@ std::uint64_t checked_multiply_u64(std::uint64_t lhs, std::uint64_t rhs,
   return lhs * rhs;
 }
 
+void validate_address_span(Address address, std::size_t size,
+                           const char *context) {
+  if (size == 0) {
+    return;
+  }
+  const std::uintmax_t last_offset =
+      static_cast<std::uintmax_t>(size - 1);
+  const std::uintmax_t available = static_cast<std::uintmax_t>(
+      std::numeric_limits<Address>::max() - address);
+  if (last_offset > available) {
+    throw std::overflow_error(std::string(context) +
+                              " address range exceeds Address space");
+  }
+}
+
 int hex_value(char c) {
   if (c >= '0' && c <= '9')
     return c - '0';
@@ -1088,6 +1103,13 @@ void MemoryImage::relax_thermal_tile(ThermalTileState &tile, Cycle cycle) {
   tile.last_cycle = cycle;
 }
 
+void MemoryImage::advance_thermal(Cycle cycle) {
+  for (auto &[key, tile] : thermal_tiles_) {
+    (void)key;
+    relax_thermal_tile(tile, cycle);
+  }
+}
+
 double
 MemoryImage::vertical_coupling_alpha(const PhysicalAddress &physical) const {
   double base = std::max(0.0, options_.thermal_vertical_coupling);
@@ -1439,17 +1461,24 @@ MemoryImage::row_buffer_block(Address base,
 
 ByteVector MemoryImage::read(Address address, std::size_t size,
                              bool *initialized, const DecodedAddress *decoded) {
+  validate_address_span(address, size, "memory image read");
   ByteVector out(size, default_value_);
   bool all_initialized = true;
   std::size_t copied = 0;
+  const Address first_base = line_base(address);
   while (copied < size) {
     Address current = address + copied;
     Address base = line_base(current);
     std::size_t offset = line_offset(current);
     std::size_t chunk = std::min(size - copied, line_size_ - offset);
+    // decoded 只描述请求起始事务行。跨行访问的后续行必须按其地址重新
+    // 推导存储坐标，否则会把首行的 row/column 重用于后续行，并可能从
+    // 打开的首行 row buffer 中重复读出错误数据。
+    const DecodedAddress *line_decoded =
+        (base == first_base) ? decoded : nullptr;
 
     read_line_accesses_++;
-    DataBlock *rb_block = row_buffer_block(base, decoded, 0, false);
+    DataBlock *rb_block = row_buffer_block(base, line_decoded, 0, false);
     if (rb_block != nullptr) {
       check_ecc_shadow(*rb_block);
       row_buffer_reads_++;
@@ -1463,7 +1492,7 @@ ByteVector MemoryImage::read(Address address, std::size_t size,
                   out.begin() + static_cast<std::ptrdiff_t>(copied));
     } else {
       DataBlock block;
-      if (!load_backend_line(base, block, decoded)) {
+      if (!load_backend_line(base, block, line_decoded)) {
         all_initialized = false;
       } else {
         const ByteVector bytes_before_ecc = block.bytes;
@@ -1501,22 +1530,26 @@ ByteVector MemoryImage::read(Address address, std::size_t size,
 ByteVector
 MemoryImage::read_initialized_mask(Address address, std::size_t size,
                                    const DecodedAddress *decoded) const {
+  validate_address_span(address, size, "memory image initialized-mask read");
   ByteVector out(size, 0);
   std::size_t copied = 0;
+  const Address first_base = line_base(address);
   while (copied < size) {
     Address current = address + copied;
     Address base = line_base(current);
     std::size_t offset = line_offset(current);
     std::size_t chunk = std::min(size - copied, line_size_ - offset);
+    const DecodedAddress *line_decoded =
+        (base == first_base) ? decoded : nullptr;
 
-    if (const DataBlock *rb_block = row_buffer_block(base, decoded)) {
+    if (const DataBlock *rb_block = row_buffer_block(base, line_decoded)) {
       std::copy_n(rb_block->initialized_mask.begin() +
                       static_cast<std::ptrdiff_t>(offset),
                   static_cast<std::ptrdiff_t>(chunk),
                   out.begin() + static_cast<std::ptrdiff_t>(copied));
     } else {
       DataBlock block;
-      if (load_backend_line(base, block, decoded)) {
+      if (load_backend_line(base, block, line_decoded)) {
         std::copy_n(block.initialized_mask.begin() +
                         static_cast<std::ptrdiff_t>(offset),
                     static_cast<std::ptrdiff_t>(chunk),
@@ -1531,6 +1564,7 @@ MemoryImage::read_initialized_mask(Address address, std::size_t size,
 void MemoryImage::write(Address address, const ByteVector &data,
                         const ByteVector *mask, const DecodedAddress *decoded,
                         std::uint64_t request_id, Cycle cycle) {
+  validate_address_span(address, data.size(), "memory image write");
   if (mask != nullptr && mask->size() != data.size()) {
     throw std::invalid_argument(
         "memory image write mask size does not match data size");
@@ -2038,7 +2072,7 @@ void MemoryImage::dump_thermal_text(const std::string &path) const {
   if (!out) {
     throw std::runtime_error("failed to open thermal map output: " + path);
   }
-  out << "# model floorplan_enabled="
+  out << "# model_kind=behavioral_sparse_coupling floorplan_enabled="
       << (options_.floorplan_enabled ? "true" : "false")
       << " power_enabled=" << (options_.power_enabled ? "true" : "false")
       << " thermal_enabled=" << (options_.thermal_enabled ? "true" : "false")
@@ -2057,7 +2091,8 @@ void MemoryImage::dump_thermal_text(const std::string &path) const {
       << " thermal_tsvs_per_grid=" << options_.thermal_tsvs_per_grid
       << " power_source=" << options_.power_source << '\n';
   out << "# stack layer thermal_x thermal_y thermal_z tile_x tile_y grid_x "
-         "grid_y tile_id temperature_c energy_pj events "
+         "grid_y tile_id temperature_c energy_pj events thermal_cols "
+         "thermal_rows "
       << "ch pc sid rank bg bank row col subarray mat_x mat_y mat_id cell_x "
          "cell_y microbump_x microbump_y\n";
 
@@ -2086,11 +2121,12 @@ void MemoryImage::dump_thermal_text(const std::string &path) const {
         << p.thermal_z << ' ' << p.tile_x << ' ' << p.tile_y << ' '
         << p.thermal_grid_x << ' ' << p.thermal_grid_y << ' ' << p.tile_id
         << ' ' << tile.temperature_c << ' ' << tile.energy_pj << ' '
-        << tile.events << ' ' << p.channel << ' ' << p.pseudo_channel << ' '
-        << p.sid << ' ' << p.rank << ' ' << p.bank_group << ' ' << p.bank << ' '
-        << p.row << ' ' << p.column << ' ' << p.subarray << ' ' << p.mat_x
-        << ' ' << p.mat_y << ' ' << p.mat_id << ' ' << p.cell_x << ' '
-        << p.cell_y << ' ' << p.microbump_x << ' ' << p.microbump_y << '\n';
+        << tile.events << ' ' << p.thermal_cols << ' ' << p.thermal_rows << ' '
+        << p.channel << ' ' << p.pseudo_channel << ' ' << p.sid << ' ' << p.rank
+        << ' ' << p.bank_group << ' ' << p.bank << ' ' << p.row << ' '
+        << p.column << ' ' << p.subarray << ' ' << p.mat_x << ' ' << p.mat_y
+        << ' ' << p.mat_id << ' ' << p.cell_x << ' ' << p.cell_y << ' '
+        << p.microbump_x << ' ' << p.microbump_y << '\n';
   }
 }
 

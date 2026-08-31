@@ -3,7 +3,7 @@
 项目内生成的仿真产物统一放在这里。推荐每次实验使用独立子目录，例如：
 
 ```bash
-./build-clang-debug/hbm_sim --config configs/hbm.cfg --standard hbm4 --preset baseline \
+./build-clang-debug/hbm_sim --config configs/hbm.cfg --standard hbm4 \
   --requests 32 \
   --cmd-trace outputs/exp01/commands.csv \
   --dfi-trace outputs/exp01/dfi.csv \

@@ -85,7 +85,7 @@ python3 tools/view_stats.py outputs/a.txt outputs/b.txt \
 
 ```bash
 bash tools/audit_case_backends.sh configs/hbm.cfg \
-  hbm4 baseline \
+  hbm4 none \
   outputs/backend_audit_hbm4_run1
 ```
 

@@ -30,7 +30,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--config",
         type=Path,
-        default=ROOT / "configs/hbm.cfg",
+        default=ROOT / "configs/validation/hbm4.cfg",
     )
     parser.add_argument("--standard", default="hbm4")
     parser.add_argument("--preset", default="validation_native_1ch")
@@ -205,8 +205,7 @@ def main() -> int:
         raise SystemExit(f"hbm_sim binary not found: {binary}")
     validation_selection = ["--config", str(config), "--standard", args.standard,
                             "--preset", args.preset]
-    project_selection = ["--config", str(project_config), "--standard", "hbm4",
-                         "--preset", "baseline"]
+    project_selection = ["--config", str(project_config), "--standard", "hbm4"]
 
     checks: list[Check] = []
     metrics: dict[str, object] = {}

@@ -6,6 +6,7 @@
 #include <cctype>
 #include <deque>
 #include <fstream>
+#include <limits>
 #include <random>
 #include <sstream>
 #include <stdexcept>
@@ -15,6 +16,14 @@ namespace hbm_sim {
 namespace {
 
 std::string lower_token(std::string token);
+
+void validate_address_span(Address address, std::uintmax_t size,
+                           const std::string& context) {
+  if (size != 0 && size - 1 >
+                       std::numeric_limits<Address>::max() - address) {
+    throw std::overflow_error(context + " exceeds Address space");
+  }
+}
 
 RequestType parse_type(const std::string& token) {
   // trace 兼容单字母和完整单词，方便复用不同工具生成的简单访存轨迹。
@@ -317,7 +326,14 @@ std::vector<Request> split_host_request(const DramSpec& spec, const Request& hos
   const std::size_t host_bytes = host_request_bytes(spec, host);
   const std::size_t transaction_bytes =
       static_cast<std::size_t>(std::max(1, spec.transaction_bytes()));
-  const std::size_t count = (host_bytes + transaction_bytes - 1) / transaction_bytes;
+  const std::size_t count =
+      1 + (host_bytes - 1) / transaction_bytes;
+  if (count > std::numeric_limits<std::uint32_t>::max()) {
+    throw std::overflow_error(
+        "host request needs more than uint32 transaction_count entries");
+  }
+  validate_address_span(host.address, static_cast<std::uintmax_t>(host_bytes),
+                        "host request address range");
   AddressMapper mapper(spec);
   std::vector<Request> transactions;
   transactions.reserve(count);
@@ -673,6 +689,9 @@ class TraceTrafficStream final : public TrafficStream {
       throw std::runtime_error("trace line " + std::to_string(lineno_) +
                                " burst length must be multiple of line_size");
     }
+    validate_address_span(address, burst_len,
+                          "trace line " + std::to_string(lineno_) +
+                              " burst address range");
     burst_.active = true;
     burst_.type = parse_type(tokens[idx]);
     burst_.address = address;

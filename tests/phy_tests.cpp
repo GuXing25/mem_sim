@@ -122,6 +122,35 @@ void test_lifecycle_fifo_and_dvfs() {
   require(hbm_phy.ready_for_data(), "HBM reset t must honor tick_multiplier");
 }
 
+void test_zero_cycle_command_pipeline_is_combinational() {
+  hbm_sim::DramSpec spec = hbm_sim::make_spec("hbm4");
+  auto image = std::make_shared<hbm_sim::MemoryImage>(spec);
+  hbm_sim::MemPhyOptions options;
+  options.mode = hbm_sim::MemPhyMode::Behavioral;
+  options.command_fifo_depth = 1;
+  options.command_pipeline_cycles = 0;
+  hbm_sim::MemPhy phy(spec, options, image);
+  auto req = request(70, hbm_sim::RequestType::Read,
+                     static_cast<std::size_t>(spec.transaction_bytes()));
+
+  phy.accept_command(req, hbm_sim::Command::ACT, hbm_sim::BusClass::Row, 1);
+  require(phy.can_accept_command(hbm_sim::Command::RD),
+          "zero-cycle command pipeline must not occupy a FIFO slot");
+  phy.accept_command(req, hbm_sim::Command::RD, hbm_sim::BusClass::Column, 1);
+  require(phy.stats().commands == 2 && phy.stats().max_command_fifo == 0,
+          "zero-cycle command path must remain combinational");
+
+  options.command_pipeline_cycles = 1;
+  hbm_sim::MemPhy pipelined(spec, options, image);
+  pipelined.accept_command(req, hbm_sim::Command::ACT,
+                           hbm_sim::BusClass::Row, 1);
+  require(!pipelined.can_accept_command(hbm_sim::Command::RD),
+          "positive command pipeline must honor FIFO depth");
+  pipelined.tick(1 + static_cast<hbm_sim::Cycle>(spec.tick_multiplier));
+  require(pipelined.can_accept_command(hbm_sim::Command::RD),
+          "command FIFO slot must release at its configured deadline");
+}
+
 void test_pending_write_ordering() {
   hbm_sim::DramSpec spec = hbm_sim::make_spec("hbm3");
   hbm_sim::ControllerOptions options;
@@ -251,6 +280,7 @@ void test_end_to_end(const std::string &standard) {
 int main() {
   test_adapters();
   test_lifecycle_fifo_and_dvfs();
+  test_zero_cycle_command_pipeline_is_combinational();
   test_pending_write_ordering();
   test_explicit_low_power_wakeup();
   for (const char *standard : {"hbm3", "hbm4", "lpddr5", "lpddr6"}) {

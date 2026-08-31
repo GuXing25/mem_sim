@@ -50,8 +50,12 @@ def main() -> int:
     read_ratios = comma_ints(args.read_ratios)
     if not args.binary.is_file():
         raise SystemExit(f"binary not found: {args.binary}")
+    if not standards or len(standards) != len(set(standards)):
+        raise SystemExit("standards must contain a non-empty, unique list")
     if any(item not in REFERENCE_PRESETS for item in standards):
         raise SystemExit(f"unsupported standards: {standards}")
+    if args.requests < 1:
+        raise SystemExit("requests must be positive")
     if not intervals or any(item < 1 for item in intervals):
         raise SystemExit("intervals must be positive controller ticks")
     if not read_ratios or any(item < 0 or item > 100 for item in read_ratios):

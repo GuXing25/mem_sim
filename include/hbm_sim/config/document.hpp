@@ -33,6 +33,9 @@ struct ConfigEntry {
 struct ConfigDocument {
   std::string path;
   bool sectioned = false;
+  // [meta] extends 指向的基础配置。路径相对当前配置文件解析；解析器会先
+  // 加载基础配置，再加载当前文档，从而让用例/验证配置保持短小且可直接运行。
+  std::vector<std::string> extends;
   std::vector<ConfigEntry> entries;
 };
 
@@ -44,6 +47,11 @@ struct Selection {
 // v1 平面配置和 v2 分节配置使用同一读取入口。v2 同一 section 内不允许
 // 重复 key；不同 layer 重复 key 表示有意覆盖。
 ConfigDocument load_document(const std::string& path);
+
+// 递归展开 [meta] extends。返回顺序始终是“最底层基础配置 -> 当前配置”，
+// 并拒绝循环继承。一个 cfg 因而可以作为独立入口，而 resolved config 仍能
+// 准确记录每个值来自哪一层、哪个文件和哪一行。
+std::vector<ConfigDocument> load_document_tree(const std::string& path);
 
 // 从所有配置的 [model]（以及旧平面配置）提取选择项；显式 CLI 选择最终覆盖。
 Selection discover_selection(const std::vector<ConfigDocument>& documents,

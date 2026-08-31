@@ -210,7 +210,7 @@ def run_case(args: argparse.Namespace, standard: str, case: Case,
         overlay.flush()
         command = [
             str(args.binary), "--config", str(ROOT / f"configs/{family(standard)}.cfg"),
-            "--standard", standard, "--preset", "baseline", "--config", overlay.name,
+            "--standard", standard, "--config", overlay.name,
             "--trace", str(trace_path), "--requests", "0",
             "--inject-interval", str(args.inject_interval),
             "--dump-resolved-config", str(case_dir / "resolved.cfg"),

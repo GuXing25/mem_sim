@@ -3,7 +3,7 @@
 set -euo pipefail
 
 if (( $# < 4 || $# > 5 )); then
-  echo "usage: bash tools/audit_case_backends.sh CONFIG STANDARD PRESET OUT_DIR [HBM_SIM_BINARY]" >&2
+  echo "usage: bash tools/audit_case_backends.sh CONFIG STANDARD PRESET_OR_NONE OUT_DIR [HBM_SIM_BINARY]" >&2
   exit 2
 fi
 
@@ -51,9 +51,12 @@ done
 
 mkdir -p "$case_out/sparse" "$case_out/mmap" "$case_out/chunk"
 
-common=(--config "$case_cfg" --standard "$case_standard" --preset "$case_preset"
+common=(--config "$case_cfg" --standard "$case_standard"
         --trace "$trace_file" --requests 0
         --memory-image "$image_file" --memory-capacity-bytes 1048576)
+if [[ $case_preset != none && $case_preset != - ]]; then
+  common+=(--preset "$case_preset")
+fi
 
 "$sim_binary" "${common[@]}" --memory-backend sparse \
   --dump-memory-image "$case_out/sparse/final.txt" \

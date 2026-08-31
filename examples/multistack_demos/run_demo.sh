@@ -15,7 +15,7 @@ demo_bin=${HBM_SIM_BIN:-$demo_root/build-clang-debug/hbm_sim}
 demo_stacks=${STACK_COUNT:-2}
 demo_output_root=${OUTPUT_ROOT:-$demo_root/outputs/demos}
 demo_out=$demo_output_root/${demo_standard}_${demo_stacks}stack
-demo_config=$demo_root/configs/$demo_family.cfg
+demo_config=$demo_root/configs/usecases/${demo_family}_nstacks.cfg
 demo_trace=$demo_root/examples/multistack_demos/two_stack_payload.trace
 
 if [[ ! -x "$demo_bin" ]]; then
@@ -30,7 +30,7 @@ fi
 
 mkdir -p "$demo_out"
 "$demo_bin" \
-  --config "$demo_config" --standard "$demo_standard" --preset multistack_demo \
+  --config "$demo_config" --standard "$demo_standard" \
   --stack-count "$demo_stacks" --trace "$demo_trace" --requests 0 \
   --dump-resolved-config "$demo_out/resolved.cfg" \
   --cmd-trace "$demo_out/commands.csv" \

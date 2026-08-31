@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <set>
@@ -362,24 +363,6 @@ bool apply_storage_model_option(hbm_sim::StorageModelOptions& options,
     options.thermal_k_silicon = std::stod(value);
   } else if (key == "thermal_k_copper" || key == "kcu") {
     options.thermal_k_copper = std::stod(value);
-  } else if (key == "thermal_k_insulator" || key == "kin") {
-    options.thermal_k_insulator = std::stod(value);
-  } else if (key == "thermal_k_heatsink" || key == "khs") {
-    options.thermal_k_heatsink = std::stod(value);
-  } else if (key == "thermal_c_silicon" || key == "csi") {
-    options.thermal_c_silicon = std::stod(value);
-  } else if (key == "thermal_c_copper" || key == "ccu") {
-    options.thermal_c_copper = std::stod(value);
-  } else if (key == "thermal_c_insulator" || key == "cin") {
-    options.thermal_c_insulator = std::stod(value);
-  } else if (key == "thermal_c_heatsink" || key == "chs") {
-    options.thermal_c_heatsink = std::stod(value);
-  } else if (key == "thermal_layer_height_si_m" || key == "hsi") {
-    options.thermal_layer_height_si_m = std::stod(value);
-  } else if (key == "thermal_layer_height_cu_m" || key == "hcu") {
-    options.thermal_layer_height_cu_m = std::stod(value);
-  } else if (key == "thermal_layer_height_insulator_m" || key == "hin") {
-    options.thermal_layer_height_insulator_m = std::stod(value);
   } else if (key == "subarrays_per_bank") {
     options.subarrays_per_bank = parse_int(value);
   } else if (key == "mats_per_subarray_x") {
@@ -1228,15 +1211,6 @@ std::vector<std::string> validate_storage_model_config(const hbm_sim::StorageMod
   require_non_negative(options.thermal_tsv_radius_m, "thermal_tsv_radius_m");
   require_non_negative(options.thermal_k_silicon, "thermal_k_silicon");
   require_non_negative(options.thermal_k_copper, "thermal_k_copper");
-  require_non_negative(options.thermal_k_insulator, "thermal_k_insulator");
-  require_non_negative(options.thermal_k_heatsink, "thermal_k_heatsink");
-  require_non_negative(options.thermal_c_silicon, "thermal_c_silicon");
-  require_non_negative(options.thermal_c_copper, "thermal_c_copper");
-  require_non_negative(options.thermal_c_insulator, "thermal_c_insulator");
-  require_non_negative(options.thermal_c_heatsink, "thermal_c_heatsink");
-  require_non_negative(options.thermal_layer_height_si_m, "thermal_layer_height_si_m");
-  require_non_negative(options.thermal_layer_height_cu_m, "thermal_layer_height_cu_m");
-  require_non_negative(options.thermal_layer_height_insulator_m, "thermal_layer_height_insulator_m");
   require_positive_int(options.subarrays_per_bank, "subarrays_per_bank");
   require_positive_int(options.mats_per_subarray_x, "mats_per_subarray_x");
   require_positive_int(options.mats_per_subarray_y, "mats_per_subarray_y");
@@ -1310,7 +1284,10 @@ Cli parse_args(int argc, char** argv) {
     else if (arg == "--preset") cli_preset = inspect_value(arg);
   }
   for (const auto& path : config_paths) {
-    cli.config_documents.push_back(hbm_sim::config::load_document(path));
+    auto documents = hbm_sim::config::load_document_tree(path);
+    cli.config_documents.insert(cli.config_documents.end(),
+                                std::make_move_iterator(documents.begin()),
+                                std::make_move_iterator(documents.end()));
   }
   const hbm_sim::config::Selection selection =
       hbm_sim::config::discover_selection(cli.config_documents, cli_standard, cli_preset);
@@ -1846,6 +1823,12 @@ std::vector<std::string> validate_runtime_config(const Cli& cli,
       spec.timing.tCK_ps <= 0.0) {
     errors.push_back("data rate, bus width, prefetch and tCK must be > 0");
   }
+  const bool has_sectioned_config = std::any_of(
+      cli.config_documents.begin(), cli.config_documents.end(),
+      [](const auto& document) { return document.sectioned; });
+  if (has_sectioned_config && cli.config_schema_version != 2) {
+    errors.push_back("sectioned config documents require schema_version = 2");
+  }
   const std::string protocol = lower_value(cli.phy_protocol);
   if (protocol != "auto" && protocol != "hbm" && protocol != "lpddr") {
     errors.push_back("phy protocol must be auto, hbm or lpddr");
@@ -1854,15 +1837,13 @@ std::vector<std::string> validate_runtime_config(const Cli& cli,
     errors.push_back("selected PHY protocol has no executable semantics for base standard " + spec.name);
   }
 
-  bool has_named_presets = false;
   bool selected_preset_exists = cli.preset.empty();
   for (const auto& document : cli.config_documents) {
     const auto presets = hbm_sim::config::list_presets(document, cli.standard);
-    has_named_presets = has_named_presets || !presets.empty();
     selected_preset_exists = selected_preset_exists ||
         std::find(presets.begin(), presets.end(), normalize_key(cli.preset)) != presets.end();
   }
-  if (has_named_presets && !selected_preset_exists) {
+  if (!cli.preset.empty() && !selected_preset_exists) {
     errors.push_back("preset '" + cli.preset + "' does not exist for standard " + cli.standard);
   }
 
@@ -1924,9 +1905,11 @@ void write_resolved_config(const std::string& path,
       << "schema_version = 2\n\n";
   out << "[model]\n"
       << "name = " << cli.model_name << '\n'
-      << "base_standard = " << hbm_sim::config::canonical_standard(cli.standard) << '\n'
-      << "preset = " << (cli.preset.empty() ? spec.timing_profile : cli.preset) << '\n'
-      << "timing_profile = " << spec.timing_profile << '\n'
+      << "base_standard = " << hbm_sim::config::canonical_standard(cli.standard) << '\n';
+  if (!cli.preset.empty()) {
+    out << "preset = " << cli.preset << '\n';
+  }
+  out << "timing_profile = " << spec.timing_profile << '\n'
       << "vendor_profile = " << spec.vendor_profile << '\n'
       << "mode_profile = " << spec.mode_profile << '\n';
   if (!spec.timing_profile_file.empty()) {
@@ -2162,17 +2145,7 @@ void write_resolved_config(const std::string& path,
       << "thermal_chip_dim_y_m = " << storage.thermal_chip_dim_y_m << '\n'
       << "thermal_tsv_radius_m = " << storage.thermal_tsv_radius_m << '\n'
       << "thermal_k_silicon = " << storage.thermal_k_silicon << '\n'
-      << "thermal_k_copper = " << storage.thermal_k_copper << '\n'
-      << "thermal_k_insulator = " << storage.thermal_k_insulator << '\n'
-      << "thermal_k_heatsink = " << storage.thermal_k_heatsink << '\n'
-      << "thermal_c_silicon = " << storage.thermal_c_silicon << '\n'
-      << "thermal_c_copper = " << storage.thermal_c_copper << '\n'
-      << "thermal_c_insulator = " << storage.thermal_c_insulator << '\n'
-      << "thermal_c_heatsink = " << storage.thermal_c_heatsink << '\n'
-      << "thermal_layer_height_si_m = " << storage.thermal_layer_height_si_m << '\n'
-      << "thermal_layer_height_cu_m = " << storage.thermal_layer_height_cu_m << '\n'
-      << "thermal_layer_height_insulator_m = "
-      << storage.thermal_layer_height_insulator_m << "\n\n";
+      << "thermal_k_copper = " << storage.thermal_k_copper << "\n\n";
 
   out << "[outputs]\n"
       << "validate_cmd_trace = " << cli.validate_cmd_trace << '\n'
@@ -2280,7 +2253,7 @@ int main(int argc, char** argv) {
       std::cout << "config_validation=pass\n"
                 << "model_name=" << cli.model_name << '\n'
                 << "base_standard=" << spec.name << '\n'
-                << "preset=" << (cli.preset.empty() ? spec.timing_profile : cli.preset) << '\n'
+                << "preset=" << (cli.preset.empty() ? "<none>" : cli.preset) << '\n'
                 << "validation_mode=" << hbm_sim::config::to_string(cli.validation_mode) << '\n'
                 << "modified_parameters=" << config_differences(cli).size() << '\n';
       return 0;
@@ -2663,11 +2636,11 @@ int main(int argc, char** argv) {
             ? "device_checked"
             : (cli.validation_mode == hbm_sim::config::ValidationMode::Standard
                    ? "standard_checked"
-                   : (model_differences.empty() ? "preset_baseline"
+                   : (model_differences.empty() ? "standard_default"
                                                 : "custom_exploratory"));
     print_field(std::cout, "model_name", cli.model_name);
     print_field(std::cout, "base_standard", spec.name);
-    print_field(std::cout, "selected_preset", cli.preset.empty() ? spec.timing_profile : cli.preset);
+    print_field(std::cout, "selected_preset", cli.preset.empty() ? "none" : cli.preset);
     print_field(std::cout, "validation_mode", hbm_sim::config::to_string(cli.validation_mode));
     print_field(std::cout, "model_conformance", conformance);
     print_field(std::cout, "modified_parameters", model_differences.size());
@@ -2832,6 +2805,7 @@ int main(int argc, char** argv) {
     print_field(std::cout, "floorplan_enabled", storage_options.floorplan_enabled ? "true" : "false");
     print_field(std::cout, "power_model_enabled", storage_options.power_enabled ? "true" : "false");
     print_field(std::cout, "thermal_model_enabled", storage_options.thermal_enabled ? "true" : "false");
+    print_field(std::cout, "thermal_model_kind", "behavioral_sparse_coupling");
     print_field(std::cout, "power_source", storage_options.power_source);
     print_field(std::cout, "power_scale", storage_options.power_scale);
     print_field(std::cout, "thermal_ambient_C", storage_options.thermal_ambient_c);

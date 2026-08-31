@@ -200,15 +200,6 @@ struct StorageModelOptions {
   double thermal_tsv_radius_m = 5e-6;
   double thermal_k_silicon = 148.0;
   double thermal_k_copper = 401.0;
-  double thermal_k_insulator = 1.5;
-  double thermal_k_heatsink = 4.0;
-  double thermal_c_silicon = 1.66e6;
-  double thermal_c_copper = 3.2e6;
-  double thermal_c_insulator = 1.65e6;
-  double thermal_c_heatsink = 2.42e6;
-  double thermal_layer_height_si_m = 400e-6;
-  double thermal_layer_height_cu_m = 5e-6;
-  double thermal_layer_height_insulator_m = 20e-6;
   int subarrays_per_bank = 16;
   int mats_per_subarray_x = 4;
   int mats_per_subarray_y = 4;
@@ -351,6 +342,9 @@ public:
   void flush_dirty_row_buffers(Cycle cycle);
   // 析构/最终销毁路径关闭全部行为级 row buffer。
   void flush_all_row_buffers(Cycle cycle);
+  // 把所有已创建的稀疏热节点同步冷却到同一查询周期。历史峰值不变；
+  // 结束时调用后，thermal_avg_temp_c 和 thermal map 才具有统一时间截面。
+  void advance_thermal(Cycle cycle);
   void record_command_event(Command command, const DecodedAddress &decoded,
                             Cycle cycle, std::size_t payload_bytes = 0);
 

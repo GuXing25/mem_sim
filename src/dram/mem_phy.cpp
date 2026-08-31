@@ -167,8 +167,15 @@ void MemPhy::accept_command(const Request&, Command command, BusClass bus, Cycle
   stats_.hbm_column_commands += encoding.column_path && protocol() == MemPhyProtocol::Hbm ? 1 : 0;
   stats_.lpddr_wck_events += encoding.wck_event ? 1 : 0;
   stats_.lpddr_split_activate_events += encoding.split_activate ? 1 : 0;
-  command_fifo_.push_back({cycle + timing_delay(options_.command_pipeline_cycles)});
-  stats_.max_command_fifo = std::max<std::uint64_t>(stats_.max_command_fifo, command_fifo_.size());
+  // 零周期命令路径是组合直通，不应占用 FIFO 到下一次 tick。否则 depth=1
+  // 会错误阻止 HBM row/column 双发射，即使配置明确要求零流水延迟。
+  if (options_.command_pipeline_cycles > 0) {
+    command_fifo_.push_back(
+        {cycle + timing_delay(options_.command_pipeline_cycles)});
+    stats_.max_command_fifo =
+        std::max<std::uint64_t>(stats_.max_command_fifo,
+                                command_fifo_.size());
+  }
   if (command == Command::PDE || command == Command::SREFEN) {
     state_ = MemPhyState::LowPower;
   } else if (command == Command::PDX || command == Command::SREFEX) {

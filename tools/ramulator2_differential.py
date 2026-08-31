@@ -581,6 +581,8 @@ def main() -> int:
         "schema_version": 2,
         "scope": "external_reference_overlap_four_standards_commands_timing_maintenance",
         "relationship": "non_normative_external_reference",
+        "external_engine_executed": True,
+        "external_engine_entry": "python ramulator module and ControllerUnderTest harness",
         "standards": standard_results,
         "ramulator_root": str(root),
         "ramulator_reference": reference_identity,

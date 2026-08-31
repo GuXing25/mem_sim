@@ -236,6 +236,10 @@ void pwrite_all(int fd, const void* data, std::size_t size, std::uint64_t offset
       throw std::runtime_error("memory backend pwrite failed: " +
                                std::string(std::strerror(errno)));
     }
+    if (count == 0) {
+      throw std::runtime_error(
+          "memory backend pwrite made no progress");
+    }
     done += static_cast<std::size_t>(count);
   }
 }

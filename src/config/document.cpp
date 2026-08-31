@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <filesystem>
 #include <fstream>
 #include <map>
 #include <set>
@@ -45,7 +46,7 @@ int section_layer(const std::string& section,
   active = true;
   // v2 配置的覆盖方向与“默认 -> 特化 -> 实验覆盖”一致：
   // common 提供两种协议族都能理解的工程默认，family/standard/preset 逐层
-  // 特化，override 最后表达本次实验的偏离。这样 multistack_demo 才能真正
+  // 特化，override 最后表达本次实验的偏离。这样继承式多 Stack 用例才能真正
   // 覆盖 [system] 中的单 Stack 默认，而不是被公共段反向覆盖。
   if (section.empty()) return 10;
   if (section == "meta" || section == "model") return 0;
@@ -231,9 +232,41 @@ ConfigDocument load_document(const std::string& path) {
                                entry.section + "]");
     }
     seen_section_keys.insert(identity);
+    if (entry.section == "meta" && entry.key == "extends") {
+      document.extends.push_back(entry.value);
+      continue;
+    }
     document.entries.push_back(std::move(entry));
   }
   return document;
+}
+
+std::vector<ConfigDocument> load_document_tree(const std::string& path) {
+  namespace fs = std::filesystem;
+  std::vector<ConfigDocument> documents;
+  std::set<std::string> active;
+
+  auto visit = [&](auto&& self, const fs::path& input_path) -> void {
+    std::error_code error;
+    fs::path normalized = fs::weakly_canonical(input_path, error);
+    if (error) normalized = fs::absolute(input_path).lexically_normal();
+    const std::string identity = normalized.string();
+    if (!active.insert(identity).second) {
+      throw std::runtime_error("config inheritance cycle detected at: " + identity);
+    }
+
+    ConfigDocument document = load_document(identity);
+    for (const auto& base : document.extends) {
+      fs::path base_path(base);
+      if (base_path.is_relative()) base_path = normalized.parent_path() / base_path;
+      self(self, base_path);
+    }
+    documents.push_back(std::move(document));
+    active.erase(identity);
+  };
+
+  visit(visit, fs::path(path));
+  return documents;
 }
 
 Selection discover_selection(const std::vector<ConfigDocument>& documents,

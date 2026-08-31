@@ -283,6 +283,9 @@ def main() -> int:
     report = {
         "schema_version": 1,
         "scope": "dramsim3_older_hbm_idd_thermal_auxiliary_validation",
+        "external_engine_executed": True,
+        "external_engine_binary": str(dramsim_binary),
+        "external_thermal_binary": None if args.skip_thermal_runtime else str(thermal_binary),
         "dramsim3_root": str(dramsim_root), "dramsim3_commit": commit,
         "reference_config": str(hbm2_ini), "project_config": str(PROJECT_CONFIG),
         "project_preset": DRAMSIM3_HBM2[2],
@@ -292,7 +295,7 @@ def main() -> int:
         "claim_boundary": (
             "DRAMsim3 HBM2 is used only for shared legacy ACT/RD timing and IDD formulas. "
             "Thermal comparison checks shared-input qualitative heating because hbm_sim's "
-            "sparse RC network is not DRAMsim3's SuperLU floorplan solver. This does not "
+            "behavioral sparse thermal-coupling model is not DRAMsim3's SuperLU floorplan solver. This does not "
             "validate HBM3/HBM4/LPDDR5/LPDDR6 device power or temperature accuracy."),
     }
     if args.json_out:

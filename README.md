@@ -7,7 +7,7 @@ Mem PHY 与 Mem Stack，支持控制器时序研究、真实数据读写、
 
 ## 文档
 
-- [堆叠存储模型交付手册](堆叠存储模型交付手册.md)：交付总入口，覆盖总体设计、模块、构建、使用、验证、参数和输出指标。
+- [堆叠存储模型交付手册](堆叠存储模型交付手册.md)：项目总入口，覆盖总体设计、模块、构建、使用、验证、参数和输出指标。
 - [项目指南](文档/项目指南.md)：构建、配置、输出字段和代码索引。
 - [仿真使用手册](文档/仿真使用手册.md)：完整命令、全部输出指标、文件查看和定制条件。
 - [多 Stack 及存储后端](文档/多Stack及存储后端.md)：路由、隔离及三种后端。
@@ -15,7 +15,7 @@ Mem PHY 与 Mem Stack，支持控制器时序研究、真实数据读写、
 - [架构和构建流程](文档/架构和构建流程.md)：traits、profile、配置覆盖和 finalize。
 - [内存模型和平台](文档/内存模型和平台.md)：四类模型和平台对比。
 
-PHY、异步接口和长期校准路线已合并到交付手册，避免同一主题维护多份口径。目录内的
+PHY、异步接口和长期校准路线已合并到主手册，避免同一主题维护多份说明。目录内的
 `README.md` 只说明本目录，不重复根目录专题文档。
 
 ## 主要能力
@@ -38,7 +38,7 @@ PHY、异步接口和长期校准路线已合并到交付手册，避免同一�
 - 派生 stack、die、layer、tile、grid、subarray、mat、cell、microbump
   坐标，不预分配完整物理阵列。
 - 支持逐字节掩码、期望值比较、golden image 和 SECDED shadow。
-- 支持命令能量、稀疏三维 RC 热状态和 TSV 耦合入口。
+- 支持命令能量、行为级稀疏三维热状态和 TSV 耦合入口。
 
 ### 审计与验证
 
@@ -116,9 +116,9 @@ code /path/to/hbm_sim
 ## 快速运行
 
 ```bash
-./build-clang-debug/hbm_sim --config configs/hbm.cfg --standard hbm4 --preset baseline --requests 1024
-./build-clang-debug/hbm_sim --config configs/hbm.cfg --standard hbm3 --preset baseline --pattern random --requests 1024
-./build-clang-debug/hbm_sim --config configs/lpddr.cfg --standard lpddr6 --preset baseline --trace examples/sample.trace --requests 0
+./build-clang-debug/hbm_sim --config configs/hbm.cfg --standard hbm4 --requests 1024
+./build-clang-debug/hbm_sim --config configs/hbm.cfg --standard hbm3 --pattern random --requests 1024
+./build-clang-debug/hbm_sim --config configs/lpddr.cfg --standard lpddr6 --trace examples/sample.trace --requests 0
 ./build-clang-debug/hbm_sim --config configs/hbm.cfg --standard hbm4 \
   --stack-count 6 --requests 1024
 ```
@@ -132,17 +132,19 @@ lpddr5
 lpddr6
 ```
 
-普通用户只需要两个家族主配置：
+配置目录按用途分为四层：
 
 ```text
-configs/hbm.cfg       HBM3/HBM4 的完整配置入口
-configs/lpddr.cfg     LPDDR5/LPDDR6 的完整配置入口
+configs/hbm.cfg、configs/lpddr.cfg          两个标准家族主配置
+configs/validation/{hbm3,hbm4,lpddr5,lpddr6}.cfg  四个验证配置
+configs/usecases/{hbm,lpddr,hbm_nstacks,lpddr_nstacks}.cfg  四个完整用例
+configs/developer.cfg                         开发者研究变体
 ```
 
-其中 `[override]` 可自由修改已实现的架构、时序、控制策略、PHY、后端、ECC、
-功耗和热参数。未知算法不会回退到默认值，而会报错并列出已实现项。校准、差分、
-多 Stack demo 和研究变体均已收进这两个 master 的命名 preset；仓库不再维护第三份
-可执行 `.cfg`。配置分层、可信度模式和审计命令见 [configs/README.md](configs/README.md)。
+日常建模从两个主配置或四个完整用例开始。验证配置只用于固定共同参数面和回归口径；
+开发者配置保存合成参数、存储后端等研究变体。子配置通过 `[meta] extends` 继承主配置，
+CLI 按出现顺序继续覆盖。未知算法和不存在的 preset 会直接报错。配置分层、从零编写方法、
+逐项物理含义和检查命令见 [configs/README.md](configs/README.md)。
 
 四标准多 Stack 工程 demo：
 
@@ -225,7 +227,7 @@ ECC、功耗和热模型语义。选择建议见 [存储后端](文档/多Stack�
 ## 数据与 DFI
 
 ```bash
-./build-clang-debug/hbm_sim --config configs/hbm.cfg --standard hbm4 --preset baseline \
+./build-clang-debug/hbm_sim --config configs/hbm.cfg --standard hbm4 \
   --trace examples/data_check.trace --requests 0 \
   --dump-memory-image outputs/final_memory.txt \
   --dump-memory-csv outputs/final_memory.csv \
@@ -251,8 +253,8 @@ cmake --build build-clang-debug --parallel
 ctest --test-dir build-clang-debug --output-on-failure
 ```
 
-CTest 包含 CLI smoke、C++ 命令序列、PHY、Timing 边界、可视化、项目原生验收、
-CI 规模性能曲线和敏感性/不确定性检查，当前共 10 个入口（以 `ctest -N` 为准）。VS Code 中
+CTest 包含 CLI smoke、C++ 命令序列、PHY、Timing 边界、可视化、项目内一致性检查、
+CI 规模性能曲线和敏感性/不确定性检查；准确入口数以 `ctest -N` 为准。VS Code 中
 可运行 `hbm_sim: run all tests`；Make 兼容入口仍是
 `make CXX=/usr/bin/clang++-18 test`。
 

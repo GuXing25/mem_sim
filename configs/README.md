@@ -5,10 +5,19 @@
 - `configs/hbm.cfg`：HBM 家族，选择 HBM3 或 HBM4。
 - `configs/lpddr.cfg`：LPDDR 家族，选择 LPDDR5 或 LPDDR6。
 
-它们同时包含系统拓扑、workload、控制器、调度、行策略、地址映射、PHY、
+它们包含系统拓扑、workload、控制器、调度、行策略、地址映射、PHY、
 organization、timing、刷新/RFM、ECC、存储后端、功耗、热模型和输出参数。
-仓库内可执行 `.cfg` 只有这两个；校准、差分和演示口径均为其中的命名 preset。
-`profile_index.csv` 记录 preset 的来源与声明边界，`validation/*.csv` 仅是审计元数据。
+标准参数只在这两份主配置中定义；其他 cfg 通过 `[meta] extends` 继承主配置：
+
+```text
+2 份标准主配置：hbm.cfg、lpddr.cfg
+4 份验证配置：validation/hbm3.cfg、hbm4.cfg、lpddr5.cfg、lpddr6.cfg
+4 份用例配置：usecases/hbm.cfg、lpddr.cfg、hbm_nstacks.cfg、lpddr_nstacks.cfg
+1 份开发配置：developer.cfg
+```
+
+`profile_index.csv` 记录参数集的位置、来源和适用边界，`validation/*.csv` 是不参与
+模型解析的来源清单。
 
 ## 1. 最常用的命令
 
@@ -85,21 +94,39 @@ scheduler = fcfs
 这会生成一个“以 HBM4 命令/状态语义为基础的自定义模型”，不应称作某个真实
 HBM4 器件。建议同步修改 `[model] name`，并保持 `validation_mode = exploratory`。
 
-## 2.1 命名 preset 与四个工程 Demo
+## 2.1 配置继承、验证集和四个用例
 
 ```bash
-./build-clang-debug/hbm_sim --config configs/hbm.cfg --standard hbm4 --list-presets
-./build-clang-debug/hbm_sim --config configs/lpddr.cfg --standard lpddr6 --list-presets
+./build-clang-debug/hbm_sim --config configs/validation/hbm4.cfg \
+  --preset ramulator2_reference_1ch --check-config
+./build-clang-debug/hbm_sim --config configs/usecases/hbm_nstacks.cfg \
+  --stack-count 4 --check-config
 ```
 
-- `baseline`：当前标准派生基线。
-- `multistack_demo`：四种标准共有的多 Stack 工程入口。
-- `ramulator2_reference_1ch`：四种标准的受控单通道外部差分口径。
-- HBM4 另含 `validation_native_1ch`、`storage_demo` 和 synthetic vendor 回归分支。
-- HBM3 另含 `dramsim3_hbm2_common` 辅助验证分支。
-- LPDDR6 另含 `link_protection`、`low_dvfs_4267` 和 synthetic vendor 回归分支。
+继承规则示例：
 
-直接运行四个多 Stack demo：
+```ini
+[meta]
+extends = ../hbm.cfg  # 相对当前 cfg 所在目录解析
+```
+
+解析器先加载基础配置，再加载当前文件；循环继承会直接报错。覆盖优先级先看 section 层级，
+只有在同一层级内才由子文件覆盖父文件，所以用例差异应写在 `[override]`，不要写进普通
+`[system]` 去对抗父配置的 `[override]`。`--dump-resolved-config`
+可展开真正执行的全部值。HBM/LPDDR 主配置不再要求 `baseline` preset；选择标准即可运行。
+`ramulator2_reference_1ch`、`dramsim3_hbm2_common` 等只存在于四份验证配置，合成
+9000 Mbps 和链路保护压力参数只存在于 `developer.cfg`。
+
+四个可直接运行的 cfg：
+
+```bash
+./build-clang-debug/hbm_sim --config configs/usecases/hbm.cfg
+./build-clang-debug/hbm_sim --config configs/usecases/lpddr.cfg
+./build-clang-debug/hbm_sim --config configs/usecases/hbm_nstacks.cfg
+./build-clang-debug/hbm_sim --config configs/usecases/lpddr_nstacks.cfg
+```
+
+兼容的四标准包装脚本仍可使用，它们统一读取两份多实例用例配置：
 
 ```bash
 bash examples/multistack_demos/hbm3_nstack.sh
@@ -220,7 +247,64 @@ nCL = 30
 
 ## 9. 自定义实验的定位
 
-解析器仍能读取旧式平面 `key=value`，但仓库不再维护这种副本。新实验不要复制
-第三份完整配置；应从 `hbm.cfg` 或 `lpddr.cfg` 选择标准/preset，再通过 master 的
-`[override]`、CLI 或由实验工具生成的临时小型 `[override]` 叠加差异。每次运行都用
-`--dump-resolved-config` 把最终模型随结果归档。
+解析器仍能读取旧式平面 `key=value`，但仓库不再维护这种副本。普通自定义模型应修改
+两份主配置的 `[override]` 或使用 CLI；需要长期保存的实验可以新建一个带 `extends`
+的短配置。验证条件进入四份 validation cfg，非标准压力参数进入 `developer.cfg`，不要
+把它们重新放回标准 section。仓库测试要求 `configs/` 恰好保留公开的 11 份 cfg，因此个人
+实验文件应放在 `experiments/<名称>/` 或仓库外。每次运行都应用
+`--dump-resolved-config` 保存实际生效模型。
+
+## 10. 从头编写一份 cfg
+
+新文件通常不需要重写几百个默认值，只要继承对应家族并写差异。下面每个有效配置行都带
+同行注释，也是仓库测试要求的格式：
+
+```ini
+[meta]
+schema_version = 2  # 本解析器的配置语法版本；不代表 HBM/LPDDR 协议版本
+extends = ../hbm.cfg  # 父配置路径；相对当前 cfg 文件解析
+
+[model]
+name = my_hbm4_case  # 本次模型的可读名称，不参与算法选择
+base_standard = hbm4  # 基础标准；继承 hbm.cfg 时可选 hbm3/hbm4
+
+[override]
+requests = 4096  # Host 请求数量；一个请求可能拆成多个 DRAM transaction
+seed = 11  # 随机数种子；相同配置和种子产生相同随机请求序列
+stack_count = 2  # 独立存储实例数；每个实例有独立 ingress/后端/热状态
+stack_mapping = interleaved  # 系统地址按固定条带轮转到各 Stack
+stack_interleave_bytes = 256  # 地址条带大小，Byte；须与 line/transaction 粒度兼容
+mem_phy_mode = behavioral  # 启用带状态、FIFO、流水和 DFI event 的行为级 PHY
+dfi_version = 6.0.1  # 接口语义参考标签；本身不启用功能，也不表示 DFI 合规
+```
+
+若文件位于仓库外，`extends` 可写主配置的绝对路径；若需要便携，应保持相对路径并把文件放
+在稳定目录。HBM3/HBM4 不能继承 `lpddr.cfg`，LPDDR5/LPDDR6 不能继承 `hbm.cfg`。
+标准参数的长期修改应放在自己的 cfg；临时扫描可用 CLI。推荐执行：
+
+```bash
+./build-clang-debug/hbm_sim --config path/to/my_case.cfg \
+  --check-config --dump-resolved-config outputs/my_case/resolved.cfg
+```
+
+重点核对 `selected_standard`、`selected_preset`、`timing_profile`、`timing_source`、
+`stack_count`、`controller_count`、`mem_phy_mode`、刷新策略、后端和热模型。`seed` 只固定
+伪随机流量，不会固定线程调度或外部仿真器版本；本项目核心是单线程确定性事件循环，因此
+在同一二进制和配置下主要用于复现实验、定位首个异常事件和公平比较两个参数方案。
+
+## 11. 验证配置与外部仿真器的关系
+
+`configs/validation/*.cfg` 是本程序的对齐配置，不是 Ramulator2/DRAMsim3 配置。真正差分时：
+
+```text
+同一场景定义
+  ├─ hbm_sim validation cfg → 启动 hbm_sim → hbm_sim trace/stats
+  └─ 外部工具生成参考配置 → 启动 Ramulator2/DRAMsim3 → reference trace/stats
+                                         ↓
+                           规范化共同字段后再比较
+```
+
+报告必须记录 `external_engine_executed=true`、外部可执行文件、Git commit/dirty 状态和双方
+原始产物。仅在 hbm_sim 上运行一个名为 `ramulator2_reference_1ch` 的 preset，只能证明本项目
+能加载共同参数面，不能称为外部差分。参考模型不支持的 HBM4/LPDDR6、PHY、真实 payload、
+ECC、功耗热或多 Stack 特性应标记为 unsupported，不能为了数值相同而删掉。

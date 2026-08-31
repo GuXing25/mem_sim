@@ -103,8 +103,12 @@ def main() -> int:
     standards = [item.strip().lower() for item in args.standards.split(",") if item.strip()]
     if not binary.is_file():
         raise SystemExit(f"binary not found: {binary}")
+    if not standards or len(standards) != len(set(standards)):
+        raise SystemExit("standards must contain a non-empty, unique list")
     if any(item not in REFERENCE_PRESETS for item in standards):
         raise SystemExit(f"unsupported standards: {standards}")
+    if args.requests < 1:
+        raise SystemExit("requests must be positive")
     if not 0.0 < args.fraction < 1.0 or args.samples < 3:
         raise SystemExit("fraction must be in (0,1) and samples must be >= 3")
 

@@ -4,9 +4,32 @@
 #include "hbm_sim/core/addr_map.hpp"
 
 #include <algorithm>
+#include <limits>
 #include <stdexcept>
+#include <string>
 
 namespace hbm_sim {
+namespace {
+
+std::uint64_t checked_multiply(std::uint64_t lhs, std::uint64_t rhs,
+                               const char *context) {
+  if (lhs != 0 && rhs > std::numeric_limits<std::uint64_t>::max() / lhs) {
+    throw std::overflow_error(std::string(context) +
+                              " exceeds Address space");
+  }
+  return lhs * rhs;
+}
+
+std::uint64_t checked_add(std::uint64_t lhs, std::uint64_t rhs,
+                          const char *context) {
+  if (rhs > std::numeric_limits<std::uint64_t>::max() - lhs) {
+    throw std::overflow_error(std::string(context) +
+                              " exceeds Address space");
+  }
+  return lhs + rhs;
+}
+
+} // namespace
 
 StackAddressMapper::StackAddressMapper(int stack_count,
                                        std::uint64_t interleave_bytes,
@@ -36,7 +59,10 @@ StackAddress StackAddressMapper::decode(Address system_address) const {
   const std::uint64_t offset = system_address % interleave_bytes_;
   const int stack = static_cast<int>(stripe % static_cast<std::uint64_t>(stack_count_));
   const std::uint64_t local_stripe = stripe / static_cast<std::uint64_t>(stack_count_);
-  const Address local_address = local_stripe * interleave_bytes_ + offset;
+  const Address local_address = checked_add(
+      checked_multiply(local_stripe, interleave_bytes_,
+                       "decoded stack-local address"),
+      offset, "decoded stack-local address");
   if (stack_capacity_bytes_ != 0 && local_address >= stack_capacity_bytes_) {
     throw std::out_of_range("system address exceeds aggregate multi-stack capacity");
   }
@@ -53,13 +79,22 @@ Address StackAddressMapper::encode(int stack, Address local_address) const {
     if (local_address >= stack_capacity_bytes_) {
       throw std::out_of_range("local address exceeds stack capacity");
     }
-    return static_cast<Address>(stack) * stack_capacity_bytes_ + local_address;
+    return checked_add(
+        checked_multiply(static_cast<Address>(stack), stack_capacity_bytes_,
+                         "blocked system address"),
+        local_address, "blocked system address");
   }
   const std::uint64_t local_stripe = local_address / interleave_bytes_;
   const std::uint64_t offset = local_address % interleave_bytes_;
-  const std::uint64_t stripe = local_stripe * static_cast<std::uint64_t>(stack_count_) +
-                               static_cast<std::uint64_t>(stack);
-  return stripe * interleave_bytes_ + offset;
+  const std::uint64_t stripe = checked_add(
+      checked_multiply(local_stripe,
+                       static_cast<std::uint64_t>(stack_count_),
+                       "interleaved system stripe"),
+      static_cast<std::uint64_t>(stack), "interleaved system stripe");
+  return checked_add(
+      checked_multiply(stripe, interleave_bytes_,
+                       "interleaved system address"),
+      offset, "interleaved system address");
 }
 
 // 从低位开始按维度大小取模，并把商留给下一层维度。可以把它理解成把

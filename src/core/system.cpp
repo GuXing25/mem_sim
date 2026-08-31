@@ -282,7 +282,7 @@ MemorySystem::MemorySystem(DramSpec spec, MemorySystemOptions options)
       controller_options.memory_image =
           memory_images_[static_cast<std::size_t>(stack)];
       controller_options.global_channel_id = channel;
-      // MemorySystem 需要先接收 Controller completion，才能按交付模式丢弃、
+      // MemorySystem 需要先接收 Controller completion，才能按响应保留模式丢弃、
       // 暴露 transaction，或聚合 HostResponse。
       controller_options.retain_responses = true;
       controllers_.emplace_back(channel_spec, controller_options);

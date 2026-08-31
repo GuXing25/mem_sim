@@ -50,7 +50,7 @@ $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
 run: $(TARGET)
-	./$(TARGET) --config configs/hbm.cfg --standard hbm4 --preset baseline \
+	./$(TARGET) --config configs/hbm.cfg --standard hbm4 \
 		--pattern stream --requests 10000
 
 # examples/test 都显式用 bash 运行，避免依赖脚本文件执行位。

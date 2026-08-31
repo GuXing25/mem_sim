@@ -143,12 +143,19 @@ RefreshManager::seed_refresh_batch(const DramSpec &spec, int rank,
                                    RankRefreshState &state) {
   std::vector<MaintenanceCommand> commands;
   if (spec.refresh_policy == MaintenancePolicyKind::AllBank) {
-    DecodedAddress d;
-    d.rank = rank;
-    // all-bank refresh 在每个 Controller 的 channel 内执行。这里
-    // decoded.channel 先为 0； MemorySystem 多 controller 模式下每个 channel
-    // controller 各自拥有本地坐标。
-    commands.push_back(MaintenanceCommand{Command::REFAB, d});
+    // Controller 的 spec 已在 MemorySystem 中本地化为单 channel，但一个
+    // controller 仍可能包含多个 pseudo-channel/SID。CommandState 对 REFab
+    // 的 rank scope 也包含 PC/SID，因此每个 scope 都需要一条命令；只生成
+    // PC0/SID0 会遗漏其余 bank。
+    for (int pc = 0; pc < std::max(1, spec.org.pseudo_channels); ++pc) {
+      for (int sid = 0; sid < std::max(1, spec.org.sids); ++sid) {
+        DecodedAddress d;
+        d.pseudo_channel = pc;
+        d.sid = sid;
+        d.rank = rank;
+        commands.push_back(MaintenanceCommand{Command::REFAB, d});
+      }
+    }
     return commands;
   }
 

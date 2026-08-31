@@ -20,7 +20,8 @@ using Address = std::uint64_t;
 enum class RequestType {
   // 读请求最终由 RD 完成，并计入 completed_reads、read_bytes 和读延迟。
   Read,
-  // 写请求最终由 WR 完成；当前模型把写完成延迟简化为发出 WR 后 1 cycle。
+  // 写请求最终由 WR/WRA 完成。Direct PHY 在发出后 1 cycle 完成；Behavioral
+  // PHY 还会计入写数据时序与已配置的 pipeline latency。
   Write,
   // 控制器内部维护请求，例如 REFpb/RFMpb。它不来自上层 workload，也不计入
   // read/write bandwidth，但会占用命令总线和 timing scope。
@@ -58,7 +59,8 @@ enum class Command {
   RD,
   // 真正的数据写列命令。发出后，请求立即按简化写完成路径统计。
   WR,
-  // Read/write with auto-precharge。当前调度器还不主动生成，先用于完整命令集承载。
+  // Read/write with auto-precharge。closed_page/closed_cap 行策略会主动生成，
+  // 数据完成后关闭目标 bank。
   RDA,
   WRA,
   // All-bank / per-bank refresh。REFPB 主要用于 HBM per-bank refresh。

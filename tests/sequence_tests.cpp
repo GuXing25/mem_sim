@@ -9,6 +9,7 @@
 #include <iostream>
 #include <limits>
 #include <memory>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -1403,6 +1404,31 @@ void test_active_six_stack_memory_system_routing_qos_and_stats() {
     require(decoded.stack == stack && decoded.local_address == 0x180,
             "blocked global-to-stack address mapping failed round trip");
   }
+
+  bool blocked_overflow_rejected = false;
+  try {
+    hbm_sim::StackAddressMapper huge_blocked(
+        2, 64, std::numeric_limits<hbm_sim::Address>::max(),
+        hbm_sim::StackMappingKind::Blocked);
+    (void)huge_blocked.encode(
+        1, std::numeric_limits<hbm_sim::Address>::max() - 1);
+  } catch (const std::overflow_error &) {
+    blocked_overflow_rejected = true;
+  }
+  require(blocked_overflow_rejected,
+          "blocked stack mapping silently wrapped the system address");
+
+  bool interleaved_overflow_rejected = false;
+  try {
+    hbm_sim::StackAddressMapper huge_interleaved(
+        2, 1, 0, hbm_sim::StackMappingKind::Interleaved);
+    (void)huge_interleaved.encode(
+        1, std::numeric_limits<hbm_sim::Address>::max());
+  } catch (const std::overflow_error &) {
+    interleaved_overflow_rejected = true;
+  }
+  require(interleaved_overflow_rejected,
+          "interleaved stack mapping silently wrapped the system address");
 }
 
 void test_write_forward_and_coalesce() {
@@ -2717,6 +2743,60 @@ void test_physical_storage_coordinates_and_stats() {
           "physical storage stats did not count line read/write accesses");
 }
 
+void test_memory_image_cross_line_read_uses_each_line_address() {
+  DramSpec spec = hbm_sim::make_spec("hbm4");
+  spec.org.line_size = 16;
+  hbm_sim::MemoryImage image(spec);
+  hbm_sim::AddressMapper mapper(spec);
+  const DecodedAddress first = mapper.decode(0);
+  const DecodedAddress second = mapper.decode(16);
+  const hbm_sim::ByteVector a(16, 0x11);
+  const hbm_sim::ByteVector b(16, 0x22);
+
+  image.activate_row(first, 1);
+  image.write(0, a, nullptr, &first, 1, 2);
+  image.write(16, b, nullptr, &second, 2, 3);
+
+  bool initialized = false;
+  const hbm_sim::ByteVector actual = image.read(8, 16, &initialized, &first);
+  hbm_sim::ByteVector expected(8, 0x11);
+  expected.insert(expected.end(), 8, 0x22);
+  const hbm_sim::ByteVector init_mask =
+      image.read_initialized_mask(8, 16, &first);
+  require(initialized && actual == expected,
+          "cross-line MemoryImage read reused the first line's decoded row");
+  require(std::all_of(init_mask.begin(), init_mask.end(),
+                      [](std::uint8_t value) { return value == 0xff; }),
+          "cross-line initialized mask reused the first line's decoded row");
+}
+
+void test_all_bank_refresh_covers_every_pc_and_sid() {
+  DramSpec spec = hbm_sim::make_spec("hbm4");
+  spec.org.channels = 1;
+  spec.org.pseudo_channels = 2;
+  spec.org.sids = 2;
+  spec.org.ranks = 1;
+  spec.org.bank_groups = 1;
+  spec.org.banks_per_group = 1;
+  spec.refresh_policy = hbm_sim::MaintenancePolicyKind::AllBank;
+  spec.timing.nREFI = 1;
+
+  hbm_sim::RefreshManager manager;
+  manager.reset(spec, 0);
+  const auto result = manager.tick(
+      spec, static_cast<hbm_sim::Cycle>(spec.tick_multiplier), false, false);
+  require(result.started_batch && result.commands.size() == 4,
+          "all-bank refresh did not cover every pseudo-channel/SID scope");
+  std::set<std::pair<int, int>> scopes;
+  for (const auto &command : result.commands) {
+    require(command.command == hbm_sim::Command::REFAB,
+            "all-bank refresh batch contains a non-REFab command");
+    scopes.emplace(command.decoded.pseudo_channel, command.decoded.sid);
+  }
+  require(scopes.size() == 4,
+          "all-bank refresh generated duplicate PC/SID scopes");
+}
+
 void test_passive_multistack_memory_model_isolation() {
   DramSpec spec = hbm_sim::make_spec("hbm4");
   spec.org.channels = 1;
@@ -2929,6 +3009,20 @@ void test_floorplan_power_and_thermal_model() {
   require(std::fabs(cooled.thermal_peak_temp_c - historical_peak) < 1e-9 &&
               cooled.thermal_avg_temp_c < cooled.thermal_peak_temp_c,
           "thermal peak was recomputed from the cooled final-state map");
+
+  hbm_sim::StorageModelOptions synchronized = cooling;
+  synchronized.thermal_cooling_per_cycle = 0.01;
+  hbm_sim::MemoryImage synchronized_image(spec, 0, synchronized);
+  synchronized_image.record_command_event(Command::REFAB, decoded, 10);
+  const double before_sync =
+      synchronized_image.storage_stats().thermal_avg_temp_c;
+  synchronized_image.advance_thermal(110);
+  const auto after_sync = synchronized_image.storage_stats();
+  require(after_sync.thermal_avg_temp_c < before_sync &&
+              std::fabs(after_sync.thermal_avg_temp_c -
+                        synchronized.thermal_ambient_c) < 1e-9 &&
+              after_sync.thermal_peak_temp_c > after_sync.thermal_avg_temp_c,
+          "explicit thermal synchronization did not cool all nodes to one final cycle");
 
   tuned.power_enabled = false;
   hbm_sim::MemoryImage power_off_image(spec, 0, tuned);
@@ -3447,6 +3541,49 @@ void test_data_trace_payload_parsing() {
           "stacks");
 }
 
+void test_data_address_range_overflow_is_rejected() {
+  DramSpec spec = hbm_sim::make_spec("hbm4");
+  hbm_sim::MemoryImage image(spec);
+  const hbm_sim::Address last =
+      std::numeric_limits<hbm_sim::Address>::max();
+
+  bool read_rejected = false;
+  try {
+    (void)image.read(last, 2);
+  } catch (const std::overflow_error &) {
+    read_rejected = true;
+  }
+  require(read_rejected,
+          "MemoryImage accepted a read that wrapped Address space");
+
+  bool write_rejected = false;
+  try {
+    image.write(last, hbm_sim::ByteVector(2, 0xaa));
+  } catch (const std::overflow_error &) {
+    write_rejected = true;
+  }
+  require(write_rejected,
+          "MemoryImage accepted a write that wrapped Address space");
+
+  const std::string path = "/tmp/hbm_sim_overflow_burst.trace";
+  {
+    std::ofstream out(path);
+    out << "BR 0xffffffffffffffe0 len=64\n";
+  }
+  hbm_sim::TrafficOptions options;
+  options.trace_path = path;
+  options.requests = 0;
+  bool burst_rejected = false;
+  try {
+    (void)hbm_sim::generate_traffic(spec, options);
+  } catch (const std::overflow_error &) {
+    burst_rejected = true;
+  }
+  require(burst_rejected,
+          "trace frontend accepted a burst that wrapped Address space");
+  std::remove(path.c_str());
+}
+
 void remove_backend_files(const std::string &data_path) {
   std::remove(data_path.c_str());
   std::remove((data_path + ".init").c_str());
@@ -3616,6 +3753,8 @@ int main() {
   test_overlapping_masked_coalesce_preserves_byte_order();
   test_real_storage_masked_write_correctness();
   test_physical_storage_coordinates_and_stats();
+  test_memory_image_cross_line_read_uses_each_line_address();
+  test_all_bank_refresh_covers_every_pc_and_sid();
   test_passive_multistack_memory_model_isolation();
   test_floorplan_power_and_thermal_model();
   test_dramsim3_idd_power_and_grid_thermal();
@@ -3627,6 +3766,7 @@ int main() {
   test_physical_storage_multichannel_memory_system();
   test_memory_image_text_checkpoint_and_mismatch_report();
   test_data_trace_payload_parsing();
+  test_data_address_range_overflow_is_rejected();
   test_streaming_traffic_source();
   test_file_backed_memory_backend(hbm_sim::MemoryBackendKind::MmapSparse,
                                   "mmap");

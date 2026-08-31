@@ -410,6 +410,7 @@ void Controller::finalize_run_stats() {
     stats_.phy_total_write_service_cycles = phy.total_write_service_cycles;
   }
   if (memory_image_) {
+    memory_image_->advance_thermal(clk_);
     apply_physical_storage_stats(stats_, memory_image_->storage_stats());
   }
   stats_.total_addressable_lines = spec_.total_addressable_lines();
@@ -627,8 +628,8 @@ void Controller::complete_pending() {
         responses_.push_back(std::move(response));
       }
     } else if (it->type == RequestType::Write) {
-      // 写请求当前采用简化完成语义：WR/WRA 发出后 1 cycle 即完成。
-      // 这对带宽/命令调度研究足够轻量，若后续研究写响应时序，可在这里扩展。
+      // completion 已在发射路径确定：Direct PHY 使用发出后 1 cycle 的轻量
+      // 语义，Behavioral PHY 则等待 MemPhy 报告包含写数据时序的完成事件。
       stats_.completed_writes++;
       if (!it->bypass_dram) {
         const std::size_t payload_bytes = request_data_size(spec_, *it);

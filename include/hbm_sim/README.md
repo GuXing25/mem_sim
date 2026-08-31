@@ -5,7 +5,7 @@
 `include/hbm_sim/` 和 `src/` 使用同一套职责分层。这样做的目的不是制造目录深度，而是让“接口定义在哪里”和“实现代码在哪里”一一对应，后续继续扩展 JEDEC/vendor timing、HBM4 细协议或 LPDDR6 链路行为时可以快速找到入口。
 
 - `core/`：项目通用基础类型、请求结构、地址映射和多 controller memory system。这里是其他模块共享的最小核心。
-- `core/data.hpp`：真实堆叠存储模型接口。命名保持短而具体：`MemoryImage` 表示运行时稀疏镜像，`DataBlock` 表示一个 payload block，`StorageKey` 表示 bank/row/column 坐标，`PhysicalAddress` 表示 floorplan/subarray/mat/cell/microbump 坐标；同层还承载 SECDED shadow、错误注入统计和 TSV-aware 稀疏 3D RC 热模型入口。
+- `core/data.hpp`：真实堆叠存储模型接口。命名保持短而具体：`MemoryImage` 表示运行时稀疏镜像，`DataBlock` 表示一个 payload block，`StorageKey` 表示 bank/row/column 坐标，`PhysicalAddress` 表示 floorplan/subarray/mat/cell/microbump 坐标；同层还承载 SECDED shadow、错误注入统计和 TSV-aware 行为级稀疏三维热模型入口。
 - `dram/`：DRAM 标准、器件组织、timing table、命令语义、命令合法性和接口开销模型。新增标准字段或校准 JEDEC/vendor 表时优先看这里。
 - `controller/`：控制器侧策略和执行路径，包括 scheduler、row policy、refresh/RFM manager、timing engine、命令执行器和统一命令事件。
 - `frontend/`：synthetic traffic、trace 和初始化/训练控制序列入口。
