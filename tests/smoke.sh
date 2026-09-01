@@ -128,7 +128,14 @@ run_and_check() {
   grep -Eq "^dfi_trace[[:space:]]*:" <<<"$out"
   grep -Eq "^dfi_signal_trace[[:space:]]*:" <<<"$out"
   grep -Eq "^response_trace[[:space:]]*:" <<<"$out"
+  grep -Eq "^transaction_response_trace[[:space:]]*:" <<<"$out"
+  grep -Eq "^response_delivery_mode[[:space:]]*:" <<<"$out"
+  grep -Eq "^host_response_queue_capacity[[:space:]]*:" <<<"$out"
+  grep -Eq "^transaction_response_queue_capacity[[:space:]]*:" <<<"$out"
+  grep -Eq "^host_responses_consumed[[:space:]]*:" <<<"$out"
   grep -Eq "^host_responses_exported[[:space:]]*:" <<<"$out"
+  grep -Eq "^transaction_responses_consumed[[:space:]]*:" <<<"$out"
+  grep -Eq "^transaction_responses_exported[[:space:]]*:" <<<"$out"
 }
 
 # 覆盖 HBM 双总线、随机/顺序流量，以及 LPDDR split activate + WCK/CAS 路径。
@@ -207,7 +214,44 @@ grep -Eq '^host_request_id,type,system_address,transaction_count' "$response_csv
 grep -Eq '^host_responses_exported[[:space:]]*: 4' "$response_out"
 grep -Eq '^remaining_requests[[:space:]]*: 0' "$response_out"
 grep -Eq '^hit_cycle_limit[[:space:]]*: false' "$response_out"
+
+# Both 模式同时导出乱序子事务和重组后的 HostResponse。容量 1 会把 ready
+# 约束传播到完成收集；CLI 每拍在线消费，因此不会靠无限队列掩盖死锁。
+transaction_csv="$response_dir/transaction_responses.csv"
+progress_log="$response_dir/progress.log"
+"$HBM_SIM_BIN" --standard hbm4 --requests 4 --read-ratio 100 \
+  --max-cycles 10000 --stats-view summary --progress-interval 20 \
+  --response-delivery-mode both --host-response-queue-capacity 1 \
+  --transaction-response-queue-capacity 1 \
+  --response-trace "$response_csv" \
+  --transaction-response-trace "$transaction_csv" \
+  >"$response_out" 2>"$progress_log"
+[[ "$(($(wc -l <"$response_csv") - 1))" -eq 4 ]]
+[[ "$(($(wc -l <"$transaction_csv") - 1))" -eq 8 ]]
+grep -Eq '^request_id,host_request_id,transaction_index,transaction_count' \
+  "$transaction_csv"
+grep -Eq '^# ===== 01 MODEL IDENTITY =====$' "$response_out"
+grep -Eq '^response_delivery_mode[[:space:]]*: both$' "$response_out"
+grep -Eq '^host_responses_consumed[[:space:]]*: 4$' "$response_out"
+grep -Eq '^transaction_responses_consumed[[:space:]]*: 8$' "$response_out"
+grep -Eq '^progress cycle=[0-9]+ completed_reads=' "$progress_log"
+if "$HBM_SIM_BIN" --standard hbm4 --response-delivery-mode transaction \
+    --response-trace "$response_csv" --check-config \
+    >"$response_dir/incompatible.out" 2>&1; then
+  echo "expected incompatible host trace/transaction response mode to fail" >&2
+  exit 1
+fi
+grep -F 'host response_trace requires response_delivery_mode=host or both' \
+  "$response_dir/incompatible.out" >/dev/null
 rm -rf "$response_dir"
+
+bounded_random_out="$(mktemp)"
+"$HBM_SIM_BIN" --standard hbm4 --pattern random --requests 16 \
+  --random-address-space-bytes 4096 --stats-view summary \
+  >"$bounded_random_out"
+grep -Eq '^random_address_space_bytes[[:space:]]*: 4096$' "$bounded_random_out"
+grep -Eq '^remaining_requests[[:space:]]*: 0$' "$bounded_random_out"
+rm -f "$bounded_random_out"
 "$HBM_SIM_BIN" --standard hbm4 --requests 2 \
   --cmd-trace "$auto_output_root/nested/commands.csv" \
   --dfi-trace "$auto_output_root/nested/dfi.csv" \

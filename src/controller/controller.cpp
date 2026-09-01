@@ -292,6 +292,12 @@ void Controller::run(std::vector<Request> requests, Cycle max_cycles) {
 }
 
 void Controller::run(RequestSource &source, Cycle max_cycles) {
+  run(source, max_cycles, 0, {});
+}
+
+void Controller::run(RequestSource &source, Cycle max_cycles,
+                     Cycle progress_interval,
+                     RunProgressConsumer progress_consumer) {
   Request pending_request;
   bool has_pending_request = false;
   bool source_done = false;
@@ -328,6 +334,15 @@ void Controller::run(RequestSource &source, Cycle max_cycles) {
       stats_.injection_stall_cycles++;
     }
     tick();
+    if (progress_consumer && progress_interval != 0 &&
+        clk_ % progress_interval == 0) {
+      std::uint64_t remaining = has_pending_request ? 1 : 0;
+      if (!source_done) {
+        remaining += source.remaining_hint().value_or(1);
+      }
+      progress_consumer({clk_, stats_.completed_reads,
+                         stats_.completed_writes, remaining});
+    }
   }
 
   finalize_run_stats();

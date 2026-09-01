@@ -24,6 +24,9 @@ struct TrafficOptions {
   int read_ratio = 100;
   // random 模式的随机种子，保证实验可复现。
   std::uint64_t seed = 1;
+  // random 模式允许使用的聚合系统地址空间，单位 byte。0 表示按标准单 Stack
+  // 容量乘 stack_count；非 0 值可与小容量文件后端配合，避免随机地址越界。
+  std::uint64_t random_address_space_bytes = 0;
   // stream 模式下相邻请求的 byte stride，默认 64B 即连续 cache line。
   std::uint64_t addr_stride = 64;
   // frontend 注入间隔，单位为 controller tick。0 表示所有请求都在 cycle 0

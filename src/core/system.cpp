@@ -875,23 +875,32 @@ void MemorySystem::run(std::vector<Request> requests, Cycle max_cycles) {
 }
 
 void MemorySystem::run(RequestSource &source, Cycle max_cycles) {
-  run_source(source, max_cycles, nullptr);
+  run_source(source, max_cycles, nullptr, 0, nullptr);
+}
+
+void MemorySystem::run(RequestSource &source, Cycle max_cycles,
+                       Cycle progress_interval,
+                       RunProgressConsumer progress_consumer) {
+  run_source(source, max_cycles, nullptr, progress_interval,
+             progress_consumer ? &progress_consumer : nullptr);
 }
 
 void MemorySystem::run(RequestSource &source, Cycle max_cycles,
                        HostResponseConsumer consumer) {
   if (!consumer) {
-    run_source(source, max_cycles, nullptr);
+    run_source(source, max_cycles, nullptr, 0, nullptr);
     return;
   }
   // 这个 overload 的契约就是把完整 host response 交给 consumer；不同时保留
   // transaction 视图，避免无人消费的调试队列反过来阻塞 host 路径。
   set_response_delivery_mode(ResponseDeliveryMode::HostOnly);
-  run_source(source, max_cycles, &consumer);
+  run_source(source, max_cycles, &consumer, 0, nullptr);
 }
 
 void MemorySystem::run_source(RequestSource &source, Cycle max_cycles,
-                              HostResponseConsumer *consumer) {
+                              HostResponseConsumer *consumer,
+                              Cycle progress_interval,
+                              RunProgressConsumer *progress_consumer) {
   Request pending_request;
   bool has_pending_request = false;
   bool source_done = false;
@@ -929,6 +938,20 @@ void MemorySystem::run_source(RequestSource &source, Cycle max_cycles,
       frontend_stall_cycles_++;
     }
     tick();
+    if (progress_consumer != nullptr && progress_interval != 0 &&
+        clk_ % progress_interval == 0) {
+      RunProgress progress;
+      progress.cycle = clk_;
+      for (const Controller &controller : controllers_) {
+        progress.completed_reads += controller.stats().completed_reads;
+        progress.completed_writes += controller.stats().completed_writes;
+      }
+      progress.remaining_frontend = has_pending_request ? 1 : 0;
+      if (!source_done) {
+        progress.remaining_frontend += source.remaining_hint().value_or(1);
+      }
+      (*progress_consumer)(progress);
+    }
     if (consumer != nullptr) {
       while (has_response()) {
         HostResponse response = pop_response();

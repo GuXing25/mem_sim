@@ -66,15 +66,26 @@ struct Cli {
   std::uint64_t requests = 10000;
   int read_ratio = 100;
   std::uint64_t seed = 1;
+  std::uint64_t random_address_space_bytes = 0;
   std::uint64_t addr_stride = 64;
   hbm_sim::Cycle inject_interval = 0;
   std::string init_sequence = "none";
   hbm_sim::Cycle init_sequence_interval = 1;
   hbm_sim::Cycle max_cycles = 100000000;
+  hbm_sim::Cycle progress_interval = 0;
+  // full 保留全部稳定 key，并显示分类边界；summary 只显示身份、完成性和
+  // 关键性能，适合终端日常查看。
+  std::string stats_view = "full";
   bool single_controller = false;
   bool strict_timing_table = false;
   std::string cmd_trace_path;
   std::string response_trace_path;
+  std::string transaction_response_trace_path;
+  hbm_sim::ResponseDeliveryMode response_delivery_mode =
+      hbm_sim::ResponseDeliveryMode::Disabled;
+  bool response_delivery_mode_explicit = false;
+  std::size_t host_response_queue_capacity = 0;
+  std::size_t transaction_response_queue_capacity = 0;
   std::string dfi_trace_path;
   std::string dfi_signal_trace_path;
   std::string timing_table_path;
@@ -123,6 +134,8 @@ bool parse_bool(const std::string& value) {
 }
 
 std::string lower_value(std::string value);
+hbm_sim::ResponseDeliveryMode parse_response_delivery_mode(
+    const std::string& value);
 
 // 配置文件中的 timing 覆盖值不总是 vendor 数据：校准模板经常会显式写出
 // research_default 数字，方便审计和替换。这个解析函数让配置能声明后续
@@ -598,6 +611,8 @@ void apply_option(Cli& cli, const std::string& raw_key, const std::string& value
     cli.read_ratio = std::stoi(value);
   } else if (key == "seed") {
     cli.seed = parse_u64(value);
+  } else if (key == "random_address_space_bytes") {
+    cli.random_address_space_bytes = parse_u64(value);
   } else if (key == "addr_stride") {
     cli.addr_stride = parse_u64(value);
   } else if (key == "inject_interval") {
@@ -642,6 +657,14 @@ void apply_option(Cli& cli, const std::string& raw_key, const std::string& value
     cli.controller.write_high_watermark = std::stod(value);
   } else if (key == "max_cycles") {
     cli.max_cycles = parse_u64(value);
+  } else if (key == "stats_view") {
+    cli.stats_view = lower_value(value);
+    if (cli.stats_view != "full" && cli.stats_view != "summary") {
+      throw std::invalid_argument(
+          "invalid stats_view: " + value + " (expected summary or full)");
+    }
+  } else if (key == "progress_interval") {
+    cli.progress_interval = parse_u64(value);
   } else if (key == "single_controller") {
     cli.single_controller = parse_bool(value);
   } else if (key == "scheduler") {
@@ -671,6 +694,18 @@ void apply_option(Cli& cli, const std::string& raw_key, const std::string& value
   } else if (key == "response_trace" || key == "response_trace_path" ||
              key == "host_response_trace") {
     cli.response_trace_path = value;
+  } else if (key == "transaction_response_trace" ||
+             key == "transaction_response_trace_path") {
+    cli.transaction_response_trace_path = value;
+  } else if (key == "response_delivery_mode") {
+    cli.response_delivery_mode = parse_response_delivery_mode(value);
+    cli.response_delivery_mode_explicit = true;
+  } else if (key == "host_response_queue_capacity") {
+    cli.host_response_queue_capacity =
+        static_cast<std::size_t>(parse_u64(value));
+  } else if (key == "transaction_response_queue_capacity") {
+    cli.transaction_response_queue_capacity =
+        static_cast<std::size_t>(parse_u64(value));
   } else if (key == "dfi_trace" || key == "dfi_trace_path" || key == "dump_dfi_trace") {
     cli.dfi_trace_path = value;
   } else if (key == "dfi_signal_trace" || key == "dfi_signal_trace_path" ||
@@ -1023,6 +1058,86 @@ void print_field(std::ostream& os, const char* key, const T& value) {
   os << std::left << std::setw(hbm_sim::kOutputKeyWidth) << key << ": " << std::right << value << '\n';
 }
 
+void print_section(std::ostream& os, int index, const char* title) {
+  os << "\n# ===== " << std::setfill('0') << std::setw(2) << index << ' '
+     << title << " =====\n" << std::setfill(' ');
+}
+
+const char* response_delivery_mode_name(hbm_sim::ResponseDeliveryMode mode) {
+  switch (mode) {
+    case hbm_sim::ResponseDeliveryMode::Disabled:
+      return "disabled";
+    case hbm_sim::ResponseDeliveryMode::HostOnly:
+      return "host";
+    case hbm_sim::ResponseDeliveryMode::TransactionOnly:
+      return "transaction";
+    case hbm_sim::ResponseDeliveryMode::Both:
+      return "both";
+  }
+  return "disabled";
+}
+
+hbm_sim::ResponseDeliveryMode parse_response_delivery_mode(
+    const std::string& value) {
+  const std::string normalized = lower_value(value);
+  if (normalized == "disabled" || normalized == "off" ||
+      normalized == "none") {
+    return hbm_sim::ResponseDeliveryMode::Disabled;
+  }
+  if (normalized == "host" || normalized == "host_only" ||
+      normalized == "hostonly") {
+    return hbm_sim::ResponseDeliveryMode::HostOnly;
+  }
+  if (normalized == "transaction" || normalized == "transaction_only" ||
+      normalized == "transactiononly") {
+    return hbm_sim::ResponseDeliveryMode::TransactionOnly;
+  }
+  if (normalized == "both") return hbm_sim::ResponseDeliveryMode::Both;
+  throw std::invalid_argument(
+      "invalid response_delivery_mode: " + value +
+      " (expected disabled, host, transaction, or both)");
+}
+
+bool response_mode_has_host(hbm_sim::ResponseDeliveryMode mode) {
+  return mode == hbm_sim::ResponseDeliveryMode::HostOnly ||
+         mode == hbm_sim::ResponseDeliveryMode::Both;
+}
+
+bool response_mode_has_transaction(hbm_sim::ResponseDeliveryMode mode) {
+  return mode == hbm_sim::ResponseDeliveryMode::TransactionOnly ||
+         mode == hbm_sim::ResponseDeliveryMode::Both;
+}
+
+void resolve_response_delivery(Cli& cli) {
+  const bool wants_host_trace = !cli.response_trace_path.empty();
+  const bool wants_transaction_trace =
+      !cli.transaction_response_trace_path.empty();
+  // disabled 是零成本默认值；一旦用户要求导出 trace，就按 trace 推导实际
+  // 视图。这也保证 dump-resolved-config 中的 disabled 不会阻止后续追加 trace。
+  if (!cli.response_delivery_mode_explicit ||
+      cli.response_delivery_mode == hbm_sim::ResponseDeliveryMode::Disabled) {
+    if (wants_host_trace && wants_transaction_trace) {
+      cli.response_delivery_mode = hbm_sim::ResponseDeliveryMode::Both;
+    } else if (wants_host_trace) {
+      cli.response_delivery_mode = hbm_sim::ResponseDeliveryMode::HostOnly;
+    } else if (wants_transaction_trace) {
+      cli.response_delivery_mode =
+          hbm_sim::ResponseDeliveryMode::TransactionOnly;
+    }
+  }
+  if (wants_host_trace &&
+      !response_mode_has_host(cli.response_delivery_mode)) {
+    throw std::invalid_argument(
+        "host response_trace requires response_delivery_mode=host or both");
+  }
+  if (wants_transaction_trace &&
+      !response_mode_has_transaction(cli.response_delivery_mode)) {
+    throw std::invalid_argument(
+        "transaction_response_trace requires "
+        "response_delivery_mode=transaction or both");
+  }
+}
+
 std::string csv_escape(const std::string& value) {
   std::string out = "\"";
   for (char c : value) {
@@ -1080,6 +1195,40 @@ void write_host_response_csv_row(std::ostream& out,
       << bytes_to_hex(response.initialized_mask) << '\n';
   if (!out) {
     throw std::runtime_error("failed while writing host response trace");
+  }
+}
+
+void write_transaction_response_csv_header(std::ostream& out) {
+  out << "request_id,host_request_id,transaction_index,transaction_count,type,"
+         "system_address,local_address,stack,channel,arrival_cycle,issued_cycle,"
+         "completion_cycle,latency_cycles,status,initialized,ecc_corrected,"
+         "ecc_uncorrectable,forwarded,coalesced,data_hex,initialized_mask_hex\n";
+}
+
+void write_transaction_response_csv_row(
+    std::ostream& out, const hbm_sim::TransactionResponse& response) {
+  const hbm_sim::Cycle latency =
+      response.completion_cycle >= response.arrival_cycle
+          ? response.completion_cycle - response.arrival_cycle
+          : 0;
+  out << response.request_id << ',' << response.host_request_id << ','
+      << response.transaction_index << ',' << response.transaction_count << ','
+      << hbm_sim::to_string(response.type) << ','
+      << address_to_hex(response.system_address) << ','
+      << address_to_hex(response.local_address) << ',' << response.stack << ','
+      << response.channel << ',' << response.arrival_cycle << ','
+      << response.issued_cycle << ',' << response.completion_cycle << ','
+      << latency << ',' << hbm_sim::response_status_name(response.status) << ','
+      << (response.initialized ? "true" : "false") << ','
+      << (response.ecc_corrected ? "true" : "false") << ','
+      << (response.ecc_uncorrectable ? "true" : "false") << ','
+      << (response.forwarded ? "true" : "false") << ','
+      << (response.coalesced ? "true" : "false") << ','
+      << bytes_to_hex(response.data) << ','
+      << bytes_to_hex(response.initialized_mask) << '\n';
+  if (!out) {
+    throw std::runtime_error(
+        "failed while writing transaction response trace");
   }
 }
 
@@ -1362,6 +1511,8 @@ Cli parse_args(int argc, char** argv) {
       apply_option(cli, "read_ratio", need_value(arg));
     } else if (arg == "--seed") {
       apply_option(cli, "seed", need_value(arg));
+    } else if (arg == "--random-address-space-bytes") {
+      apply_option(cli, "random_address_space_bytes", need_value(arg));
     } else if (arg == "--addr-stride") {
       apply_option(cli, "addr_stride", need_value(arg));
     } else if (arg == "--inject-interval") {
@@ -1382,6 +1533,10 @@ Cli parse_args(int argc, char** argv) {
       apply_option(cli, "dfi_version", need_value(arg));
     } else if (arg == "--max-cycles") {
       apply_option(cli, "max_cycles", need_value(arg));
+    } else if (arg == "--stats-view") {
+      apply_option(cli, "stats_view", need_value(arg));
+    } else if (arg == "--progress-interval") {
+      apply_option(cli, "progress_interval", need_value(arg));
     } else if (arg == "--single-controller") {
       apply_option(cli, "single_controller", "true");
     } else if (arg == "--scheduler") {
@@ -1482,6 +1637,14 @@ Cli parse_args(int argc, char** argv) {
       apply_option(cli, "cmd_trace", need_value(arg));
     } else if (arg == "--response-trace" || arg == "--host-response-trace") {
       apply_option(cli, "response_trace", need_value(arg));
+    } else if (arg == "--transaction-response-trace") {
+      apply_option(cli, "transaction_response_trace", need_value(arg));
+    } else if (arg == "--response-delivery-mode") {
+      apply_option(cli, "response_delivery_mode", need_value(arg));
+    } else if (arg == "--host-response-queue-capacity") {
+      apply_option(cli, "host_response_queue_capacity", need_value(arg));
+    } else if (arg == "--transaction-response-queue-capacity") {
+      apply_option(cli, "transaction_response_queue_capacity", need_value(arg));
     } else if (arg == "--dfi-trace" || arg == "--dump-dfi-trace") {
       apply_option(cli, "dfi_trace", need_value(arg));
     } else if (arg == "--dfi-signal-trace" || arg == "--dump-dfi-signal-trace") {
@@ -1683,10 +1846,14 @@ bool is_auditable_model_key(const std::string& key) {
   static const std::set<std::string> non_model_keys{
       "schema_version", "standard", "model_name", "preset", "parameter_reference",
       "validation_mode", "pattern", "trace", "trace_path", "requests", "read_ratio",
-      "seed", "addr_stride", "inject_interval", "init_sequence",
-      "init_sequence_interval", "max_cycles", "strict_timing_table",
+      "seed", "random_address_space_bytes", "addr_stride", "inject_interval", "init_sequence",
+      "init_sequence_interval", "max_cycles", "progress_interval", "stats_view",
+      "strict_timing_table",
       "cmd_trace", "cmd_trace_path", "host_response_trace", "response_trace",
-      "response_trace_path", "dump_dfi_trace", "dfi_trace", "dfi_trace_path",
+      "response_trace_path", "transaction_response_trace",
+      "transaction_response_trace_path", "response_delivery_mode",
+      "host_response_queue_capacity", "transaction_response_queue_capacity",
+      "dump_dfi_trace", "dfi_trace", "dfi_trace_path",
       "dump_dfi_signal_trace", "dfi_signal_trace", "dfi_signal_trace_path",
       "dump_timing_table", "timing_table_path", "validate_cmd_trace",
       "validate_command_trace", "validate_dfi_trace", "fail_on_data_mismatch",
@@ -1928,17 +2095,26 @@ void write_resolved_config(const std::string& path,
       << "stack_ingress_buffer_size = " << cli.stack_ingress_buffer_size << '\n'
       << "stack_dispatch_width = " << cli.stack_dispatch_width << '\n'
       << "stack_qos_policy = " << stack_qos_policy_name(cli.stack_qos_policy) << '\n'
+      << "response_delivery_mode = "
+      << response_delivery_mode_name(cli.response_delivery_mode) << '\n'
+      << "host_response_queue_capacity = "
+      << cli.host_response_queue_capacity << '\n'
+      << "transaction_response_queue_capacity = "
+      << cli.transaction_response_queue_capacity << '\n'
       << "single_controller = " << cli.single_controller << "\n\n";
   out << "[workload]\n"
       << "pattern = " << cli.pattern << '\n'
       << "requests = " << cli.requests << '\n'
       << "read_ratio = " << cli.read_ratio << '\n'
       << "seed = " << cli.seed << '\n'
+      << "random_address_space_bytes = " << cli.random_address_space_bytes << '\n'
       << "addr_stride = " << cli.addr_stride << '\n'
       << "inject_interval = " << cli.inject_interval << '\n'
       << "init_sequence = " << cli.init_sequence << '\n'
       << "init_sequence_interval = " << cli.init_sequence_interval << '\n'
-      << "max_cycles = " << cli.max_cycles << "\n\n";
+      << "max_cycles = " << cli.max_cycles << '\n'
+      << "progress_interval = " << cli.progress_interval << '\n'
+      << "stats_view = " << cli.stats_view << "\n\n";
   if (!cli.trace_path.empty()) out << "trace = " << cli.trace_path << "\n\n";
   out << "[controller]\n"
       << "scheduler = " << hbm_sim::to_string(cli.controller.scheduler) << '\n'
@@ -2156,6 +2332,8 @@ void write_resolved_config(const std::string& path,
   };
   write_path("cmd_trace", cli.cmd_trace_path);
   write_path("response_trace", cli.response_trace_path);
+  write_path("transaction_response_trace",
+             cli.transaction_response_trace_path);
   write_path("dfi_trace", cli.dfi_trace_path);
   write_path("dfi_signal_trace", cli.dfi_signal_trace_path);
   write_path("dump_timing_table", cli.timing_table_path);
@@ -2173,6 +2351,7 @@ int main(int argc, char** argv) {
   try {
     Cli cli = parse_args(argc, argv);
     if (handle_list_commands(cli)) return 0;
+    resolve_response_delivery(cli);
     // CLI 使用 draft，等 profile 选择项和显式覆盖全部就绪后只 finalize 一次。
     // 所有 HBM/LPDDR 差异仍从 DramSpec 传入共享 Controller。
     hbm_sim::DramSpec spec = hbm_sim::make_spec_draft(cli.standard);
@@ -2230,10 +2409,11 @@ int main(int argc, char** argv) {
     if (cli.single_controller && cli.stack_count != 1) {
       throw std::invalid_argument("single_controller is only valid with stack_count=1");
     }
-    if (cli.single_controller && !cli.response_trace_path.empty()) {
+    if (cli.single_controller &&
+        cli.response_delivery_mode != hbm_sim::ResponseDeliveryMode::Disabled) {
       throw std::invalid_argument(
-          "response_trace requires the default MemorySystem path; "
-          "single_controller has no HostResponse aggregation");
+          "response delivery requires the default MemorySystem path; "
+          "single_controller has no system-level response aggregation");
     }
 
     if (!cli.dump_resolved_config_path.empty()) {
@@ -2263,6 +2443,7 @@ int main(int argc, char** argv) {
     // 不需要在每次仿真前手工 mkdir。输入文件路径不会在这里创建或改写。
     prepare_stack_output_directories(cli.cmd_trace_path, 1);
     prepare_stack_output_directories(cli.response_trace_path, 1);
+    prepare_stack_output_directories(cli.transaction_response_trace_path, 1);
     prepare_stack_output_directories(cli.dfi_trace_path, 1);
     prepare_stack_output_directories(cli.dfi_signal_trace_path, 1);
     prepare_stack_output_directories(cli.timing_table_path, 1);
@@ -2320,6 +2501,7 @@ int main(int argc, char** argv) {
     traffic.requests = cli.requests;
     traffic.read_ratio = cli.read_ratio;
     traffic.seed = cli.seed;
+    traffic.random_address_space_bytes = cli.random_address_space_bytes;
     traffic.addr_stride = cli.addr_stride;
     traffic.inject_interval = cli.inject_interval;
     traffic.init_sequence = cli.init_sequence;
@@ -2341,12 +2523,23 @@ int main(int argc, char** argv) {
     std::vector<hbm_sim::IssuedCommand> issued_commands;
     std::vector<hbm_sim::Stats> per_stack_stats;
     std::uint64_t exported_host_responses = 0;
+    std::uint64_t exported_transaction_responses = 0;
+    std::uint64_t consumed_host_responses = 0;
+    std::uint64_t consumed_transaction_responses = 0;
+    const auto progress_consumer = [](const hbm_sim::RunProgress& progress) {
+      std::cerr << "progress cycle=" << progress.cycle
+                << " completed_reads=" << progress.completed_reads
+                << " completed_writes=" << progress.completed_writes
+                << " remaining_frontend=" << progress.remaining_frontend
+                << '\n';
+    };
     if (cli.single_controller) {
       // 单控制器路径保留给早期模型兼容和最小化调试；它不会体现 stack-level
       // 多 channel 并行，因此正式带宽实验通常应使用默认 MemorySystem。
       cli.controller.retain_responses = false;
       hbm_sim::Controller controller(spec, cli.controller);
-      controller.run(*request_stream, cli.max_cycles);
+      controller.run(*request_stream, cli.max_cycles, cli.progress_interval,
+                     progress_consumer);
       stats = controller.stats();
       issued_commands = controller.issued_commands();
     } else {
@@ -2362,20 +2555,42 @@ int main(int argc, char** argv) {
       memory_options.stack_ingress_buffer_size = cli.stack_ingress_buffer_size;
       memory_options.stack_dispatch_width = cli.stack_dispatch_width;
       memory_options.stack_qos_policy = cli.stack_qos_policy;
+      memory_options.response_delivery_mode = cli.response_delivery_mode;
+      memory_options.host_response_queue_capacity =
+          cli.host_response_queue_capacity;
+      memory_options.transaction_response_queue_capacity =
+          cli.transaction_response_queue_capacity;
       hbm_sim::MemorySystem memory(spec, memory_options);
-      if (cli.response_trace_path.empty()) {
-        memory.run(*request_stream, cli.max_cycles);
+      if (cli.response_delivery_mode ==
+          hbm_sim::ResponseDeliveryMode::Disabled) {
+        memory.run(*request_stream, cli.max_cycles, cli.progress_interval,
+                   progress_consumer);
       } else {
-        std::ofstream response_trace(cli.response_trace_path);
-        if (!response_trace) {
-          throw std::runtime_error("failed to open host response trace output: " +
-                                   cli.response_trace_path);
+        std::ofstream host_response_trace;
+        if (!cli.response_trace_path.empty()) {
+          host_response_trace.open(cli.response_trace_path);
+          if (!host_response_trace) {
+            throw std::runtime_error(
+                "failed to open host response trace output: " +
+                cli.response_trace_path);
+          }
+          write_host_response_csv_header(host_response_trace);
         }
-        write_host_response_csv_header(response_trace);
-        memory.set_response_delivery_mode(hbm_sim::ResponseDeliveryMode::HostOnly);
+        std::ofstream transaction_response_trace;
+        if (!cli.transaction_response_trace_path.empty()) {
+          transaction_response_trace.open(
+              cli.transaction_response_trace_path);
+          if (!transaction_response_trace) {
+            throw std::runtime_error(
+                "failed to open transaction response trace output: " +
+                cli.transaction_response_trace_path);
+          }
+          write_transaction_response_csv_header(transaction_response_trace);
+        }
 
         // 这是 CLI 的真实异步运行路径：请求按 valid/ready 语义重试，系统每拍
-        // step，HostResponse 在运行中 pop 并写出，而不是 run() 结束后堆积。
+        // step，选中的响应队列在运行中 pop。未指定 trace 时也会消费响应，
+        // 表示一个始终 ready 的上层；有限容量仍会约束同一拍的完成收集。
         hbm_sim::Request pending_request;
         bool has_pending_request = false;
         bool source_done = false;
@@ -2412,10 +2627,38 @@ int main(int argc, char** argv) {
           }
 
           memory.step();
+          if (cli.progress_interval != 0 &&
+              memory.clock() % cli.progress_interval == 0) {
+            hbm_sim::RunProgress progress;
+            progress.cycle = memory.clock();
+            for (const hbm_sim::Controller& controller : memory.controllers()) {
+              progress.completed_reads += controller.stats().completed_reads;
+              progress.completed_writes += controller.stats().completed_writes;
+            }
+            progress.remaining_frontend = has_pending_request ? 1 : 0;
+            if (!source_done) {
+              progress.remaining_frontend +=
+                  request_stream->remaining_hint().value_or(1);
+            }
+            progress_consumer(progress);
+          }
           while (memory.has_response()) {
             const hbm_sim::HostResponse response = memory.pop_response();
-            write_host_response_csv_row(response_trace, response);
-            exported_host_responses++;
+            consumed_host_responses++;
+            if (host_response_trace.is_open()) {
+              write_host_response_csv_row(host_response_trace, response);
+              exported_host_responses++;
+            }
+          }
+          while (memory.has_transaction_response()) {
+            const hbm_sim::TransactionResponse response =
+                memory.pop_transaction_response();
+            consumed_transaction_responses++;
+            if (transaction_response_trace.is_open()) {
+              write_transaction_response_csv_row(transaction_response_trace,
+                                                 response);
+              exported_transaction_responses++;
+            }
           }
         }
 
@@ -2638,6 +2881,126 @@ int main(int argc, char** argv) {
                    ? "standard_checked"
                    : (model_differences.empty() ? "standard_default"
                                                 : "custom_exploratory"));
+    if (cli.stats_view == "summary") {
+      print_section(std::cout, 1, "MODEL IDENTITY");
+      print_field(std::cout, "model_name", cli.model_name);
+      print_field(std::cout, "standard", spec.name);
+      print_field(std::cout, "selected_preset",
+                  cli.preset.empty() ? "none" : cli.preset);
+      print_field(std::cout, "validation_mode",
+                  hbm_sim::config::to_string(cli.validation_mode));
+      print_field(std::cout, "model_conformance", conformance);
+
+      print_section(std::cout, 2, "STRUCTURE AND INTERFACE");
+      print_field(std::cout, "stack_count", stats.stack_count);
+      print_field(std::cout, "controller_count", stats.controller_count);
+      print_field(std::cout, "channels", spec.org.channels);
+      print_field(std::cout, "pseudo_channels", spec.org.pseudo_channels);
+      print_field(std::cout, "sids", spec.org.sids);
+      print_field(std::cout, "banks", spec.total_banks());
+      print_field(std::cout, "line_size", spec.org.line_size);
+      print_field(std::cout, "dram_transaction_bytes", spec.transaction_bytes());
+      print_field(std::cout, "data_rate_mbps", spec.data_rate_mbps);
+      print_field(std::cout, "data_bus_bits", spec.data_bus_bits);
+
+      print_section(std::cout, 3, "TIMING PROVENANCE");
+      print_field(std::cout, "timing_profile", spec.timing_profile);
+      print_field(std::cout, "vendor_profile", spec.vendor_profile);
+      print_field(std::cout, "timing_source_jedec",
+                  spec.timing_table.source_count(hbm_sim::TimingValueSource::JEDEC));
+      print_field(std::cout, "timing_source_vendor",
+                  spec.timing_table.source_count(hbm_sim::TimingValueSource::Vendor));
+      print_field(std::cout, "timing_source_reference",
+                  spec.timing_table.source_count(
+                      hbm_sim::TimingValueSource::ExternalReference));
+      print_field(std::cout, "timing_source_research",
+                  spec.timing_table.source_count(
+                      hbm_sim::TimingValueSource::ResearchDefault));
+      print_field(std::cout, "timing_vendor_required",
+                  spec.timing_table.provisional_count());
+
+      print_section(std::cout, 4, "RUN CONFIGURATION");
+      print_field(std::cout, "pattern", cli.pattern);
+      print_field(std::cout, "requests", cli.requests);
+      print_field(std::cout, "read_ratio", cli.read_ratio);
+      print_field(std::cout, "seed", cli.seed);
+      print_field(std::cout, "random_address_space_bytes",
+                  cli.random_address_space_bytes);
+      print_field(std::cout, "inject_interval", cli.inject_interval);
+      print_field(std::cout, "progress_interval", cli.progress_interval);
+      print_field(std::cout, "scheduler",
+                  hbm_sim::to_string(cli.controller.scheduler));
+      print_field(std::cout, "row_policy",
+                  hbm_sim::to_string(cli.controller.row_policy));
+      print_field(std::cout, "mem_phy_mode",
+                  hbm_sim::to_string(cli.controller.phy.mode));
+      print_field(std::cout, "response_delivery_mode",
+                  response_delivery_mode_name(cli.response_delivery_mode));
+      print_field(std::cout, "memory_backend",
+                  hbm_sim::to_string(storage_options.memory_backend.kind));
+
+      print_section(std::cout, 5, "COMPLETION AND VALIDITY");
+      print_field(std::cout, "host_requests", stats.host_requests);
+      print_field(std::cout, "dram_transactions", stats.dram_transactions);
+      print_field(std::cout, "completed_reads", stats.completed_reads);
+      print_field(std::cout, "completed_writes", stats.completed_writes);
+      print_field(std::cout, "remaining_requests", stats.remaining_requests);
+      print_field(std::cout, "remaining_pending", stats.remaining_pending);
+      print_field(std::cout, "hit_cycle_limit",
+                  stats.hit_cycle_limit ? "true" : "false");
+      print_field(std::cout, "data_mismatches", stats.data_mismatches);
+      print_field(std::cout, "cmd_validation",
+                  cli.validate_cmd_trace ? "pass" : "off");
+      print_field(std::cout, "dfi_validation",
+                  cli.validate_dfi_trace ? "pass" : "off");
+      print_field(std::cout, "host_responses_consumed",
+                  consumed_host_responses);
+      print_field(std::cout, "transaction_responses_consumed",
+                  consumed_transaction_responses);
+
+      print_section(std::cout, 6, "KEY PERFORMANCE");
+      print_field(std::cout, "system_cycles", stats.system_cycles);
+      print_field(std::cout, "aggregate_ctrl_cycles",
+                  stats.aggregate_controller_cycles);
+      std::cout << std::fixed << std::setprecision(3);
+      print_field(std::cout, "peak_bandwidth_GBps", stats.peak_bandwidth_GBps);
+      print_field(std::cout, "achieved_bw_GBps",
+                  stats.achieved_bandwidth_GBps);
+      print_field(std::cout, "achieved_if_bw_GBps",
+                  stats.achieved_interface_bandwidth_GBps);
+      std::cout << std::fixed << std::setprecision(2);
+      print_field(std::cout, "bandwidth_util_pct", stats.bandwidth_utilization);
+      print_field(std::cout, "payload_efficiency_pct", stats.payload_efficiency);
+      print_field(std::cout, "avg_read_latency", stats.avg_read_latency());
+      print_field(std::cout, "read_queue_len_avg", stats.read_queue_len_avg());
+      print_field(std::cout, "write_queue_len_avg", stats.write_queue_len_avg());
+      print_field(std::cout, "phy_command_backpressure",
+                  stats.phy_command_backpressure);
+      print_field(std::cout, "phy_data_backpressure",
+                  stats.phy_data_backpressure);
+      print_field(std::cout, "power_energy_pJ", stats.power_energy_pj);
+      print_field(std::cout, "thermal_peak_temp_C", stats.thermal_peak_temp_c);
+
+      if (per_stack_stats.size() > 1) {
+        print_section(std::cout, 7, "PER-STACK SUMMARY");
+        for (std::size_t stack = 0; stack < per_stack_stats.size(); ++stack) {
+          const auto& per = per_stack_stats[stack];
+          const std::string prefix = "stack_" + std::to_string(stack) + "_";
+          print_field(std::cout, (prefix + "reads").c_str(), per.completed_reads);
+          print_field(std::cout, (prefix + "writes").c_str(), per.completed_writes);
+          print_field(std::cout, (prefix + "bw_GBps").c_str(),
+                      per.achieved_bandwidth_GBps);
+          const double avg_latency =
+              per.completed_reads == 0
+                  ? 0.0
+                  : static_cast<double>(per.total_read_latency) /
+                        per.completed_reads;
+          print_field(std::cout, (prefix + "avg_read_latency").c_str(),
+                      avg_latency);
+        }
+      }
+    } else {
+    print_section(std::cout, 1, "MODEL IDENTITY");
     print_field(std::cout, "model_name", cli.model_name);
     print_field(std::cout, "base_standard", spec.name);
     print_field(std::cout, "selected_preset", cli.preset.empty() ? "none" : cli.preset);
@@ -2645,6 +3008,7 @@ int main(int argc, char** argv) {
     print_field(std::cout, "model_conformance", conformance);
     print_field(std::cout, "modified_parameters", model_differences.size());
     print_field(std::cout, "standard", spec.name);
+    print_section(std::cout, 2, "STRUCTURE, PROTOCOL AND INTERFACE");
     print_field(std::cout, "timing_profile", spec.timing_profile);
     print_field(std::cout, "timing_profile_file", spec.timing_profile_file.empty() ? "off" : spec.timing_profile_file);
     print_field(std::cout, "vendor_profile", spec.vendor_profile);
@@ -2739,6 +3103,7 @@ int main(int argc, char** argv) {
     print_field(std::cout, "lpddr_link_ecc_bits_req", spec.lpddr_link_ecc_bits_per_request);
     print_field(std::cout, "lpddr_metadata_bits_req", hbm_sim::lpddr_metadata_lane_bits_per_request(spec));
     print_field(std::cout, "lpddr_ca_parity_bits_cmd", spec.lpddr_ca_parity_bits_per_command);
+    print_section(std::cout, 3, "TIMING PROVENANCE");
     print_field(std::cout, "timing_table_entries", spec.timing_table.entries.size());
     print_field(std::cout, "timing_vendor_required", spec.timing_table.provisional_count());
     print_field(std::cout, "timing_source_jedec",
@@ -2753,6 +3118,7 @@ int main(int argc, char** argv) {
                 spec.timing_table.source_count(hbm_sim::TimingValueSource::ResearchDefault));
     print_field(std::cout, "timing_vendor_required_only", spec.timing_table.vendor_required_count());
     print_field(std::cout, "timing_table_dump", cli.timing_table_path.empty() ? "off" : cli.timing_table_path);
+    print_section(std::cout, 4, "RUN CONFIGURATION AND ARTIFACTS");
     print_field(std::cout, "memory_system",
                 cli.single_controller
                     ? "single_controller"
@@ -2769,7 +3135,23 @@ int main(int argc, char** argv) {
     print_field(std::cout, "cmd_trace", cli.cmd_trace_path.empty() ? "off" : cli.cmd_trace_path);
     print_field(std::cout, "response_trace",
                 cli.response_trace_path.empty() ? "off" : cli.response_trace_path);
+    print_field(std::cout, "transaction_response_trace",
+                cli.transaction_response_trace_path.empty()
+                    ? "off"
+                    : cli.transaction_response_trace_path);
+    print_field(std::cout, "response_delivery_mode",
+                response_delivery_mode_name(cli.response_delivery_mode));
+    print_field(std::cout, "host_response_queue_capacity",
+                cli.host_response_queue_capacity);
+    print_field(std::cout, "transaction_response_queue_capacity",
+                cli.transaction_response_queue_capacity);
+    print_field(std::cout, "host_responses_consumed",
+                consumed_host_responses);
     print_field(std::cout, "host_responses_exported", exported_host_responses);
+    print_field(std::cout, "transaction_responses_consumed",
+                consumed_transaction_responses);
+    print_field(std::cout, "transaction_responses_exported",
+                exported_transaction_responses);
     print_field(std::cout, "dfi_trace", cli.dfi_trace_path.empty() ? "off" : cli.dfi_trace_path);
     print_field(std::cout, "dfi_signal_trace",
                 cli.dfi_signal_trace_path.empty() ? "off" : cli.dfi_signal_trace_path);
@@ -2836,6 +3218,7 @@ int main(int argc, char** argv) {
     print_field(std::cout, "power_refpb_pJ", storage_options.refpb_energy_pj);
     print_field(std::cout, "power_vdd", storage_options.idd_vdd);
     print_field(std::cout, "idd_devices_per_rank", storage_options.idd_devices_per_rank);
+    print_section(std::cout, 5, "VALIDATION EVIDENCE");
     print_field(std::cout, "cmd_validation", cli.validate_cmd_trace ? "pass" : "off");
     print_field(std::cout, "cmd_validation_checked",
                 cli.validate_cmd_trace ? validation_report.checked_commands : 0);
@@ -2874,6 +3257,17 @@ int main(int argc, char** argv) {
                 cli.validate_dfi_trace
                     ? dfi_validation_report.expected_payload_checks
                     : 0);
+    print_section(std::cout, 6, "WORKLOAD AND PER-STACK SUMMARY");
+    print_field(std::cout, "pattern", cli.pattern);
+    print_field(std::cout, "requests", cli.requests);
+    print_field(std::cout, "read_ratio", cli.read_ratio);
+    print_field(std::cout, "seed", cli.seed);
+    print_field(std::cout, "random_address_space_bytes",
+                cli.random_address_space_bytes);
+    print_field(std::cout, "addr_stride", cli.addr_stride);
+    print_field(std::cout, "max_cycles", cli.max_cycles);
+    print_field(std::cout, "progress_interval", cli.progress_interval);
+    print_field(std::cout, "stats_view", cli.stats_view);
     print_field(std::cout, "inject_interval", cli.inject_interval);
     print_field(std::cout, "init_sequence", cli.init_sequence);
     print_field(std::cout, "init_sequence_interval", cli.init_sequence_interval);
@@ -2901,6 +3295,7 @@ int main(int argc, char** argv) {
       print_field(std::cout, (prefix + "peak_temp_C").c_str(), per.thermal_peak_temp_c);
     }
     hbm_sim::print_stats(std::cout, stats);
+    }
 
     if (stats.hit_cycle_limit) {
       return 2;

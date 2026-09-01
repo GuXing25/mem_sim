@@ -82,12 +82,21 @@ ctest --test-dir build-clang-debug --output-on-failure
 会缓存编译器，因此切换 G++/Clang 时应使用不同构建目录，不要在旧目录上直接覆盖。
 
 Makefile 保留为兼容入口。因为 Make 的内建 `CXX` 默认是 `g++`，使用 Clang 时要
-显式传入版本化路径；更换编译器前先清理旧 object：
+显式传入版本化路径。Make 会记录编译器、编译/链接参数并在它们变化时重建 object；
+Clang 和 G++ 仍建议使用不同目录：
 
 ```bash
-make clean
-make CXX=/usr/bin/clang++-18 -j"$(nproc)"
-make CXX=/usr/bin/clang++-18 test
+# 与上面的 CMake/Clang 目录分开：Make/G++ 使用默认 build/
+make CXX=g++ -j"$(nproc)"
+make CXX=g++ test
+
+# 查看或一次删除根目录下 build、build-*；不会删除 outputs
+make list-builds
+make clean-build
+
+# 独立目录中的 Clang ASan/UBSan 构建与测试
+make sanitize
+make sanitize-test
 ```
 
 `build/` 是 Make 构建目录，`build-clang-debug/` 是当前 CMake/VS Code 主构建
@@ -229,10 +238,13 @@ ECC、功耗和热模型语义。选择建议见 [存储后端](文档/多Stack�
 ```bash
 ./build-clang-debug/hbm_sim --config configs/hbm.cfg --standard hbm4 \
   --trace examples/data_check.trace --requests 0 \
+  --stats-view summary --progress-interval 10000 \
   --dump-memory-image outputs/final_memory.txt \
   --dump-memory-csv outputs/final_memory.csv \
   --mismatch-report outputs/mismatch.txt \
   --response-trace outputs/host_responses.csv \
+  --transaction-response-trace outputs/transaction_responses.csv \
+  --response-delivery-mode both \
   --dfi-trace outputs/dfi.csv \
   --dfi-signal-trace outputs/dfi_signal.csv \
   --validate-cmd-trace \

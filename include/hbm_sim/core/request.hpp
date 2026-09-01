@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 
 #include "hbm_sim/core/addr_map.hpp"
 #include "hbm_sim/core/common.hpp"
@@ -107,5 +108,16 @@ class RequestSource {
   virtual bool next(Request& request) = 0;
   virtual std::optional<std::uint64_t> remaining_hint() const = 0;
 };
+
+// 长运行的轻量进度快照。它只用于观测，不改变仿真状态；remaining_frontend
+// 是尚未从 source 成功提交的请求数（source 无精确 hint 时为保守下界）。
+struct RunProgress {
+  Cycle cycle = 0;
+  std::uint64_t completed_reads = 0;
+  std::uint64_t completed_writes = 0;
+  std::uint64_t remaining_frontend = 0;
+};
+
+using RunProgressConsumer = std::function<void(const RunProgress&)>;
 
 }  // namespace hbm_sim

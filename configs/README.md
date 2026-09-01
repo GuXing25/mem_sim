@@ -64,8 +64,8 @@ schema-v2 的固定合并顺序为：
 | --- | --- |
 | `[model]` | 模型名、基础标准、preset |
 | `[validation]` | `exploratory/standard/device` 校验模式 |
-| `[system]` | stack 数量、跨 stack 映射、入口队列和 QoS |
-| `[workload]` | 请求数、读写比例、trace、注入间隔 |
+| `[system]` | stack 数量、跨 stack 映射、入口队列、QoS、响应模式和队列容量 |
+| `[workload]` | 请求数、读写比例、trace、随机地址上限、注入/进度和统计视图 |
 | `[controller]` | buffer、水位、调度器和行策略 |
 | `[controller.scheduler]` | `type = fcfs/frfcfs` |
 | `[controller.row_policy]` | `open_page/closed_page/closed_cap` |
@@ -93,6 +93,29 @@ scheduler = fcfs
 
 这会生成一个“以 HBM4 命令/状态语义为基础的自定义模型”，不应称作某个真实
 HBM4 器件。建议同步修改 `[model] name`，并保持 `validation_mode = exploratory`。
+
+长任务与小型后端常用的运行项：
+
+```ini
+[workload]
+pattern = random
+random_address_space_bytes = 1048576  # 0 表示模型总容量；非零须按 line_size 对齐
+progress_interval = 10000             # 写 stderr；0 关闭
+stats_view = summary                  # summary 或 full
+
+[system]
+response_delivery_mode = both         # disabled/host/transaction/both
+host_response_queue_capacity = 16     # 0 表示无限
+transaction_response_queue_capacity = 64
+
+[outputs]
+response_trace = outputs/host.csv
+transaction_response_trace = outputs/transactions.csv
+```
+
+`random_address_space_bytes` 限制的是多 Stack 聚合系统地址范围。使用容量较小的
+`mmap_sparse/chunk_file` 实验后端时应显式给出，以免默认 full-model 随机地址超出
+实验文件容量。响应 trace 会自动推导所需模式；若又显式写了不兼容模式，配置检查会失败。
 
 ## 2.1 配置继承、验证集和四个用例
 

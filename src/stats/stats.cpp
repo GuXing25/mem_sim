@@ -13,6 +13,11 @@ void print_field(std::ostream& os, const char* key, const T& value) {
   os << std::left << std::setw(kOutputKeyWidth) << key << ": " << std::right << value << '\n';
 }
 
+void print_section(std::ostream& os, int index, const char* title) {
+  os << "\n# ===== " << std::setfill('0') << std::setw(2) << index << ' '
+     << title << " =====\n" << std::setfill(' ');
+}
+
 }  // namespace
 
 void print_stats(std::ostream& os, const Stats& stats) {
@@ -26,6 +31,7 @@ void print_stats(std::ostream& os, const Stats& stats) {
   // 4. system/controller 分层统计；
   // 5. 数据和接口带宽；
   // 6. 平均延迟、平均队列长度和每 cycle 字节数。
+  print_section(os, 7, "CONTROLLER AND ROW BEHAVIOR");
   print_field(os, "cycles", stats.cycles);
   print_field(os, "reads", stats.reads);
   print_field(os, "writes", stats.writes);
@@ -34,6 +40,7 @@ void print_stats(std::ostream& os, const Stats& stats) {
   print_field(os, "row_hits", stats.row_hits);
   print_field(os, "row_misses", stats.row_misses);
   print_field(os, "row_conflicts", stats.row_conflicts);
+  print_section(os, 8, "COMMANDS AND MAINTENANCE");
   print_field(os, "commands.ACT", stats.act);
   print_field(os, "commands.ACT1", stats.act1);
   print_field(os, "commands.ACT2", stats.act2);
@@ -80,6 +87,7 @@ void print_stats(std::ostream& os, const Stats& stats) {
   print_field(os, "rising_edge_ticks", stats.rising_edge_ticks);
   print_field(os, "falling_edge_ticks", stats.falling_edge_ticks);
   print_field(os, "write_mode_cycles", stats.write_mode_cycles);
+  print_section(os, 9, "DATA, STORAGE AND INTEGRITY");
   print_field(os, "host_requests", stats.host_requests);
   print_field(os, "dram_transactions", stats.dram_transactions);
   print_field(os, "injected_requests", stats.injected_requests);
@@ -137,6 +145,7 @@ void print_stats(std::ostream& os, const Stats& stats) {
   print_field(os, "rowbuf_forced_closes", stats.rowbuf_forced_closes);
   print_field(os, "rowbuf_open_rows", stats.rowbuf_open_rows);
   print_field(os, "rowbuf_dirty_rows", stats.rowbuf_dirty_rows);
+  print_section(os, 10, "POWER AND THERMAL");
   print_field(os, "power_events", stats.power_events);
   print_field(os, "thermal_updates", stats.thermal_updates);
   os << std::fixed << std::setprecision(2);
@@ -163,6 +172,7 @@ void print_stats(std::ostream& os, const Stats& stats) {
   print_field(os, "ecc_uncorrectable_errors", stats.ecc_uncorrectable_errors);
   print_field(os, "ecc_injected_errors", stats.ecc_injected_errors);
   print_field(os, "ecc_parity_repairs", stats.ecc_parity_repairs);
+  print_section(os, 11, "PHY AND DFI");
   print_field(os, "dfi_read_beats", stats.dfi_read_beats);
   print_field(os, "dfi_write_beats", stats.dfi_write_beats);
   print_field(os, "dfi_forwarded_read_beats", stats.dfi_forwarded_read_beats);
@@ -205,6 +215,7 @@ void print_stats(std::ostream& os, const Stats& stats) {
   print_field(os, "low_power_exit_blocked", stats.low_power_exit_blocked_cycles);
   print_field(os, "interface_command_bits", stats.interface_command_bits);
   print_field(os, "interface_overhead_bits", stats.interface_overhead_bits);
+  print_section(os, 12, "SYSTEM COMPLETION AND KEY PERFORMANCE");
   print_field(os, "controller_count", stats.controller_count);
   print_field(os, "active_controllers", stats.active_controllers);
   print_field(os, "stack_count", stats.stack_count);

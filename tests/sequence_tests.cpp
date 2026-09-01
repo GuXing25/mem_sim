@@ -3630,6 +3630,45 @@ void test_streaming_traffic_source() {
                 static_cast<double>(stats.total_addressable_lines);
   require(std::fabs(stats.storage_density_pct - expected_density) < 1.0e-12,
           "storage density is not based on unique written lines");
+
+  hbm_sim::TrafficOptions bounded;
+  bounded.pattern = "random";
+  bounded.requests = 128;
+  bounded.seed = 99;
+  bounded.random_address_space_bytes = 4096;
+  std::unique_ptr<hbm_sim::TrafficStream> bounded_source =
+      hbm_sim::make_traffic_stream(spec, bounded);
+  Request bounded_request;
+  std::uint64_t bounded_count = 0;
+  while (bounded_source->next(bounded_request)) {
+    require(bounded_request.address + bounded_request.transfer_bytes <= 4096,
+            "bounded random traffic escaped random_address_space_bytes");
+    bounded_count++;
+  }
+  require(bounded_count == bounded.requests * 2,
+          "bounded random traffic changed host-request splitting");
+
+  hbm_sim::TrafficOptions too_small = bounded;
+  too_small.random_address_space_bytes = 32;
+  bool small_space_rejected = false;
+  try {
+    (void)hbm_sim::make_traffic_stream(spec, too_small);
+  } catch (const std::invalid_argument &) {
+    small_space_rejected = true;
+  }
+  require(small_space_rejected,
+          "random address space smaller than one host request was accepted");
+
+  hbm_sim::TrafficOptions unaligned = bounded;
+  unaligned.random_address_space_bytes = 4097;
+  bool unaligned_space_rejected = false;
+  try {
+    (void)hbm_sim::make_traffic_stream(spec, unaligned);
+  } catch (const std::invalid_argument &) {
+    unaligned_space_rejected = true;
+  }
+  require(unaligned_space_rejected,
+          "unaligned random address space was accepted");
 }
 
 void test_file_backed_memory_backend(hbm_sim::MemoryBackendKind kind,

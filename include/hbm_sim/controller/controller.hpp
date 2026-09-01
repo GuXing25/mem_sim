@@ -80,6 +80,8 @@ public:
   // 带 frontend 注入时序的运行入口。requests 会按 inject_cycle 排序后逐拍注入。
   void run(std::vector<Request> requests, Cycle max_cycles);
   void run(RequestSource &source, Cycle max_cycles);
+  void run(RequestSource &source, Cycle max_cycles, Cycle progress_interval,
+           RunProgressConsumer progress_consumer);
   // 只运行当前已经入队的请求，常用于 sequence test 手工 enqueue 后推进。
   void run_until_done(Cycle max_cycles);
   // 推进一个 controller tick。HBM edge pairing 下，一个 tick 可以代表半个 nCK。

@@ -82,6 +82,8 @@ class MemorySystem {
   // 按 Request::inject_cycle 注入请求，并在每个 system cycle 并行 tick 所有 controller。
   void run(std::vector<Request> requests, Cycle max_cycles);
   void run(RequestSource& source, Cycle max_cycles);
+  void run(RequestSource& source, Cycle max_cycles, Cycle progress_interval,
+           RunProgressConsumer progress_consumer);
   // CLI/离线适配器可在每拍结束后立即消费 HostResponse，避免批处理运行把
   // payload 响应全部留到末尾。consumer 返回后该引用失效，需要保留时自行复制。
   void run(RequestSource& source, Cycle max_cycles,
@@ -203,7 +205,8 @@ class MemorySystem {
   void dispatch_stack_ingress();
   void collect_responses();
   void run_source(RequestSource& source, Cycle max_cycles,
-                  HostResponseConsumer* consumer);
+                  HostResponseConsumer* consumer, Cycle progress_interval = 0,
+                  RunProgressConsumer* progress_consumer = nullptr);
   void record_submitted_transaction(const Request& request);
   void record_completed_transaction(const TransactionResponse& response);
   void aggregate_response(const TransactionResponse& response);

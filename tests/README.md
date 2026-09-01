@@ -64,7 +64,12 @@ Makefile 兼容路径：
 ```bash
 make clean
 make CXX=/usr/bin/clang++-18 test
+make sanitize-test
 ```
+
+Make 会对编译器和编译/链接 flags 建立构建签名，模式改变时自动重编译，防止
+普通链接复用 sanitizer object。`make list-builds` 可先审查构建目录，确认后用
+`make clean-build` 删除根目录下全部 `build`/`build-*`；它不会删除运行输出。
 
 本地安装了 Ramulator2.1 后，可额外运行不属于默认回归的外部参考检查：
 

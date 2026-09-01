@@ -298,10 +298,42 @@ std::size_t host_request_bytes(const DramSpec& spec, const Request& req) {
                    : static_cast<std::size_t>(std::max(1, spec.bytes_per_request()));
 }
 
-std::uint64_t host_line_space(const DramSpec& spec) {
+std::uint64_t checked_multiply_u64(std::uint64_t lhs, std::uint64_t rhs,
+                                   const char* context) {
+  if (lhs != 0 && rhs > std::numeric_limits<std::uint64_t>::max() / lhs) {
+    throw std::overflow_error(std::string(context) + " exceeds Address space");
+  }
+  return lhs * rhs;
+}
+
+std::uint64_t random_start_count(const DramSpec& spec,
+                                 const TrafficOptions& options) {
+  const std::uint64_t stacks =
+      static_cast<std::uint64_t>(std::max(1, options.stack_count));
+  const std::uint64_t aggregate_capacity = checked_multiply_u64(
+      spec.addressable_capacity_bytes(), stacks,
+      "aggregate random traffic capacity");
+  const std::uint64_t address_space =
+      options.random_address_space_bytes == 0
+          ? aggregate_capacity
+          : options.random_address_space_bytes;
+  const std::uint64_t alignment =
+      static_cast<std::uint64_t>(std::max(1, spec.org.line_size));
   const std::uint64_t host_bytes =
       static_cast<std::uint64_t>(std::max(1, spec.bytes_per_request()));
-  return std::max<std::uint64_t>(1, spec.addressable_capacity_bytes() / host_bytes);
+  if (address_space > aggregate_capacity) {
+    throw std::invalid_argument(
+        "random_address_space_bytes exceeds aggregate model capacity");
+  }
+  if (address_space < host_bytes) {
+    throw std::invalid_argument(
+        "random_address_space_bytes is smaller than one host request");
+  }
+  if (address_space % alignment != 0) {
+    throw std::invalid_argument(
+        "random_address_space_bytes must be a multiple of line_size");
+  }
+  return 1 + (address_space - host_bytes) / alignment;
 }
 
 ByteVector slice_bytes(const ByteVector& bytes, std::size_t offset, std::size_t size) {
@@ -388,8 +420,7 @@ class SyntheticTrafficStream final : public TrafficStream {
         mapper_(spec_),
         rng_(options_.seed),
         ratio_dist_(1, 100),
-        line_space_(host_line_space(spec_) *
-                    static_cast<std::uint64_t>(std::max(1, options_.stack_count))),
+        line_space_(random_start_count(spec_, options_)),
         addr_dist_(0, line_space_ - 1) {}
 
   bool next(Request& req) override {
