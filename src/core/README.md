@@ -68,6 +68,12 @@ core 层当前包含真实存储区热路径：`data.cpp` 实现 `MemoryImage`�
 - 合并 per-stack/全局统计和带 `stack_id` 的 command trace。
 - 收集 Controller `TransactionResponse`，按 host id/index 重组读数据、初始化掩码和状态。
 
+同一 stack 的多个 Controller 共享一个 `MemoryImage`。因此单个
+`controllers()[i].stats()` 中命令、队列和 PHY 字段是 channel-local，storage、ECC、
+power、thermal 字段则是该共享 Stack 的快照，不能把后者跨 Channel 再求和。需要物理
+统计时应使用 `MemorySystem::stats()` 或 `per_stack_stats()`；系统收尾会按 MemoryImage
+重新聚合并去除 Controller 中间快照的重复。
+
 异步模式使用 `try_submit/step/has_response/pop_response`，Maintenance 走独立的
 `try_submit_maintenance`；`HostOnly/TransactionOnly/Both` 控制保留哪种响应视图，
 `idle/quiescent` 分别表示执行完成和响应也已取空。旧 `run()` 默认仍是低开销批处理；

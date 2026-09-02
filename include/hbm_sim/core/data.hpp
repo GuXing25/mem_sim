@@ -319,6 +319,7 @@ public:
     return static_cast<std::size_t>(backend_->allocated_lines());
   }
   std::size_t allocated_bytes() const;
+  std::uint64_t capacity_bytes() const { return backend_->capacity_bytes(); }
   std::vector<Address> all_addresses() const;
   const StorageModelOptions &options() const { return options_; }
   MemoryBackendKind backend_kind() const { return backend_->kind(); }
@@ -394,6 +395,7 @@ private:
 
   Address line_base(Address address) const;
   std::size_t line_offset(Address address) const;
+  void validate_decoded_address(const DecodedAddress &decoded) const;
   DataBlock make_line(Address base, const DecodedAddress *decoded) const;
   void refresh_line_metadata(DataBlock &block);
   bool load_backend_line(Address base, DataBlock &block,

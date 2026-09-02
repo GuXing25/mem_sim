@@ -36,6 +36,12 @@ frontend 主要生成三类请求：
 - `W addr data=HEX`：写请求携带真实 payload。
 - `R addr expect=HEX`：读完成时比较 actual payload 和 expected payload。
 - `W addr data=HEX mask=HEX`：masked write，mask 中非零 byte 才更新对应 payload byte。
+- `data=`/`payload=` 只允许用于写，`expect=`/`check=` 只允许用于读，`mask=`
+  只允许用于写；普通写的 mask 字节数必须和 payload 字节数完全相同。跨多个
+  DRAM transaction 的写会先把 mask 规范化，再逐 transaction 切片，避免后续
+  transaction 因空 mask 被误当成全字节写。
+- cycle、address、stack、qos 和 burst length 都采用严格非负整数解析；负数、
+  尾随字符以及越过模型容量的地址范围会报错，不会取模回绕到另一行。
 - `#` 注释和空行会被跳过。
 
 新增 trace 语法时要同步更新 examples、tests 和 README，避免用户不知道格式变化。

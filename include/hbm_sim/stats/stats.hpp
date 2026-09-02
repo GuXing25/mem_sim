@@ -149,6 +149,8 @@ struct Stats {
   double power_rfm_energy_pj = 0.0;
   double power_control_energy_pj = 0.0;
   double thermal_peak_temp_c = 40.0;
+  // 查询时刻所有已实例化（即被热事件触达/耦合创建）的稀疏 thermal-grid
+  // 节点空间平均值；不是全 die 未触达区域平均，也不是时间平均。
   double thermal_avg_temp_c = 40.0;
   int thermal_hotspot_layer = -1;
   int thermal_hotspot_x = -1;
@@ -236,14 +238,16 @@ struct Stats {
   // line 默认拆成两个 32B transaction，因此不能直接乘 host line_size。
   std::uint64_t read_bytes = 0;
   std::uint64_t write_bytes = 0;
+  // payload 加按配置折算的保护/metadata byte；是记账量，不代表已增加总线拍。
   std::uint64_t interface_read_bytes = 0;
   std::uint64_t interface_write_bytes = 0;
   double interface_transfer_rate_gbps = 0.0;          // 每 pin 外部接口速率。
   double peak_bandwidth_GBps = 0.0;                   // data_rate * bus_width / 8。
   double achieved_bandwidth_GBps = 0.0;               // payload 字节换算的实际带宽。
-  double achieved_interface_bandwidth_GBps = 0.0;     // payload+metadata/ECC 的接口侧带宽。
+  // payload+metadata/ECC 的记账等效带宽；当前不会据此延长数据总线占用。
+  double achieved_interface_bandwidth_GBps = 0.0;
   double bandwidth_utilization = 0.0;                 // achieved / peak。
-  double payload_efficiency = 0.0;                    // payload bytes / interface bytes。
+  double payload_efficiency = 0.0;                    // payload bytes / 记账 interface bytes。
   // 仿真结束时还留在 queue_/pending_ 的请求数，便于定位 cycle limit 问题。
   std::uint64_t remaining_requests = 0;
   std::uint64_t remaining_pending = 0;

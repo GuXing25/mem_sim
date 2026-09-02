@@ -31,7 +31,7 @@ MemPhyMode parse_mem_phy_mode(std::string value);
 struct MemPhyOptions {
   // Direct 保持历史完成语义；Behavioral 才启用在线 FIFO/训练/返回流水线。
   MemPhyMode mode = MemPhyMode::Direct;
-  // DFI Group 当前公开版本为 6.0；允许用 6.0.1 标记兼容目标修订。
+  // 接口语义/审计标签；当前实现不会按版本切换 DFI 行为。
   std::string dfi_version = "6.0";
   std::size_t command_fifo_depth = 16;
   std::size_t read_fifo_depth = 16;

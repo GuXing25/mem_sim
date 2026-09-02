@@ -17,16 +17,18 @@ class RowPolicyEngine {
   RowPolicyEngine() = default;
   RowPolicyEngine(std::size_t bank_count, int cap) { reset(bank_count, cap); }
 
-    void reset(std::size_t bank_count, int cap);
+  // bank_count 和 cap 都必须为正；非法库调用直接报错，不静默替换配置。
+  void reset(std::size_t bank_count, int cap);
 
   // ClosedCAP 达到 cap 且该 bank 没有 active request 时，Controller 可以注入显式 PREpb。
-    bool should_schedule_precharge(RowPolicyKind policy, int flat_bank, int active_requests) const;
+  bool should_schedule_precharge(RowPolicyKind policy, int flat_bank,
+                                 int active_requests) const;
   // ClosedCAP 达到 cap 且当前数据命令 timing 允许时，Controller 可以把 RD/WR 升级为 RDA/WRA。
-    bool should_auto_precharge(RowPolicyKind policy, int flat_bank) const;
+  bool should_auto_precharge(RowPolicyKind policy, int flat_bank) const;
   // 显式 PREpb 已经进入 priority buffer，避免同一 bank 重复注入多个 PRE。
-    void mark_precharge_pending(int flat_bank);
+  void mark_precharge_pending(int flat_bank);
   // 每次命令发射后更新访问计数：列访问递增，closing/all-bank closing 清零。
-    void on_issue(RowPolicyKind policy, int flat_bank, Command issued);
+  void on_issue(RowPolicyKind policy, int flat_bank, Command issued);
 
   std::size_t bank_count() const { return column_accesses_.size(); }
 

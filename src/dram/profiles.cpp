@@ -77,6 +77,26 @@ bool parse_profile_bool(std::string value) {
   throw std::invalid_argument("invalid bool in timing profile file: " + value);
 }
 
+int parse_profile_int(const std::string& value) {
+  std::size_t parsed = 0;
+  const int result = std::stoi(value, &parsed, 10);
+  if (parsed != value.size()) {
+    throw std::invalid_argument("invalid integer in timing profile file: " +
+                                value);
+  }
+  return result;
+}
+
+double parse_profile_double(const std::string& value) {
+  std::size_t parsed = 0;
+  const double result = std::stod(value, &parsed);
+  if (parsed != value.size() || !std::isfinite(result)) {
+    throw std::invalid_argument("invalid finite number in timing profile file: " +
+                                value);
+  }
+  return result;
+}
+
 TimingValueSource parse_profile_source(std::string value) {
   value = normalize_profile_key(std::move(value));
   if (value == "jedec" || value == "standard") return TimingValueSource::JEDEC;
@@ -198,12 +218,12 @@ void set_profile_timing(DramSpec& spec,
 
 int profile_nck_from_key(const DramSpec& spec, const std::string& key, const std::string& value) {
   if (key.size() >= 3 && key.rfind("_ns") == key.size() - 3) {
-    return jedec::ns_to_nck(std::stod(value), spec.timing.tCK_ps);
+    return jedec::ns_to_nck(parse_profile_double(value), spec.timing.tCK_ps);
   }
   if (key.size() >= 3 && key.rfind("_us") == key.size() - 3) {
-    return jedec::us_to_nck(std::stod(value), spec.timing.tCK_ps);
+    return jedec::us_to_nck(parse_profile_double(value), spec.timing.tCK_ps);
   }
-  return std::stoi(value);
+  return parse_profile_int(value);
 }
 
 void apply_profile_file_value(DramSpec& spec,
@@ -221,40 +241,40 @@ void apply_profile_file_value(DramSpec& spec,
   else if (key == "vendor_profile") spec.vendor_profile = value;
   else if (key == "mode_profile") spec.mode_profile = value;
   else if (key == "speed_bin_mbps") {
-    spec.speed_bin_mbps = std::stoi(value);
+    spec.speed_bin_mbps = parse_profile_int(value);
     // speed-bin 通常描述外部可见数据速率。除非文件后续显式覆盖
     // data_rate_mbps/tCK_ps，否则保持推导数据速率与 tCK 一致。
     spec.data_rate_mbps = spec.speed_bin_mbps;
     spec.timing.tCK_ps = static_cast<double>(tck_ps_for_speed(spec.data_rate_mbps));
   }
-  else if (key == "density_gb") spec.density_gb = std::stoi(value);
-  else if (key == "stack_height") spec.stack_height = std::stoi(value);
+  else if (key == "density_gb") spec.density_gb = parse_profile_int(value);
+  else if (key == "stack_height") spec.stack_height = parse_profile_int(value);
   else if (key == "data_rate_mbps") {
-    spec.data_rate_mbps = std::stoi(value);
+    spec.data_rate_mbps = parse_profile_int(value);
     // 提供有效数据速率时重新计算标称时钟周期；后续显式 tCK_ps 仍优先。
     spec.timing.tCK_ps = static_cast<double>(tck_ps_for_speed(spec.data_rate_mbps));
   }
-  else if (key == "data_bus_bits") spec.data_bus_bits = std::stoi(value);
-  else if (key == "prefetch_size" || key == "internal_prefetch_size") spec.internal_prefetch_size = std::stoi(value);
-  else if (key == "dfi_phase_count") spec.dfi_phase_count = std::stoi(value);
-  else if (key == "dfi_data_lane_bytes") spec.dfi_data_lane_bytes = std::stoi(value);
-  else if (key == "dfi_read_latency_nck") spec.dfi_read_latency_nck = std::stoi(value);
-  else if (key == "dfi_write_latency_nck") spec.dfi_write_latency_nck = std::stoi(value);
-  else if (key == "dfi_read_latency_ns") spec.dfi_read_latency_nck = jedec::ns_to_nck(std::stod(value), spec.timing.tCK_ps);
-  else if (key == "dfi_write_latency_ns") spec.dfi_write_latency_nck = jedec::ns_to_nck(std::stod(value), spec.timing.tCK_ps);
-  else if (key == "tick_multiplier") spec.tick_multiplier = std::stoi(value);
-  else if (key == "tck_ps") spec.timing.tCK_ps = std::stod(value);
-  else if (key == "channels") spec.org.channels = std::stoi(value);
-  else if (key == "pseudo_channels") spec.org.pseudo_channels = std::stoi(value);
-  else if (key == "sids") spec.org.sids = std::stoi(value);
-  else if (key == "ranks") spec.org.ranks = std::stoi(value);
-  else if (key == "bank_groups") spec.org.bank_groups = std::stoi(value);
-  else if (key == "banks_per_group") spec.org.banks_per_group = std::stoi(value);
-  else if (key == "rows") spec.org.rows = std::stoi(value);
-  else if (key == "columns") spec.org.columns = std::stoi(value);
-  else if (key == "line_size") spec.org.line_size = std::stoi(value);
+  else if (key == "data_bus_bits") spec.data_bus_bits = parse_profile_int(value);
+  else if (key == "prefetch_size" || key == "internal_prefetch_size") spec.internal_prefetch_size = parse_profile_int(value);
+  else if (key == "dfi_phase_count") spec.dfi_phase_count = parse_profile_int(value);
+  else if (key == "dfi_data_lane_bytes") spec.dfi_data_lane_bytes = parse_profile_int(value);
+  else if (key == "dfi_read_latency_nck") spec.dfi_read_latency_nck = parse_profile_int(value);
+  else if (key == "dfi_write_latency_nck") spec.dfi_write_latency_nck = parse_profile_int(value);
+  else if (key == "dfi_read_latency_ns") spec.dfi_read_latency_nck = jedec::ns_to_nck(parse_profile_double(value), spec.timing.tCK_ps);
+  else if (key == "dfi_write_latency_ns") spec.dfi_write_latency_nck = jedec::ns_to_nck(parse_profile_double(value), spec.timing.tCK_ps);
+  else if (key == "tick_multiplier") spec.tick_multiplier = parse_profile_int(value);
+  else if (key == "tck_ps") spec.timing.tCK_ps = parse_profile_double(value);
+  else if (key == "channels") spec.org.channels = parse_profile_int(value);
+  else if (key == "pseudo_channels") spec.org.pseudo_channels = parse_profile_int(value);
+  else if (key == "sids") spec.org.sids = parse_profile_int(value);
+  else if (key == "ranks") spec.org.ranks = parse_profile_int(value);
+  else if (key == "bank_groups") spec.org.bank_groups = parse_profile_int(value);
+  else if (key == "banks_per_group") spec.org.banks_per_group = parse_profile_int(value);
+  else if (key == "rows") spec.org.rows = parse_profile_int(value);
+  else if (key == "columns") spec.org.columns = parse_profile_int(value);
+  else if (key == "line_size") spec.org.line_size = parse_profile_int(value);
   else if (key == "dram_transaction_bytes" || key == "transaction_size") {
-    spec.org.dram_transaction_bytes = std::stoi(value);
+    spec.org.dram_transaction_bytes = parse_profile_int(value);
   }
   else if (key == "supports_refresh") spec.supports_refresh = parse_profile_bool(value);
   else if (key == "supports_rfm") spec.supports_rfm = parse_profile_bool(value);
@@ -272,9 +292,9 @@ void apply_profile_file_value(DramSpec& spec,
   else if (key == "hbm_ras_policy") spec.hbm_ras_policy = value;
   else if (key == "hbm_link_crc_mode") spec.hbm_link_crc_mode = value;
   else if (key == "hbm_link_retry_enabled") spec.hbm_link_retry_enabled = parse_profile_bool(value);
-  else if (key == "hbm_link_crc_bits_per_request") spec.hbm_link_crc_bits_per_request = std::stoi(value);
-  else if (key == "hbm_ras_metadata_bits_per_request") spec.hbm_ras_metadata_bits_per_request = std::stoi(value);
-  else if (key == "hbm_ecc_bits_per_request") spec.hbm_ecc_bits_per_request = std::stoi(value);
+  else if (key == "hbm_link_crc_bits_per_request") spec.hbm_link_crc_bits_per_request = parse_profile_int(value);
+  else if (key == "hbm_ras_metadata_bits_per_request") spec.hbm_ras_metadata_bits_per_request = parse_profile_int(value);
+  else if (key == "hbm_ecc_bits_per_request") spec.hbm_ecc_bits_per_request = parse_profile_int(value);
   else if (key == "lpddr_link_protection") spec.lpddr_link_protection = parse_profile_bool(value);
   else if (key == "lpddr_mode_register_profile") spec.lpddr_mode_register_profile = value;
   else if (key == "lpddr_wck_training_mode") spec.lpddr_wck_training_mode = value;
@@ -285,13 +305,13 @@ void apply_profile_file_value(DramSpec& spec,
   else if (key == "lpddr_dbi_enabled") spec.lpddr_dbi_enabled = parse_profile_bool(value);
   else if (key == "lpddr_link_ecc_enabled") spec.lpddr_link_ecc_enabled = parse_profile_bool(value);
   else if (key == "lpddr_ca_parity_enabled") spec.lpddr_ca_parity_enabled = parse_profile_bool(value);
-  else if (key == "lpddr_dbi_bits_per_request") spec.lpddr_dbi_bits_per_request = std::stoi(value);
-  else if (key == "lpddr_link_ecc_bits_per_request") spec.lpddr_link_ecc_bits_per_request = std::stoi(value);
-  else if (key == "lpddr_ca_parity_bits_per_command") spec.lpddr_ca_parity_bits_per_command = std::stoi(value);
-  else if (key == "refresh_postpone_limit") spec.refresh_postpone_limit = std::stoi(value);
-  else if (key == "refresh_pullin_limit") spec.refresh_pullin_limit = std::stoi(value);
-  else if (key == "refresh_credit_limit") spec.refresh_credit_limit = std::stoi(value);
-  else if (key == "refresh_high_temp_multiplier") spec.refresh_high_temp_multiplier = std::stoi(value);
+  else if (key == "lpddr_dbi_bits_per_request") spec.lpddr_dbi_bits_per_request = parse_profile_int(value);
+  else if (key == "lpddr_link_ecc_bits_per_request") spec.lpddr_link_ecc_bits_per_request = parse_profile_int(value);
+  else if (key == "lpddr_ca_parity_bits_per_command") spec.lpddr_ca_parity_bits_per_command = parse_profile_int(value);
+  else if (key == "refresh_postpone_limit") spec.refresh_postpone_limit = parse_profile_int(value);
+  else if (key == "refresh_pullin_limit") spec.refresh_pullin_limit = parse_profile_int(value);
+  else if (key == "refresh_credit_limit") spec.refresh_credit_limit = parse_profile_int(value);
+  else if (key == "refresh_high_temp_multiplier") spec.refresh_high_temp_multiplier = parse_profile_int(value);
   else throw std::invalid_argument("unsupported key in timing profile file: " + key);
 }
 
@@ -652,7 +672,7 @@ void apply_hbm3_profile(DramSpec& spec) {
   spec.org.rows = 1 << 15;
   spec.org.columns = 1 << 5;
   spec.org.line_size = 64;
-  spec.org.dram_transaction_bytes = 0;
+  spec.org.dram_transaction_bytes = 32;
   spec.data_bus_bits = 1024;
   spec.internal_prefetch_size = 8;
   spec.tick_multiplier = 2;
@@ -896,10 +916,13 @@ void apply_lpddr5_profile(DramSpec& spec) {
   spec.org.ranks = 1;
   spec.org.bank_groups = 4;
   spec.org.banks_per_group = 4;
-  spec.org.rows = 1 << 15;
-  spec.org.columns = 1 << 10;
+  // 本项目的 column 单位是一条 DRAM transaction，不是外部配置中的
+  // 原始 column-address 编码。x16 BL16 一次传 32B；16 banks × 64K rows
+  // × 64 transaction columns × 32B = 2 GiB，对应 16 Gibit device。
+  spec.org.rows = 1 << 16;
+  spec.org.columns = 1 << 6;
   spec.org.line_size = 64;
-  spec.org.dram_transaction_bytes = 0;
+  spec.org.dram_transaction_bytes = 32;
   spec.data_bus_bits = 16;
   spec.internal_prefetch_size = 16;
   spec.tick_multiplier = 1;

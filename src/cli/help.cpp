@@ -79,6 +79,7 @@ void print_help(const char* argv0) {
       << "                      SECDED shadow model over real payload lines\n"
       << "  --power-vdd V --idd0 MA --idd2n MA --idd3n MA --idd4r MA --idd4w MA\n"
       << "  --idd5ab MA --idd5pb MA --idd6x MA --idd-devices-per-rank N\n"
+      << "  --idd-burst-cycles N  override IDD burst duration in nCK (0 uses nBL)\n"
       << "                      IDD/VDD inputs for --power-source dramsim3_idd\n"
       << "  --requests N        In trace mode, caps expanded requests; 0 reads the whole trace\n"
       << "  --read-ratio PERCENT\n"

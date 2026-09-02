@@ -233,6 +233,10 @@ MemorySystem::MemorySystem(DramSpec spec, MemorySystemOptions options)
   if (options_.stack_count <= 0) {
     throw std::invalid_argument("stack_count must be positive");
   }
+  validate_spec(spec_);
+  // 在任何维度参与 controller 数量前检查乘法溢出；不能依靠后续
+  // Controller 构造间接暴露错误。
+  (void)spec_.total_addressable_transactions();
   const std::uint64_t controller_count = checked_multiply_u64(
       static_cast<std::uint64_t>(options_.stack_count),
       static_cast<std::uint64_t>(std::max(1, spec_.org.channels)),
@@ -243,6 +247,16 @@ MemorySystem::MemorySystem(DramSpec spec, MemorySystemOptions options)
   }
   if (options_.stack_interleave_bytes == 0) {
     throw std::invalid_argument("stack_interleave_bytes must be positive");
+  }
+  if (options_.stack_mapping == StackMappingKind::Interleaved &&
+      (options_.stack_interleave_bytes <
+           static_cast<std::uint64_t>(spec_.org.line_size) ||
+       options_.stack_interleave_bytes %
+               static_cast<std::uint64_t>(spec_.org.line_size) !=
+           0)) {
+    throw std::invalid_argument(
+        "interleaved stack mapping requires stack_interleave_bytes to be a "
+        "positive multiple of line_size");
   }
   if (options_.stack_ingress_buffer_size == 0 ||
       options_.stack_dispatch_width == 0) {
@@ -320,6 +334,14 @@ int MemorySystem::target_channel(const Request &req) {
   // 是地址映射结果， round_robin/xor 可以覆盖它，用于压力测试多 controller
   // 并行或复现实验配置。
   int channels = std::max(1, spec_.org.channels);
+  const bool decoded_channel_is_authoritative =
+      req.type == RequestType::Maintenance ||
+      options_.channel_mapper == ChannelMapperKind::Decoded;
+  if (decoded_channel_is_authoritative &&
+      (req.decoded.channel < 0 || req.decoded.channel >= channels)) {
+    throw std::out_of_range(
+        "request decoded channel is outside the DRAM organization");
+  }
   if (channels <= 1) {
     return 0;
   }
@@ -327,12 +349,12 @@ int MemorySystem::target_channel(const Request &req) {
     // 初始化、MR/WCK training、RAS/ECC 等控制请求已经携带目标 channel。
     // 它们不应该被 workload channel mapper 重写，否则 all-channel init sequence
     // 会在 round_robin/xor 实验中打到错误 controller。
-    return std::clamp(req.decoded.channel, 0, channels - 1);
+    return req.decoded.channel;
   }
 
   switch (options_.channel_mapper) {
   case ChannelMapperKind::Decoded:
-    return std::clamp(req.decoded.channel, 0, channels - 1);
+    return req.decoded.channel;
   case ChannelMapperKind::RoundRobin: {
     const std::size_t stack =
         static_cast<std::size_t>(std::max(0, req.target_stack));
@@ -411,6 +433,15 @@ Request MemorySystem::localize_request(Request req, int stack,
 }
 
 bool MemorySystem::enqueue(Request req) {
+  if (req.qos_class < 0 || req.target_stack < -1 ||
+      req.target_channel < -1) {
+    throw std::invalid_argument(
+        "request qos/stack/channel selectors must be non-negative or unset");
+  }
+  if (req.has_explicit_stack && req.target_stack < 0) {
+    throw std::invalid_argument(
+        "request marked with explicit stack is missing target_stack");
+  }
   int stack = target_stack(req);
   auto &ingress = stack_ingress_queues_[static_cast<std::size_t>(stack)];
   if (ingress.size() >= options_.stack_ingress_buffer_size) {

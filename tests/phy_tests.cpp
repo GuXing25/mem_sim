@@ -106,6 +106,16 @@ void test_lifecycle_fifo_and_dvfs() {
   }
   require(rejected, "zero-depth FIFO must be rejected");
 
+  rejected = false;
+  try {
+    hbm_sim::MemPhyOptions bad;
+    bad.command_pipeline_cycles = -1;
+    hbm_sim::MemPhy invalid(spec, bad, image);
+  } catch (const std::invalid_argument &) {
+    rejected = true;
+  }
+  require(rejected, "negative PHY pipeline cycles must be rejected");
+
   // HBM edge-pairing 用 half-nCK tick 表示。生命周期参数必须和 PHY pipeline
   // 一样按 nCK 换算，不能少等一半时间。
   hbm_sim::DramSpec hbm = hbm_sim::make_spec("hbm4");

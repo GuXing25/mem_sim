@@ -231,7 +231,8 @@ void print_stats(std::ostream& os, const Stats& stats) {
   print_field(os, "interface_write_bytes", stats.interface_write_bytes);
   os << std::fixed << std::setprecision(3);
   // interface_transfer_rate_gbps 是 pin/link 速率；peak_bandwidth_GBps 是速率乘
-  // data_bus_bits 的理论峰值；achieved_* 则来自实际完成请求数。
+  // data_bus_bits 的理论峰值。achieved_if 是完成事务加协议 bit 的记账等效值，
+  // 当前模型不会用这些额外 bit 延长数据总线占用，不能当作 pin 波形测量值。
   print_field(os, "if_xfer_rate_Gbps", stats.interface_transfer_rate_gbps);
   print_field(os, "peak_bandwidth_GBps", stats.peak_bandwidth_GBps);
   print_field(os, "achieved_bw_GBps", stats.achieved_bandwidth_GBps);

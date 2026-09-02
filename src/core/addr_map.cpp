@@ -47,7 +47,12 @@ StackAddressMapper::StackAddressMapper(int stack_count,
 }
 
 StackAddress StackAddressMapper::decode(Address system_address) const {
-  if (stack_count_ == 1) return {0, system_address};
+  if (stack_count_ == 1) {
+    if (stack_capacity_bytes_ != 0 && system_address >= stack_capacity_bytes_) {
+      throw std::out_of_range("system address exceeds stack capacity");
+    }
+    return {0, system_address};
+  }
   if (kind_ == StackMappingKind::Blocked) {
     std::uint64_t stack = system_address / stack_capacity_bytes_;
     if (stack >= static_cast<std::uint64_t>(stack_count_)) {
@@ -71,10 +76,10 @@ StackAddress StackAddressMapper::decode(Address system_address) const {
 
 Address StackAddressMapper::encode(int stack, Address local_address) const {
   if (stack < 0 || stack >= stack_count_) throw std::out_of_range("stack_id out of range");
-  if (stack_count_ == 1) return local_address;
   if (stack_capacity_bytes_ != 0 && local_address >= stack_capacity_bytes_) {
     throw std::out_of_range("local address exceeds stack capacity");
   }
+  if (stack_count_ == 1) return local_address;
   if (kind_ == StackMappingKind::Blocked) {
     if (local_address >= stack_capacity_bytes_) {
       throw std::out_of_range("local address exceeds stack capacity");

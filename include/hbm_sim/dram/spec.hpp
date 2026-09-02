@@ -560,6 +560,9 @@ void apply_standard_traits(DramSpec &spec, const StandardTraits &traits);
 DramSpec make_spec_draft(const std::string &name);
 // 完整默认模型：traits -> default profile -> finalize。
 DramSpec make_spec(const std::string &name);
+// 只检查当前规格是否合法，不修改 timing table/constraint；供 Controller、
+// MemoryImage、PHY 等公开库入口防止绕过 CLI/finalize 后静默降级。
+void validate_spec(const DramSpec &spec);
 void finalize_spec(DramSpec &spec);
 void refresh_timing_constraints(DramSpec &spec);
 void refresh_timing_table(DramSpec &spec);

@@ -108,7 +108,7 @@ system、命令执行器和维护逻辑在仿真过程中累加。`stats.cpp` �
 | `rowbuf_*` | 行缓冲模型 | ACT/PRE、dirty writeback、hit/miss、lazy load、open/dirty row 等行缓冲统计。 |
 | `power_events` | 功耗模型 | 进入存储模型的命令能量事件数。 |
 | `power_*_energy_pJ` | 功耗模型 | 命令类别累计能量；`power_source=dramsim3_idd` 时由 VDD/IDD/timing 推导。 |
-| `thermal_peak_temp_C` / `thermal_avg_temp_C` | 热模型 | 简化 RC 更新得到的热点温度和平均温度。 |
+| `thermal_peak_temp_C` / `thermal_avg_temp_C` | 热模型 | 简化 RC 更新得到的历史热点温度，以及查询时刻已实例化稀疏 thermal-grid 节点的空间平均；后者不是全 die 或时间平均。 |
 | `thermal_hotspot_layer/x/y` | 热模型 | 当前热点所在 layer 和 thermal-grid 坐标。 |
 | `thermal_lateral_transfers` | 热模型 | 横向邻接热耦合发生次数。 |
 | `thermal_vertical_transfers` | 热模型 | 上下层热耦合发生次数。 |
@@ -137,8 +137,8 @@ system、命令执行器和维护逻辑在仿真过程中累加。`stats.cpp` �
 | `low_power_exits` | 低功耗管理 | 退出低功耗状态的次数。 |
 | `low_power_cycles` | 低功耗管理 | 处于低功耗状态的总周期数。 |
 | `low_power_exit_blocked` | 低功耗管理 | 退出低功耗但仍被时序/状态阻塞的次数。 |
-| `interface_command_bits` | 接口统计 | 命令在接口上传输消耗的 bit 数。 |
-| `interface_overhead_bits` | 接口统计 | 非 payload 的接口开销 bit 数。 |
+| `interface_command_bits` | 接口统计 | 命令保护的记账 bit 数；当前不增加 CA 总线拍。 |
+| `interface_overhead_bits` | 接口统计 | 非 payload 的记账接口开销 bit 数。 |
 | `host_requests` | frontend | 拆分前的普通 host/cache-line 请求数，不含维护请求。 |
 | `dram_transactions` | frontend | 拆分后送入控制器的物理 RD/WR 请求数，不含维护请求。 |
 | `controller_count` | MemorySystem | 系统中 controller 的总数。 |
@@ -152,12 +152,12 @@ system、命令执行器和维护逻辑在仿真过程中累加。`stats.cpp` �
 | `aggregate_ctrl_cycles` | controller 累加 | 所有 controller 的有效周期数之和。 |
 | `read_bytes` | `completed_reads * burst_bytes` | 完成读请求对应的 payload 字节数。 |
 | `write_bytes` | `completed_writes * burst_bytes` | 完成写请求对应的 payload 字节数。 |
-| `interface_read_bytes` | 接口传输统计 | 读方向接口实际搬运字节数，可能包含开销。 |
-| `interface_write_bytes` | 接口传输统计 | 写方向接口实际搬运字节数，可能包含开销。 |
+| `interface_read_bytes` | 接口统计 | 读方向 payload 加协议开销的等效需求字节数。 |
+| `interface_write_bytes` | 接口统计 | 写方向 payload 加协议开销的等效需求字节数。 |
 | `if_xfer_rate_Gbps` | 配置参数 | 接口侧传输速率，用于估算峰值带宽。 |
 | `peak_bandwidth_GBps` | 配置推导 | 理想峰值带宽。 |
 | `achieved_bw_GBps` | payload/time | 按 payload byte 计算的实际带宽。 |
-| `achieved_if_bw_GBps` | interface/time | 按 interface byte 计算的实际接口带宽。 |
+| `achieved_if_bw_GBps` | interface/time | 按 payload+协议开销计算的记账等效需求带宽；不是 pin-accurate 实测值。 |
 | `bandwidth_util_pct` | `achieved_bw_GBps / peak_bandwidth_GBps` | payload 带宽占峰值带宽的百分比。 |
 | `payload_efficiency_pct` | `payload_bytes / interface_bytes` | 有效 payload 在接口传输中的占比。 |
 | `remaining_requests` | 队列状态 | 仿真结束时仍在读/写/优先队列里的请求数。 |
@@ -195,9 +195,9 @@ system、命令执行器和维护逻辑在仿真过程中累加。`stats.cpp` �
 - `cycles` 和 `system_cycles` 适合看系统运行时间。
 - `aggregate_ctrl_cycles` 适合做多 controller 平均队列长度。
 - `read_bytes/write_bytes` 是 payload。
-- `interface_read_bytes/interface_write_bytes` 是接口实际传输量。
+- `interface_read_bytes/interface_write_bytes` 是接口记账量；当前不反向延长总线占用。
 - `achieved_bw_GBps` 看有效载荷带宽。
-- `achieved_if_bw_GBps` 看接口占用带宽。
+- `achieved_if_bw_GBps` 看包含协议 bit 的等效需求带宽，不能单独用于判断物理链路饱和。
 - `payload_efficiency_pct` 用于观察 ECC/CRC/DBI/metadata 等开销。
 - `data_mismatches == 0` 是 payload 正确性的基本通过条件。
 - `mismatch_report.txt` 用于定位具体 expected/actual 差异；统计字段只给出数量。

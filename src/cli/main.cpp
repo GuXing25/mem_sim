@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <fstream>
 #include <filesystem>
 #include <iomanip>
@@ -111,12 +112,50 @@ struct Cli {
 };
 
 std::uint64_t parse_u64(const std::string& value) {
-  // std::stoull 会处理十进制字符串；当前 CLI 的数值参数保持简单，不做单位后缀。
-  return static_cast<std::uint64_t>(std::stoull(value));
+  // stoull("-1") 会按无符号规则返回 UINT64_MAX，而且 stoi/stod 默认允许
+  // 未解析的尾部字符。配置错误不能静默变成一个看似合法的巨大实验。
+  if (value.empty() || value.front() == '-' ||
+      std::any_of(value.begin(), value.end(), [](unsigned char c) {
+        return std::isspace(c);
+      })) {
+    throw std::invalid_argument("invalid non-negative integer: " + value);
+  }
+  std::size_t parsed = 0;
+  const auto result = std::stoull(value, &parsed, 10);
+  if (parsed != value.size()) {
+    throw std::invalid_argument("invalid non-negative integer: " + value);
+  }
+  return static_cast<std::uint64_t>(result);
 }
 
 int parse_int(const std::string& value) {
-  return std::stoi(value);
+  if (value.empty() ||
+      std::any_of(value.begin(), value.end(), [](unsigned char c) {
+        return std::isspace(c);
+      })) {
+    throw std::invalid_argument("invalid integer: " + value);
+  }
+  std::size_t parsed = 0;
+  const int result = std::stoi(value, &parsed, 10);
+  if (parsed != value.size()) {
+    throw std::invalid_argument("invalid integer: " + value);
+  }
+  return result;
+}
+
+double parse_double(const std::string& value) {
+  if (value.empty() ||
+      std::any_of(value.begin(), value.end(), [](unsigned char c) {
+        return std::isspace(c);
+      })) {
+    throw std::invalid_argument("invalid finite number: " + value);
+  }
+  std::size_t parsed = 0;
+  const double result = std::stod(value, &parsed);
+  if (parsed != value.size() || !std::isfinite(result)) {
+    throw std::invalid_argument("invalid finite number: " + value);
+  }
+  return result;
 }
 
 bool parse_bool(const std::string& value) {
@@ -333,7 +372,7 @@ bool apply_storage_model_option(hbm_sim::StorageModelOptions& options,
   } else if (key == "memory_chunk_cache_entries") {
     options.memory_backend.chunk_cache_entries = static_cast<std::size_t>(parse_u64(value));
   } else if (key == "sparse_density_warning_pct") {
-    options.sparse_density_warning_pct = std::stod(value);
+    options.sparse_density_warning_pct = parse_double(value);
   } else if (key == "topology_stats_scan_limit") {
     options.topology_stats_scan_limit = parse_u64(value);
   } else if (key == "floorplan" || key == "floorplan_enabled" || key == "storage_floorplan") {
@@ -345,13 +384,13 @@ bool apply_storage_model_option(hbm_sim::StorageModelOptions& options,
   } else if (key == "power_source" || key == "power_calibration") {
     options.power_source = lower_value(value);
   } else if (key == "power_scale") {
-    options.power_scale = std::stod(value);
+    options.power_scale = parse_double(value);
   } else if (key == "thermal_ambient_c") {
-    options.thermal_ambient_c = std::stod(value);
+    options.thermal_ambient_c = parse_double(value);
   } else if (key == "thermal_cooling_per_cycle") {
-    options.thermal_cooling_per_cycle = std::stod(value);
+    options.thermal_cooling_per_cycle = parse_double(value);
   } else if (key == "thermal_rise_c_per_pj") {
-    options.thermal_rise_c_per_pj = std::stod(value);
+    options.thermal_rise_c_per_pj = parse_double(value);
   } else if (key == "thermal_grid_cols_per_tile" || key == "thermal_num_x_grids") {
     options.thermal_grid_cols_per_tile = parse_int(value);
   } else if (key == "thermal_grid_rows_per_tile" || key == "thermal_num_y_grids") {
@@ -359,23 +398,23 @@ bool apply_storage_model_option(hbm_sim::StorageModelOptions& options,
   } else if (key == "thermal_coupling" || key == "thermal_coupling_enabled") {
     options.thermal_coupling_enabled = parse_bool(value);
   } else if (key == "thermal_lateral_coupling") {
-    options.thermal_lateral_coupling = std::stod(value);
+    options.thermal_lateral_coupling = parse_double(value);
   } else if (key == "thermal_vertical_coupling") {
-    options.thermal_vertical_coupling = std::stod(value);
+    options.thermal_vertical_coupling = parse_double(value);
   } else if (key == "thermal_tsv_coupling_scale") {
-    options.thermal_tsv_coupling_scale = std::stod(value);
+    options.thermal_tsv_coupling_scale = parse_double(value);
   } else if (key == "thermal_tsvs_per_grid" || key == "tsvs_per_grid") {
     options.thermal_tsvs_per_grid = parse_int(value);
   } else if (key == "thermal_chip_dim_x_m" || key == "chip_dim_x") {
-    options.thermal_chip_dim_x_m = std::stod(value);
+    options.thermal_chip_dim_x_m = parse_double(value);
   } else if (key == "thermal_chip_dim_y_m" || key == "chip_dim_y") {
-    options.thermal_chip_dim_y_m = std::stod(value);
+    options.thermal_chip_dim_y_m = parse_double(value);
   } else if (key == "thermal_tsv_radius_m" || key == "r_tsv") {
-    options.thermal_tsv_radius_m = std::stod(value);
+    options.thermal_tsv_radius_m = parse_double(value);
   } else if (key == "thermal_k_silicon" || key == "ksi") {
-    options.thermal_k_silicon = std::stod(value);
+    options.thermal_k_silicon = parse_double(value);
   } else if (key == "thermal_k_copper" || key == "kcu") {
-    options.thermal_k_copper = std::stod(value);
+    options.thermal_k_copper = parse_double(value);
   } else if (key == "subarrays_per_bank") {
     options.subarrays_per_bank = parse_int(value);
   } else if (key == "mats_per_subarray_x") {
@@ -399,59 +438,59 @@ bool apply_storage_model_option(hbm_sim::StorageModelOptions& options,
   } else if (key == "ecc_inject_period") {
     options.ecc_inject_period = parse_int(value);
   } else if (key == "power_vdd" || key == "vdd") {
-    options.idd_vdd = std::stod(value);
+    options.idd_vdd = parse_double(value);
   } else if (key == "idd0") {
-    options.idd0_ma = std::stod(value);
+    options.idd0_ma = parse_double(value);
   } else if (key == "idd2n") {
-    options.idd2n_ma = std::stod(value);
+    options.idd2n_ma = parse_double(value);
   } else if (key == "idd3n") {
-    options.idd3n_ma = std::stod(value);
+    options.idd3n_ma = parse_double(value);
   } else if (key == "idd4r") {
-    options.idd4r_ma = std::stod(value);
+    options.idd4r_ma = parse_double(value);
   } else if (key == "idd4w") {
-    options.idd4w_ma = std::stod(value);
+    options.idd4w_ma = parse_double(value);
   } else if (key == "idd5ab") {
-    options.idd5ab_ma = std::stod(value);
+    options.idd5ab_ma = parse_double(value);
   } else if (key == "idd5pb") {
-    options.idd5pb_ma = std::stod(value);
+    options.idd5pb_ma = parse_double(value);
   } else if (key == "idd6x") {
-    options.idd6x_ma = std::stod(value);
+    options.idd6x_ma = parse_double(value);
   } else if (key == "idd_devices_per_rank" || key == "devices_per_rank") {
-    options.idd_devices_per_rank = std::stod(value);
+    options.idd_devices_per_rank = parse_double(value);
   } else if (key == "idd_burst_cycles" || key == "burst_cycle") {
-    options.idd_burst_cycles = std::stod(value);
+    options.idd_burst_cycles = parse_double(value);
   } else if (key == "power_act_pj") {
-    options.act_energy_pj = std::stod(value);
+    options.act_energy_pj = parse_double(value);
   } else if (key == "power_act1_pj") {
-    options.act1_energy_pj = std::stod(value);
+    options.act1_energy_pj = parse_double(value);
   } else if (key == "power_act2_pj") {
-    options.act2_energy_pj = std::stod(value);
+    options.act2_energy_pj = parse_double(value);
   } else if (key == "power_pre_pj") {
-    options.pre_energy_pj = std::stod(value);
+    options.pre_energy_pj = parse_double(value);
   } else if (key == "power_preab_pj") {
-    options.preab_energy_pj = std::stod(value);
+    options.preab_energy_pj = parse_double(value);
   } else if (key == "power_cas_pj") {
-    options.cas_energy_pj = std::stod(value);
+    options.cas_energy_pj = parse_double(value);
   } else if (key == "power_read_pj") {
-    options.read_energy_pj = std::stod(value);
+    options.read_energy_pj = parse_double(value);
   } else if (key == "power_read_per_byte_pj") {
-    options.read_energy_per_byte_pj = std::stod(value);
+    options.read_energy_per_byte_pj = parse_double(value);
   } else if (key == "power_write_pj") {
-    options.write_energy_pj = std::stod(value);
+    options.write_energy_pj = parse_double(value);
   } else if (key == "power_write_per_byte_pj") {
-    options.write_energy_per_byte_pj = std::stod(value);
+    options.write_energy_per_byte_pj = parse_double(value);
   } else if (key == "power_refpb_pj") {
-    options.refpb_energy_pj = std::stod(value);
+    options.refpb_energy_pj = parse_double(value);
   } else if (key == "power_refdb_pj") {
-    options.refdb_energy_pj = std::stod(value);
+    options.refdb_energy_pj = parse_double(value);
   } else if (key == "power_refab_pj") {
-    options.refab_energy_pj = std::stod(value);
+    options.refab_energy_pj = parse_double(value);
   } else if (key == "power_rfmpb_pj") {
-    options.rfmpb_energy_pj = std::stod(value);
+    options.rfmpb_energy_pj = parse_double(value);
   } else if (key == "power_rfmab_pj") {
-    options.rfmab_energy_pj = std::stod(value);
+    options.rfmab_energy_pj = parse_double(value);
   } else if (key == "power_control_pj") {
-    options.control_energy_pj = std::stod(value);
+    options.control_energy_pj = parse_double(value);
   } else {
     return false;
   }
@@ -608,7 +647,7 @@ void apply_option(Cli& cli, const std::string& raw_key, const std::string& value
   } else if (key == "requests") {
     cli.requests = parse_u64(value);
   } else if (key == "read_ratio") {
-    cli.read_ratio = std::stoi(value);
+    cli.read_ratio = parse_int(value);
   } else if (key == "seed") {
     cli.seed = parse_u64(value);
   } else if (key == "random_address_space_bytes") {
@@ -652,9 +691,9 @@ void apply_option(Cli& cli, const std::string& raw_key, const std::string& value
   } else if (key == "phy_auto_train") {
     cli.controller.phy.auto_train = parse_bool(value);
   } else if (key == "write_low_watermark") {
-    cli.controller.write_low_watermark = std::stod(value);
+    cli.controller.write_low_watermark = parse_double(value);
   } else if (key == "write_high_watermark") {
-    cli.controller.write_high_watermark = std::stod(value);
+    cli.controller.write_high_watermark = parse_double(value);
   } else if (key == "max_cycles") {
     cli.max_cycles = parse_u64(value);
   } else if (key == "stats_view") {
@@ -807,7 +846,7 @@ void apply_spec_overrides(hbm_sim::DramSpec& spec,
   // 文件中的书写顺序无关。
   for (const auto& [key, value] : overrides) {
     if (key == "tck_ps") {
-      spec.timing.tCK_ps = std::stod(value);
+      spec.timing.tCK_ps = parse_double(value);
     }
   }
 
@@ -835,8 +874,8 @@ void apply_spec_overrides(hbm_sim::DramSpec& spec,
     else if (key == "dfi_data_lane_bytes") spec.dfi_data_lane_bytes = parse_int(value);
     else if (key == "dfi_read_latency_nck") spec.dfi_read_latency_nck = parse_int(value);
     else if (key == "dfi_write_latency_nck") spec.dfi_write_latency_nck = parse_int(value);
-    else if (key == "dfi_read_latency_ns") spec.dfi_read_latency_nck = hbm_sim::jedec::ns_to_nck(std::stod(value), spec.timing.tCK_ps);
-    else if (key == "dfi_write_latency_ns") spec.dfi_write_latency_nck = hbm_sim::jedec::ns_to_nck(std::stod(value), spec.timing.tCK_ps);
+    else if (key == "dfi_read_latency_ns") spec.dfi_read_latency_nck = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
+    else if (key == "dfi_write_latency_ns") spec.dfi_write_latency_nck = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
     else if (key == "tick_multiplier") spec.tick_multiplier = parse_int(value);
     else if (key == "full_stack_model") spec.full_stack_model = parse_bool(value);
     else if (key == "supports_refresh") spec.supports_refresh = parse_bool(value);
@@ -958,60 +997,60 @@ void apply_spec_overrides(hbm_sim::DramSpec& spec,
     else if (key == "neccscrub") spec.timing.nECCSCRUB = parse_int(value);
     else if (key == "nraserr") spec.timing.nRASERR = parse_int(value);
     else if (key == "nlinkretry") spec.timing.nLINKRETRY = parse_int(value);
-    else if (key == "tck_ps") spec.timing.tCK_ps = std::stod(value);
-    else if (key == "trc_ns") spec.timing.nRC = hbm_sim::jedec::ns_to_nck(std::stod(value), spec.timing.tCK_ps);
-    else if (key == "tras_ns") spec.timing.nRAS = hbm_sim::jedec::ns_to_nck(std::stod(value), spec.timing.tCK_ps);
-    else if (key == "trcdrd_ns" || key == "trcd_rd_ns") spec.timing.nRCDRD = hbm_sim::jedec::ns_to_nck(std::stod(value), spec.timing.tCK_ps);
-    else if (key == "trcdwr_ns" || key == "trcd_wr_ns") spec.timing.nRCDWR = hbm_sim::jedec::ns_to_nck(std::stod(value), spec.timing.tCK_ps);
-    else if (key == "trp_ns" || key == "trppb_ns") spec.timing.nRP = hbm_sim::jedec::ns_to_nck(std::stod(value), spec.timing.tCK_ps);
-    else if (key == "trpab_ns") spec.timing.nRPab = hbm_sim::jedec::ns_to_nck(std::stod(value), spec.timing.tCK_ps);
-    else if (key == "trtp_ns") spec.timing.nRTP = hbm_sim::jedec::ns_to_nck(std::stod(value), spec.timing.tCK_ps);
+    else if (key == "tck_ps") spec.timing.tCK_ps = parse_double(value);
+    else if (key == "trc_ns") spec.timing.nRC = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
+    else if (key == "tras_ns") spec.timing.nRAS = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
+    else if (key == "trcdrd_ns" || key == "trcd_rd_ns") spec.timing.nRCDRD = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
+    else if (key == "trcdwr_ns" || key == "trcd_wr_ns") spec.timing.nRCDWR = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
+    else if (key == "trp_ns" || key == "trppb_ns") spec.timing.nRP = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
+    else if (key == "trpab_ns") spec.timing.nRPab = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
+    else if (key == "trtp_ns") spec.timing.nRTP = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
     // LPDDR 文档常把写到预充的约束写作 tWTP；本模型的终端 WR->PRE
     // 路径统一保存在 nWR，因此与外部 profile 解析器保持同一别名语义。
-    else if (key == "twr_ns" || key == "twtp_ns") spec.timing.nWR = hbm_sim::jedec::ns_to_nck(std::stod(value), spec.timing.tCK_ps);
-    else if (key == "trrds_ns" || key == "trrd_ns") spec.timing.nRRDS = hbm_sim::jedec::ns_to_nck(std::stod(value), spec.timing.tCK_ps);
-    else if (key == "trrdl_ns") spec.timing.nRRDL = hbm_sim::jedec::ns_to_nck(std::stod(value), spec.timing.tCK_ps);
-    else if (key == "tfaw_ns") spec.timing.nFAW = hbm_sim::jedec::ns_to_nck(std::stod(value), spec.timing.tCK_ps);
-    else if (key == "twtrs_ns" || key == "twtr_s_ns") spec.timing.nWTRS = hbm_sim::jedec::ns_to_nck(std::stod(value), spec.timing.tCK_ps);
-    else if (key == "twtrl_ns" || key == "twtr_l_ns") spec.timing.nWTRL = hbm_sim::jedec::ns_to_nck(std::stod(value), spec.timing.tCK_ps);
-    else if (key == "trtw_ns") spec.timing.nRTW = hbm_sim::jedec::ns_to_nck(std::stod(value), spec.timing.tCK_ps);
-    else if (key == "tccds_ns") spec.timing.nCCDS = hbm_sim::jedec::ns_to_nck(std::stod(value), spec.timing.tCK_ps);
-    else if (key == "tccdl_ns") spec.timing.nCCDL = hbm_sim::jedec::ns_to_nck(std::stod(value), spec.timing.tCK_ps);
-    else if (key == "tccdr_ns") spec.timing.nCCDR = hbm_sim::jedec::ns_to_nck(std::stod(value), spec.timing.tCK_ps);
-    else if (key == "trfc_ns" || key == "trfcab_ns") spec.timing.nRFC = hbm_sim::jedec::ns_to_nck(std::stod(value), spec.timing.tCK_ps);
-    else if (key == "trfcpb_ns" || key == "trfcdb_ns") spec.timing.nRFCpb = hbm_sim::jedec::ns_to_nck(std::stod(value), spec.timing.tCK_ps);
-    else if (key == "trfmab_ns") spec.timing.nRFMab = hbm_sim::jedec::ns_to_nck(std::stod(value), spec.timing.tCK_ps);
-    else if (key == "trfmpb_ns") spec.timing.nRFMpb = hbm_sim::jedec::ns_to_nck(std::stod(value), spec.timing.tCK_ps);
-    else if (key == "trrefd_ns") spec.timing.nRREFD = hbm_sim::jedec::ns_to_nck(std::stod(value), spec.timing.tCK_ps);
+    else if (key == "twr_ns" || key == "twtp_ns") spec.timing.nWR = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
+    else if (key == "trrds_ns" || key == "trrd_ns") spec.timing.nRRDS = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
+    else if (key == "trrdl_ns") spec.timing.nRRDL = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
+    else if (key == "tfaw_ns") spec.timing.nFAW = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
+    else if (key == "twtrs_ns" || key == "twtr_s_ns") spec.timing.nWTRS = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
+    else if (key == "twtrl_ns" || key == "twtr_l_ns") spec.timing.nWTRL = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
+    else if (key == "trtw_ns") spec.timing.nRTW = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
+    else if (key == "tccds_ns") spec.timing.nCCDS = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
+    else if (key == "tccdl_ns") spec.timing.nCCDL = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
+    else if (key == "tccdr_ns") spec.timing.nCCDR = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
+    else if (key == "trfc_ns" || key == "trfcab_ns") spec.timing.nRFC = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
+    else if (key == "trfcpb_ns" || key == "trfcdb_ns") spec.timing.nRFCpb = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
+    else if (key == "trfmab_ns") spec.timing.nRFMab = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
+    else if (key == "trfmpb_ns") spec.timing.nRFMpb = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
+    else if (key == "trrefd_ns") spec.timing.nRREFD = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
     else if (key == "tdbr2act_ns" || key == "trefdb2act_ns") {
-      spec.timing.nREFDB2ACT = hbm_sim::jedec::ns_to_nck(std::stod(value), spec.timing.tCK_ps);
+      spec.timing.nREFDB2ACT = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
     }
     else if (key == "tdbr2dbr_s_ns" || key == "trefdb2refdb_s_ns") {
-      spec.timing.nREFDB2REFDBS = hbm_sim::jedec::ns_to_nck(std::stod(value), spec.timing.tCK_ps);
+      spec.timing.nREFDB2REFDBS = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
     }
     else if (key == "tdbr2dbr_l_ns" || key == "trefdb2refdb_l_ns") {
-      spec.timing.nREFDB2REFDBL = hbm_sim::jedec::ns_to_nck(std::stod(value), spec.timing.tCK_ps);
+      spec.timing.nREFDB2REFDBL = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
     }
-    else if (key == "trefi_us") spec.timing.nREFI = hbm_sim::jedec::us_to_nck(std::stod(value), spec.timing.tCK_ps);
-    else if (key == "trefipb_us") spec.timing.nREFIpb = hbm_sim::jedec::us_to_nck(std::stod(value), spec.timing.tCK_ps);
-    else if (key == "trefipb_ns" || key == "trefidb_ns") spec.timing.nREFIpb = hbm_sim::jedec::ns_to_nck(std::stod(value), spec.timing.tCK_ps);
-    else if (key == "twck2ck_ns") spec.timing.nWCK2CK = hbm_sim::jedec::ns_to_nck(std::stod(value), spec.timing.tCK_ps);
-    else if (key == "twckpst_ns") spec.timing.nWCKPST = hbm_sim::jedec::ns_to_nck(std::stod(value), spec.timing.tCK_ps);
-    else if (key == "tcas_ns") spec.timing.nCAS = hbm_sim::jedec::ns_to_nck(std::stod(value), spec.timing.tCK_ps);
-    else if (key == "tcs_ns") spec.timing.nCS = hbm_sim::jedec::ns_to_nck(std::stod(value), spec.timing.tCK_ps);
-    else if (key == "tppd_ns") spec.timing.nPPD = hbm_sim::jedec::ns_to_nck(std::stod(value), spec.timing.tCK_ps);
-    else if (key == "taad_min_ns") spec.timing.nAADMin = hbm_sim::jedec::ns_to_nck(std::stod(value), spec.timing.tCK_ps);
-    else if (key == "taad_ns" || key == "taad_max_ns") spec.timing.nAADMax = hbm_sim::jedec::ns_to_nck(std::stod(value), spec.timing.tCK_ps);
-    else if (key == "tmrw_ns") spec.timing.nMRW = hbm_sim::jedec::ns_to_nck(std::stod(value), spec.timing.tCK_ps);
-    else if (key == "tmrr_ns") spec.timing.nMRR = hbm_sim::jedec::ns_to_nck(std::stod(value), spec.timing.tCK_ps);
-    else if (key == "twcksync_ns") spec.timing.nWCKSYNC = hbm_sim::jedec::ns_to_nck(std::stod(value), spec.timing.tCK_ps);
-    else if (key == "twcktrain_ns") spec.timing.nWCKTRAIN = hbm_sim::jedec::ns_to_nck(std::stod(value), spec.timing.tCK_ps);
-    else if (key == "tdvfs_ns") spec.timing.nDVFS = hbm_sim::jedec::ns_to_nck(std::stod(value), spec.timing.tCK_ps);
-    else if (key == "tpdex_ns" || key == "txp_ns") spec.timing.nPDEX = hbm_sim::jedec::ns_to_nck(std::stod(value), spec.timing.tCK_ps);
-    else if (key == "tsrefex_ns" || key == "txs_ns") spec.timing.nSREFEX = hbm_sim::jedec::ns_to_nck(std::stod(value), spec.timing.tCK_ps);
-    else if (key == "teccscrub_ns") spec.timing.nECCSCRUB = hbm_sim::jedec::ns_to_nck(std::stod(value), spec.timing.tCK_ps);
-    else if (key == "traserr_ns") spec.timing.nRASERR = hbm_sim::jedec::ns_to_nck(std::stod(value), spec.timing.tCK_ps);
-    else if (key == "tlinkretry_ns") spec.timing.nLINKRETRY = hbm_sim::jedec::ns_to_nck(std::stod(value), spec.timing.tCK_ps);
+    else if (key == "trefi_us") spec.timing.nREFI = hbm_sim::jedec::us_to_nck(parse_double(value), spec.timing.tCK_ps);
+    else if (key == "trefipb_us") spec.timing.nREFIpb = hbm_sim::jedec::us_to_nck(parse_double(value), spec.timing.tCK_ps);
+    else if (key == "trefipb_ns" || key == "trefidb_ns") spec.timing.nREFIpb = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
+    else if (key == "twck2ck_ns") spec.timing.nWCK2CK = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
+    else if (key == "twckpst_ns") spec.timing.nWCKPST = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
+    else if (key == "tcas_ns") spec.timing.nCAS = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
+    else if (key == "tcs_ns") spec.timing.nCS = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
+    else if (key == "tppd_ns") spec.timing.nPPD = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
+    else if (key == "taad_min_ns") spec.timing.nAADMin = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
+    else if (key == "taad_ns" || key == "taad_max_ns") spec.timing.nAADMax = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
+    else if (key == "tmrw_ns") spec.timing.nMRW = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
+    else if (key == "tmrr_ns") spec.timing.nMRR = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
+    else if (key == "twcksync_ns") spec.timing.nWCKSYNC = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
+    else if (key == "twcktrain_ns") spec.timing.nWCKTRAIN = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
+    else if (key == "tdvfs_ns") spec.timing.nDVFS = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
+    else if (key == "tpdex_ns" || key == "txp_ns") spec.timing.nPDEX = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
+    else if (key == "tsrefex_ns" || key == "txs_ns") spec.timing.nSREFEX = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
+    else if (key == "teccscrub_ns") spec.timing.nECCSCRUB = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
+    else if (key == "traserr_ns") spec.timing.nRASERR = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
+    else if (key == "tlinkretry_ns") spec.timing.nLINKRETRY = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
     else throw std::invalid_argument("unknown spec override key: " + key);
 
     if (!timing_name.empty()) {
@@ -1380,6 +1419,11 @@ std::vector<std::string> validate_storage_model_config(const hbm_sim::StorageMod
   require_non_negative(options.idd5pb_ma, "IDD5PB");
   require_non_negative(options.idd6x_ma, "IDD6x");
   require_non_negative(options.idd_devices_per_rank, "idd_devices_per_rank");
+  if ((power_source == "idd" || power_source == "dramsim3_idd" ||
+       power_source == "dramsim3") &&
+      options.idd_devices_per_rank <= 0.0) {
+    errors.push_back("idd_devices_per_rank must be > 0 for IDD power mode");
+  }
   require_non_negative(options.idd_burst_cycles, "idd_burst_cycles");
   require_non_negative(options.act_energy_pj, "power_act_pj");
   require_non_negative(options.act1_energy_pj, "power_act1_pj");
@@ -2401,10 +2445,15 @@ int main(int argc, char** argv) {
     if (cli.stack_count <= 0) {
       throw std::invalid_argument("stack_count must be positive");
     }
-    if (cli.stack_interleave_bytes < static_cast<std::uint64_t>(spec.org.line_size) ||
-        cli.stack_interleave_bytes % static_cast<std::uint64_t>(spec.org.line_size) != 0) {
+    if (cli.stack_mapping == hbm_sim::StackMappingKind::Interleaved &&
+        (cli.stack_interleave_bytes <
+             static_cast<std::uint64_t>(spec.org.line_size) ||
+         cli.stack_interleave_bytes %
+                 static_cast<std::uint64_t>(spec.org.line_size) !=
+             0)) {
       throw std::invalid_argument(
-          "stack_interleave_bytes must be a positive multiple of line_size");
+          "interleaved stack mapping requires stack_interleave_bytes to be a "
+          "positive multiple of line_size");
     }
     if (cli.single_controller && cli.stack_count != 1) {
       throw std::invalid_argument("single_controller is only valid with stack_count=1");

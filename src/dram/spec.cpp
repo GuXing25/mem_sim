@@ -4,6 +4,7 @@
 #include "hbm_sim/dram/spec.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <stdexcept>
 #include <utility>
 
@@ -401,13 +402,71 @@ DramSpec make_spec(const std::string &name) {
   return spec;
 }
 
-void finalize_spec(DramSpec &spec) {
-  // profile/配置覆盖全部结束后统一派生约束和审计表。Controller 不缓存
-  // constraint 指针，因此这里可以直接覆盖 vector。
-  //
+void validate_spec(const DramSpec &spec) {
   // 这些检查不能只留在 CLI：DramSpec 也是公开库接口，SystemC/UCIe
   // 适配器可以绕过命令行直接构造规格。未实现的模式若在这里静默通过，
   // 后续会退化成另一种可执行语义并生成“看似合理”的错误结果。
+  if (spec.org.channels <= 0 || spec.org.pseudo_channels <= 0 ||
+      spec.org.sids <= 0 || spec.org.ranks <= 0 ||
+      spec.org.bank_groups <= 0 || spec.org.banks_per_group <= 0 ||
+      spec.org.rows <= 0 || spec.org.columns <= 0 ||
+      spec.org.line_size <= 0) {
+    throw std::invalid_argument("all DRAM organization dimensions must be > 0");
+  }
+  if (spec.org.dram_transaction_bytes < 0 ||
+      (spec.org.dram_transaction_bytes > 0 &&
+       spec.org.line_size % spec.org.dram_transaction_bytes != 0)) {
+    throw std::invalid_argument(
+        "dram_transaction_bytes must be 0 or a positive divisor of line_size");
+  }
+  if (spec.data_rate_mbps <= 0 || spec.data_bus_bits <= 0 ||
+      spec.internal_prefetch_size <= 0 || spec.speed_bin_mbps <= 0 ||
+      spec.density_gb <= 0 || spec.timing.tCK_ps <= 0.0 ||
+      !std::isfinite(spec.timing.tCK_ps) || spec.tick_multiplier <= 0) {
+    throw std::invalid_argument(
+        "data rate, bus width, prefetch, speed bin, density, tCK and "
+        "tick_multiplier must be > 0");
+  }
+  if ((!spec.lpddr_family && spec.stack_height <= 0) ||
+      (spec.lpddr_family && spec.stack_height < 0)) {
+    throw std::invalid_argument(
+        "HBM stack_height must be > 0; LPDDR stack_height must be >= 0");
+  }
+  const std::initializer_list<std::pair<const char *, int>> non_negative = {
+      {"metadata_bits_per_request", spec.metadata_bits_per_request},
+      {"ecc_bits_per_request", spec.ecc_bits_per_request},
+      {"hbm_link_crc_bits_per_request", spec.hbm_link_crc_bits_per_request},
+      {"hbm_ras_metadata_bits_per_request",
+       spec.hbm_ras_metadata_bits_per_request},
+      {"hbm_ecc_bits_per_request", spec.hbm_ecc_bits_per_request},
+      {"lpddr_dbi_bits_per_request", spec.lpddr_dbi_bits_per_request},
+      {"lpddr_link_ecc_bits_per_request",
+       spec.lpddr_link_ecc_bits_per_request},
+      {"lpddr_ca_parity_bits_per_command",
+       spec.lpddr_ca_parity_bits_per_command},
+      {"low_power_entry_cycles", spec.low_power_entry_cycles},
+      {"low_power_exit_cycles", spec.low_power_exit_cycles},
+      {"self_refresh_exit_cycles", spec.self_refresh_exit_cycles},
+      {"refresh_postpone_limit", spec.refresh_postpone_limit},
+      {"refresh_pullin_limit", spec.refresh_pullin_limit},
+      {"refresh_credit_limit", spec.refresh_credit_limit},
+  };
+  for (const auto &[name, value] : non_negative) {
+    if (value < 0) {
+      throw std::invalid_argument(std::string(name) + " must be >= 0");
+    }
+  }
+  if (spec.refresh_high_temp_multiplier <= 0) {
+    throw std::invalid_argument("refresh_high_temp_multiplier must be > 0");
+  }
+  if (spec.lpddr_family && spec.lpddr_wck_ratio <= 0) {
+    throw std::invalid_argument("lpddr_wck_ratio must be > 0");
+  }
+  if (spec.supports_rfm &&
+      (spec.rfm_act_threshold <= 0 || spec.rfm_decrement <= 0)) {
+    throw std::invalid_argument(
+        "RFM-enabled models require rfm_act_threshold and rfm_decrement > 0");
+  }
   if (spec.lpddr_wck_mode == LpddrWckMode::BurstSync) {
     throw std::invalid_argument(
         "lpddr_wck_mode=burst_sync is reserved and has no executable "
@@ -428,6 +487,12 @@ void finalize_spec(DramSpec &spec) {
         "LPDDR REFdb adjacent-BG pair table requires an even bank_groups >= "
         "2");
   }
+}
+
+void finalize_spec(DramSpec &spec) {
+  // profile/配置覆盖全部结束后统一派生约束和审计表。Controller 不缓存
+  // constraint 指针，因此这里可以直接覆盖 vector。
+  validate_spec(spec);
   spec.timing_constraints = spec.lpddr_family
                                 ? make_lpddr_constraints(spec.timing)
                                 : make_hbm_constraints(spec.timing);

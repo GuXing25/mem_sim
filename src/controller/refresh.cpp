@@ -10,6 +10,7 @@
 namespace hbm_sim {
 
 void RefreshManager::reset(const DramSpec &spec, Cycle clk) {
+  validate_spec(spec);
   rank_cursor_ = 0;
   // per-bank refresh 用 nREFIpb；all-bank refresh 用 nREFI。若某个 preset 没有
   // 给 nREFIpb，则回退到 nREFI，保证 refresh manager 不因未建 per-bank

@@ -76,12 +76,42 @@ std::string lower_token(std::string token) {
 }
 
 Address parse_address(const std::string& token) {
+  if (token.empty() || token.front() == '-') {
+    throw std::invalid_argument("invalid address token: " + token);
+  }
   std::size_t pos = 0;
   // base=0 允许同时解析十进制、0x 十六进制和 0 前缀八进制。
   // pos 检查用于拒绝 "0x100abcXYZ" 这类尾部带垃圾字符的输入。
   Address value = std::stoull(token, &pos, 0);
   if (pos != token.size()) {
     throw std::invalid_argument("invalid address token: " + token);
+  }
+  return value;
+}
+
+std::uint64_t parse_nonnegative_u64(const std::string& token,
+                                    int base,
+                                    const std::string& context) {
+  if (token.empty() || token.front() == '-') {
+    throw std::invalid_argument(context + ": " + token);
+  }
+  std::size_t pos = 0;
+  const std::uint64_t value = std::stoull(token, &pos, base);
+  if (pos != token.size()) {
+    throw std::invalid_argument(context + ": " + token);
+  }
+  return value;
+}
+
+int parse_nonnegative_int(const std::string& token,
+                          const std::string& context) {
+  if (token.empty() || token.front() == '-') {
+    throw std::invalid_argument(context + ": " + token);
+  }
+  std::size_t pos = 0;
+  const int value = std::stoi(token, &pos, 10);
+  if (pos != token.size()) {
+    throw std::invalid_argument(context + ": " + token);
   }
   return value;
 }
@@ -224,9 +254,17 @@ void apply_trace_data_token(Request& req,
   std::string key = lower_token(token.substr(0, eq));
   std::string value = token.substr(eq + 1);
   if (key == "data" || key == "payload") {
+    if (req.type != RequestType::Write) {
+      throw std::runtime_error("trace line " + std::to_string(lineno) +
+                               " uses data= on a non-write request");
+    }
     req.payload = trace_data_value(value, req, default_size);
     req.has_payload = true;
   } else if (key == "expect" || key == "expected" || key == "check" || key == "verify") {
+    if (req.type != RequestType::Read) {
+      throw std::runtime_error("trace line " + std::to_string(lineno) +
+                               " uses expect/check on a non-read request");
+    }
     if (is_last_write_value(value)) {
       if (last_writes == nullptr) {
         throw std::runtime_error("trace line " + std::to_string(lineno) +
@@ -238,20 +276,20 @@ void apply_trace_data_token(Request& req,
     }
     req.has_expected_payload = true;
   } else if (key == "mask" || key == "byte_mask") {
+    if (req.type != RequestType::Write) {
+      throw std::runtime_error("trace line " + std::to_string(lineno) +
+                               " uses mask= on a non-write request");
+    }
     req.byte_mask = parse_hex_bytes(value);
     req.has_byte_mask = true;
   } else if (key == "qos" || key == "priority") {
-    req.qos_class = std::stoi(value);
-    if (req.qos_class < 0) {
-      throw std::runtime_error("trace line " + std::to_string(lineno) +
-                               " has negative qos class");
-    }
+    req.qos_class = parse_nonnegative_int(
+        value, "trace line " + std::to_string(lineno) +
+                   " has invalid qos class");
   } else if (key == "stack" || key == "stack_id") {
-    req.target_stack = std::stoi(value);
-    if (req.target_stack < 0) {
-      throw std::runtime_error("trace line " + std::to_string(lineno) +
-                               " has negative stack id");
-    }
+    req.target_stack = parse_nonnegative_int(
+        value, "trace line " + std::to_string(lineno) +
+                   " has invalid stack id");
     req.has_explicit_stack = true;
   } else {
     throw std::runtime_error("trace line " + std::to_string(lineno) +
@@ -367,6 +405,9 @@ std::vector<Request> split_host_request(const DramSpec& spec, const Request& hos
   validate_address_span(host.address, static_cast<std::uintmax_t>(host_bytes),
                         "host request address range");
   AddressMapper mapper(spec);
+  const ByteVector normalized_host_mask =
+      host.has_byte_mask ? normalize_mask(host.byte_mask, host_bytes)
+                         : ByteVector{};
   std::vector<Request> transactions;
   transactions.reserve(count);
   for (std::size_t index = 0; index < count; index++) {
@@ -383,11 +424,11 @@ std::vector<Request> split_host_request(const DramSpec& spec, const Request& hos
     req.has_storage_decoded = false;
     req.payload = slice_bytes(host.payload, offset, bytes);
     req.expected_payload = slice_bytes(host.expected_payload, offset, bytes);
-    req.byte_mask = slice_bytes(host.byte_mask, offset, bytes);
+    req.byte_mask = slice_bytes(normalized_host_mask, offset, bytes);
     req.has_payload = host.has_payload && !req.payload.empty();
     req.has_expected_payload =
         host.has_expected_payload && !req.expected_payload.empty();
-    req.has_byte_mask = host.has_byte_mask && !req.byte_mask.empty();
+    req.has_byte_mask = host.has_byte_mask;
     req.burst_offset = host.burst_offset + static_cast<std::uint64_t>(offset);
     transactions.push_back(std::move(req));
   }
@@ -595,7 +636,10 @@ class TraceTrafficStream final : public TrafficStream {
     Cycle inject_cycle = next_id_ * options_.inject_interval;
     std::size_t idx = 0;
     if (tokens.size() >= 3 && looks_like_cycle(tokens[0])) {
-      inject_cycle = static_cast<Cycle>(std::stoull(tokens[0]));
+      inject_cycle = static_cast<Cycle>(parse_nonnegative_u64(
+          tokens[0], 10,
+          "trace line " + std::to_string(lineno_) +
+              " has invalid inject cycle"));
       idx = 1;
     }
     if (tokens.size() < idx + 2) {
@@ -623,10 +667,14 @@ class TraceTrafficStream final : public TrafficStream {
         const std::string key = lower_token(tokens[i].substr(0, eq));
         const std::string value = tokens[i].substr(eq + 1);
         if (key == "stack" || key == "stack_id") {
-          req.target_stack = std::stoi(value);
+          req.target_stack = parse_nonnegative_int(
+              value, "trace line " + std::to_string(lineno_) +
+                         " has invalid stack id");
           req.has_explicit_stack = true;
         } else if (key == "qos" || key == "priority") {
-          req.qos_class = std::stoi(value);
+          req.qos_class = parse_nonnegative_int(
+              value, "trace line " + std::to_string(lineno_) +
+                         " has invalid qos class");
         } else {
           throw std::runtime_error("trace line " + std::to_string(lineno_) +
                                    " has unknown maintenance option: " + key);
@@ -652,7 +700,10 @@ class TraceTrafficStream final : public TrafficStream {
         if (eq == std::string::npos) continue;
         const std::string key = lower_token(tokens[i].substr(0, eq));
         if (key == "stack" || key == "stack_id") {
-          req.target_stack = std::stoi(tokens[i].substr(eq + 1));
+          req.target_stack = parse_nonnegative_int(
+              tokens[i].substr(eq + 1),
+              "trace line " + std::to_string(lineno_) +
+                  " has invalid stack id");
           req.has_explicit_stack = true;
         }
       }
@@ -671,6 +722,11 @@ class TraceTrafficStream final : public TrafficStream {
               req.id,
               static_cast<std::size_t>(std::max(1, spec_.bytes_per_request())));
           req.has_payload = true;
+        }
+        if (req.has_byte_mask && req.byte_mask.size() != req.payload.size()) {
+          throw std::runtime_error(
+              "trace line " + std::to_string(lineno_) +
+              " byte mask length must equal write payload length");
         }
         if (track_last_writes_) {
           last_write_payloads_[trace_address_key(req)] = req.payload;
@@ -692,23 +748,21 @@ class TraceTrafficStream final : public TrafficStream {
       const std::string key = lower_token(tokens[i].substr(0, eq));
       const std::string value = tokens[i].substr(eq + 1);
       if (key == "len" || key == "length") {
-        burst_len = static_cast<std::uint64_t>(std::stoull(value, nullptr, 0));
+        burst_len = parse_nonnegative_u64(
+            value, 0, "trace line " + std::to_string(lineno_) +
+                          " has invalid burst length");
       } else if (key == "pattern") {
         pattern = lower_token(value);
       } else if (key == "check" || key == "verify") {
         check = lower_token(value);
       } else if (key == "qos" || key == "priority") {
-        qos_class = std::stoi(value);
-        if (qos_class < 0) {
-          throw std::runtime_error("trace line " + std::to_string(lineno_) +
-                                   " has negative qos class");
-        }
+        qos_class = parse_nonnegative_int(
+            value, "trace line " + std::to_string(lineno_) +
+                       " has invalid qos class");
       } else if (key == "stack" || key == "stack_id") {
-        target_stack = std::stoi(value);
-        if (target_stack < 0) {
-          throw std::runtime_error("trace line " + std::to_string(lineno_) +
-                                   " has negative stack id");
-        }
+        target_stack = parse_nonnegative_int(
+            value, "trace line " + std::to_string(lineno_) +
+                       " has invalid stack id");
         has_explicit_stack = true;
       }
     }

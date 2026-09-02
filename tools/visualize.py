@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import html as html_module
 import json
 from collections import Counter
 from pathlib import Path
@@ -62,7 +63,9 @@ def command_event(row: dict[str, str]) -> dict[str, Any]:
     }
 
 
-def read_command_trace(path: Path, maximum: int) -> tuple[list[dict[str, Any]], int, Counter[str]]:
+def read_command_trace(
+    path: Path, maximum: int
+) -> tuple[list[dict[str, Any]], int, Counter[str], list[int]]:
     if not path.is_file():
         raise SystemExit(f"command trace not found: {path}")
     if maximum < 1:
@@ -72,12 +75,17 @@ def read_command_trace(path: Path, maximum: int) -> tuple[list[dict[str, Any]], 
     # allocating an object per trace row before --max-events takes effect.
     original_count = 0
     command_counts: Counter[str] = Counter()
+    first_cycle: int | None = None
+    last_cycle = 0
     with path.open(newline="", encoding="utf-8") as stream:
         for row in csv.DictReader(stream):
             original_count += 1
             command_counts[row.get("command", "UNKNOWN")] += 1
+            cycle = integer(row, "cycle")
+            first_cycle = cycle if first_cycle is None else min(first_cycle, cycle)
+            last_cycle = max(last_cycle, cycle)
     if original_count == 0:
-        return [], 0, command_counts
+        return [], 0, command_counts, [0, 1]
 
     # Equally spaced deterministic sampling needs the total count, hence a
     # bounded second streaming pass.  The sample always includes both ends.
@@ -95,7 +103,7 @@ def read_command_trace(path: Path, maximum: int) -> tuple[list[dict[str, Any]], 
         for index, row in enumerate(csv.DictReader(stream)):
             if selected_indices is None or index in selected_indices:
                 result.append(command_event(row))
-    return result, original_count, command_counts
+    return result, original_count, command_counts, [first_cycle or 0, last_cycle]
 
 
 def read_dfi_trace(path: Path | None) -> dict[str, Any]:
@@ -222,12 +230,13 @@ HTML_TEMPLATE = r"""<!doctype html>
 const DATA=__DATA__;
 const COLORS={act:'#4ade80',read:'#60a5fa',write:'#fb923c',pre:'#f87171',refresh:'#c084fc',other:'#94a3b8'};
 const el=id=>document.getElementById(id); const fmt=n=>Number(n).toLocaleString();
+const esc=v=>String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function category(c){c=(c||'').toUpperCase();if(c.startsWith('ACT'))return'act';if(c==='RD'||c==='RDA'||c==='CAS_RD')return'read';if(c==='WR'||c==='WRA'||c==='CAS_WR')return'write';if(c.startsWith('PRE'))return'pre';if(c.startsWith('REF')||c.startsWith('RFM')||c.startsWith('SREF'))return'refresh';return'other'}
 function option(select,values){select.innerHTML='';for(const v of values){const o=document.createElement('option');o.value=v;o.textContent=v;select.append(o)}}
-function metrics(){const defaults={commands:DATA.totalCommands,embedded_events:DATA.commands.length,first_cycle:DATA.range[0],last_cycle:DATA.range[1]};const all={...defaults,...DATA.stats};el('metrics').innerHTML=Object.entries(all).map(([k,v])=>`<div class="metric"><b>${k}</b><span>${v}</span></div>`).join('')}
+function metrics(){const defaults={commands:DATA.totalCommands,embedded_events:DATA.commands.length,first_cycle:DATA.range[0],last_cycle:DATA.range[1]};const all={...defaults,...DATA.stats};el('metrics').innerHTML=Object.entries(all).map(([k,v])=>`<div class="metric"><b>${esc(k)}</b><span>${esc(v)}</span></div>`).join('')}
 function lane(x){return `S${x.stack}/C${x.channel}/PC${x.pc}/SID${x.sid}/BG${x.bg}/B${x.bank}`}
-function drawMix(){const count=DATA.commandCounts||{};const max=Math.max(1,...Object.values(count));el('mix').innerHTML=Object.entries(count).sort((a,b)=>b[1]-a[1]).map(([c,n])=>`<div class="bar"><span>${c}</span><i style="width:${100*n/max}%"></i><em>${fmt(n)}</em></div>`).join('')||'<p class="empty">No command events.</p>'}
-function drawDfi(){const d=DATA.dfi;if(!Object.keys(d).length){el('dfi').innerHTML='<p class="empty">No DFI CSV supplied.</p>';return}const values={events:d.events,payload_bytes:d.payload_bytes,first_cycle:d.first_cycle,last_cycle:d.last_cycle,...Object.fromEntries(Object.entries(d.kinds||{}).map(([k,v])=>['kind_'+k,v]))};el('dfi').innerHTML=Object.entries(values).map(([k,v])=>`<div class="metric"><b>${k}</b><span>${fmt(v)}</span></div>`).join('')}
+function drawMix(){const count=DATA.commandCounts||{};const max=Math.max(1,...Object.values(count));el('mix').innerHTML=Object.entries(count).sort((a,b)=>b[1]-a[1]).map(([c,n])=>`<div class="bar"><span>${esc(c)}</span><i style="width:${100*n/max}%"></i><em>${fmt(n)}</em></div>`).join('')||'<p class="empty">No command events.</p>'}
+function drawDfi(){const d=DATA.dfi;if(!Object.keys(d).length){el('dfi').innerHTML='<p class="empty">No DFI CSV supplied.</p>';return}const values={events:d.events,payload_bytes:d.payload_bytes,first_cycle:d.first_cycle,last_cycle:d.last_cycle,...Object.fromEntries(Object.entries(d.kinds||{}).map(([k,v])=>['kind_'+k,v]))};el('dfi').innerHTML=Object.entries(values).map(([k,v])=>`<div class="metric"><b>${esc(k)}</b><span>${esc(fmt(v))}</span></div>`).join('')}
 function drawCurve(){
   const svg=el('curve'),rows=DATA.performance;
   if(!rows.length){svg.innerHTML='';el('curveHint').textContent='No performance JSON supplied.';return}
@@ -240,7 +249,7 @@ function drawCurve(){
   let out=`<text x="${pad.l}" y="18" fill="#99a9c5" font-size="12">payload throughput GB/s (solid)</text><text x="${W-pad.r}" y="18" text-anchor="end" fill="#99a9c5" font-size="12">read latency ticks (dashed)</text>`;
   for(let tick=0;tick<=4;tick++){const f=tick/4,y=H-pad.b-f*(H-pad.t-pad.b),x=pad.l+f*(W-pad.l-pad.r);out+=`<path d="M${pad.l} ${y}H${W-pad.r}" stroke="#263453" stroke-width="1" vector-effect="non-scaling-stroke"/><text x="${pad.l-8}" y="${y+4}" text-anchor="end" fill="#99a9c5" font-size="11">${(f*ymax).toFixed(1)}</text><text x="${W-pad.r+8}" y="${y+4}" fill="#99a9c5" font-size="11">${(f*lmax).toFixed(0)}</text><path d="M${x} ${pad.t}V${H-pad.b}" stroke="#1f2b47" stroke-width="1" vector-effect="non-scaling-stroke"/><text x="${x}" y="${H-24}" text-anchor="middle" fill="#99a9c5" font-size="11">${(f*xmax).toFixed(2)}</text>`}
   out+=`<path d="M${pad.l} ${pad.t}V${H-pad.b}H${W-pad.r}V${pad.t}" stroke="#52617f" stroke-width="1" vector-effect="non-scaling-stroke" fill="none"/><text x="${W/2}" y="${H-7}" text-anchor="middle" fill="#99a9c5" font-size="11">offered requests / tick</text>`;
-  let i=0;for(const [name,g] of Object.entries(groups)){const color=['#60a5fa','#4ade80','#fb923c','#c084fc','#f87171','#facc15'][i++%6];g.sort((a,b)=>a.x-b.x);const points=(fy)=>g.map(r=>`${X(r.x)},${fy(r)}`).join(' ');out+=`<polyline points="${points(r=>Y(r.bw))}" stroke="${color}" stroke-width="2.5" vector-effect="non-scaling-stroke" fill="none"/><polyline points="${points(r=>YL(r.lat))}" stroke="${color}" stroke-width="2" stroke-dasharray="6 5" vector-effect="non-scaling-stroke" fill="none"/>${g.map(r=>`<circle cx="${X(r.x)}" cy="${Y(r.bw)}" r="3.5" fill="${color}"/>`).join('')}<text x="${W-pad.r-8}" y="${32+i*17}" text-anchor="end" fill="${color}" font-size="12">${name}</text>`}
+  let i=0;for(const [name,g] of Object.entries(groups)){const color=['#60a5fa','#4ade80','#fb923c','#c084fc','#f87171','#facc15'][i++%6];g.sort((a,b)=>a.x-b.x);const points=(fy)=>g.map(r=>`${X(r.x)},${fy(r)}`).join(' ');out+=`<polyline points="${points(r=>Y(r.bw))}" stroke="${color}" stroke-width="2.5" vector-effect="non-scaling-stroke" fill="none"/><polyline points="${points(r=>YL(r.lat))}" stroke="${color}" stroke-width="2" stroke-dasharray="6 5" vector-effect="non-scaling-stroke" fill="none"/>${g.map(r=>`<circle cx="${X(r.x)}" cy="${Y(r.bw)}" r="3.5" fill="${color}"/>`).join('')}<text x="${W-pad.r-8}" y="${32+i*17}" text-anchor="end" fill="${color}" font-size="12">${esc(name)}</text>`}
   svg.innerHTML=out;el('curveHint').textContent=`${numeric.length} deterministic sweep points. Left scale max ${ymax.toFixed(1)} GB/s; right scale max ${lmax.toFixed(1)} ticks.`
 }
 function thermalColor(t,min,max){const f=max===min?.5:(t-min)/(max-min);return `hsl(${220-220*f} 78% ${78-30*f}%)`}
@@ -257,7 +266,7 @@ function updateExplorerFilters(){const vals=field=>['all',...Array.from(new Set(
 function rangeSummary(rows,start,end){let rd=0,wr=0;for(const x of rows){const c=category(x.command);if(c==='read')rd++;else if(c==='write')wr++}const dur=Math.max(1,end-start);el('rangeStats').innerHTML=`<span>Range <b>${fmt(end-start)}</b> cyc</span><span>Commands <b>${fmt(rows.length)}</b></span><span>RD <b>${fmt(rd)}</b></span><span>WR <b>${fmt(wr)}</b></span><span>Other <b>${fmt(rows.length-rd-wr)}</b></span><span>CMD bus <b>${(rows.length/dur).toFixed(3)}</b> cmd/cyc</span>`}
 function drawOverview(){const c=overviewCanvas,b=c.getBoundingClientRect(),d=devicePixelRatio||1,w=Math.floor(b.width*d),h=Math.floor(b.height*d),ctx=c.getContext('2d');c.width=w;c.height=h;ctx.setTransform(d,0,0,d,0,0);const W=b.width,H=b.height,[lo,hi]=DATA.range,span=Math.max(1,hi-lo),bins=180,count=Array(bins).fill(0);for(const x of DATA.commands){const i=Math.max(0,Math.min(bins-1,Math.floor((x.cycle-lo)/span*bins)));count[i]++}const max=Math.max(1,...count);ctx.fillStyle='#0b1328';ctx.fillRect(0,0,W,H);ctx.fillStyle='#365b91';for(let i=0;i<bins;i++){const bh=count[i]/max*(H-14);ctx.fillRect(i/bins*W,H-bh,(W/bins)+1,bh)}const {start,end}=selectedRange(),x=(start-lo)/span*W,width=Math.max(2,(end-start)/span*W);ctx.fillStyle='rgba(96,165,250,.16)';ctx.fillRect(x,0,width,H);ctx.strokeStyle='#60a5fa';ctx.strokeRect(x+.5,.5,width-1,H-1);ctx.fillStyle='#99a9c5';ctx.font='10px system-ui';ctx.fillText(`${fmt(lo)} cyc`,6,12);ctx.fillText(`${fmt(hi)} cyc`,Math.max(6,W-72),12)}
 function drawExplorer(){const c=explorerCanvas,b=c.getBoundingClientRect(),d=devicePixelRatio||1,w=Math.floor(b.width*d),h=Math.floor(b.height*d),ctx=c.getContext('2d');c.width=w;c.height=h;ctx.setTransform(d,0,0,d,0,0);const W=b.width,H=b.height,{start,end,rows}=explorerRows(),counts=new Map;for(const x of rows)counts.set(explorerLane(x),(counts.get(explorerLane(x))||0)+1);const limit=Number(el('lanes').value),lanes=[...counts].sort((a,b)=>counts.get(b[0])-counts.get(a[0])||a[0].localeCompare(b[0])).slice(0,limit).map(x=>x[0]),index=new Map(lanes.map((x,i)=>[x,i]));const left=176,top=30,rowH=Math.max(15,Math.floor((H-top-24)/Math.max(1,lanes.length)));ctx.fillStyle='#0b1328';ctx.fillRect(0,0,W,H);ctx.font='11px system-ui';ctx.fillStyle='#99a9c5';ctx.fillText(`${explorerMode==='bank'?'Command / bank':'Request swimlane'} view • ${fmt(rows.length)} visible events • ${fmt(start)}–${fmt(end)} cycles`,8,17);for(let i=0;i<lanes.length;i++){const y=top+i*rowH;ctx.fillStyle=i%2?'#0e1830':'#0b1328';ctx.fillRect(left,y,W-left,rowH);ctx.fillStyle='#99a9c5';ctx.fillText(lanes[i],8,y+Math.max(11,rowH-4));ctx.strokeStyle='#1f2b47';ctx.beginPath();ctx.moveTo(left,y+rowH-.5);ctx.lineTo(W,y+rowH-.5);ctx.stroke()}if(explorerMode==='request'){const spanByReq=new Map;for(const x of rows){const k=explorerLane(x),s=spanByReq.get(k)||{a:x.cycle,b:x.cycle};s.a=Math.min(s.a,x.cycle);s.b=Math.max(s.b,x.cycle);spanByReq.set(k,s)}ctx.fillStyle='#21385e';for(const [k,s] of spanByReq){const i=index.get(k);if(i===undefined)continue;const x=left+(s.a-start)/(end-start)*(W-left),right=left+(s.b-start)/(end-start)*(W-left);ctx.fillRect(x,top+i*rowH+4,Math.max(2,right-x),Math.max(2,rowH-8))}}explorerPoints=[];for(const x of rows){const i=index.get(explorerLane(x));if(i===undefined)continue;const px=left+(x.cycle-start)/(end-start)*(W-left),py=top+i*rowH+2,pw=Math.max(2,Math.min(10,(W-left)/(end-start)*2));ctx.fillStyle=COLORS[category(x.command)];ctx.fillRect(px,py,pw,Math.max(3,rowH-4));explorerPoints.push({x:px,y:py,w:pw,h:Math.max(3,rowH-4),ev:x})}rangeSummary(rows,start,end);drawOverview();el('timelineHint').textContent=DATA.sampled?`Timeline is a deterministic ${fmt(DATA.commands.length)}-event sample of ${fmt(DATA.totalCommands)} total commands.`:`Timeline contains all ${fmt(DATA.totalCommands)} command events.`}
-function selectPoint(p){if(!p){el('eventDetails').textContent='Click an event to inspect its cycle, request and decoded DRAM location.';return}const x=p.ev;el('eventDetails').innerHTML=`<strong>${x.command}</strong> • cycle ${fmt(x.cycle)} • request ${x.request}<br>stack ${x.stack}, channel ${x.channel}, PC ${x.pc}, SID ${x.sid}, BG ${x.bg}, bank ${x.bank}, row ${x.row} • ${x.bus} bus`}
+function selectPoint(p){if(!p){el('eventDetails').textContent='Click an event to inspect its cycle, request and decoded DRAM location.';return}const x=p.ev;el('eventDetails').innerHTML=`<strong>${esc(x.command)}</strong> • cycle ${esc(fmt(x.cycle))} • request ${esc(x.request)}<br>stack ${esc(x.stack)}, channel ${esc(x.channel)}, PC ${esc(x.pc)}, SID ${esc(x.sid)}, BG ${esc(x.bg)}, bank ${esc(x.bank)}, row ${esc(x.row)} • ${esc(x.bus)} bus`}
 explorerCanvas.onmousemove=e=>{const r=explorerCanvas.getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top;let hit;for(let i=explorerPoints.length-1;i>=0;i--){const p=explorerPoints[i];if(mx>=p.x-3&&mx<=p.x+p.w+3&&my>=p.y&&my<=p.y+p.h){hit=p;break}}explorerCanvas.title=hit?`${hit.ev.command} @ ${hit.ev.cycle} • ${explorerLane(hit.ev)}`:''};explorerCanvas.onclick=e=>{const r=explorerCanvas.getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top;let hit;for(let i=explorerPoints.length-1;i>=0;i--){const p=explorerPoints[i];if(mx>=p.x-3&&mx<=p.x+p.w+3&&my>=p.y&&my<=p.y+p.h){hit=p;break}}selectPoint(hit)};
 overviewCanvas.onclick=e=>{const r=overviewCanvas.getBoundingClientRect(),ratio=(e.clientX-r.left)/Math.max(1,r.width),center=DATA.range[0]+ratio*(DATA.range[1]-DATA.range[0]),{start,end}=selectedRange(),duration=Math.max(1,end-start);el('start').value=Math.max(DATA.range[0],Math.round(center-duration/2));el('end').value=Math.min(DATA.range[1],Math.round(center+duration/2));if(Number(el('end').value)<=Number(el('start').value))el('end').value=Number(el('start').value)+1;drawExplorer()};
 function bindExplorer(){for(const id of ['start','end','stack','channel','command','requestFilter','lanes'])el(id).oninput=drawExplorer;el('reset').onclick=()=>{el('start').value=DATA.range[0];el('end').value=DATA.range[1];drawExplorer()};el('bankView').onclick=()=>{explorerMode='bank';el('bankView').className='active';el('requestView').className='ghost';drawExplorer()};el('requestView').onclick=()=>{explorerMode='request';el('requestView').className='active';el('bankView').className='ghost';drawExplorer()};el('traceUpload').onchange=async e=>{const f=e.target.files?.[0];if(!f)return;const lines=(await f.text()).trim().split(/\r?\n/),head=lines.shift().split(',');const ix=k=>head.indexOf(k),num=(a,k)=>Number(a[ix(k)]||0);DATA.commands=lines.filter(Boolean).map(line=>{const a=line.split(',');return{cycle:num(a,'cycle'),command:a[ix('command')]||'UNKNOWN',bus:a[ix('bus')]||'unknown',stack:num(a,'stack_id'),channel:num(a,'channel'),pc:num(a,'pseudo_channel'),sid:num(a,'sid'),bg:num(a,'bank_group'),bank:num(a,'bank'),row:num(a,'row'),request:num(a,'request_id')}}).sort((a,b)=>a.cycle-b.cycle);DATA.totalCommands=DATA.commands.length;DATA.sampled=false;DATA.range=DATA.commands.length?[DATA.commands[0].cycle,DATA.commands.at(-1).cycle]:[0,1];DATA.commandCounts={};for(const x of DATA.commands)DATA.commandCounts[x.command]=(DATA.commandCounts[x.command]||0)+1;DATA.dfi={};updateExplorerFilters();el('start').value=DATA.range[0];el('end').value=DATA.range[1];metrics();drawMix();drawDfi();drawExplorer();selectPoint()}};
@@ -268,21 +277,21 @@ updateExplorerFilters();bindExplorer();drawExplorer();
 
 def main() -> int:
     args = parse_args()
-    commands, total_commands, command_counts = read_command_trace(
+    commands, total_commands, command_counts, command_range = read_command_trace(
         args.command_trace, args.max_events)
     commands.sort(key=lambda event: event["cycle"])
     data = {
         "commands": commands,
         "totalCommands": total_commands,
         "sampled": total_commands != len(commands),
-        "range": [commands[0]["cycle"], commands[-1]["cycle"]] if commands else [0, 1],
+        "range": command_range,
         "commandCounts": dict(command_counts),
         "dfi": read_dfi_trace(args.dfi_trace),
         "stats": read_stats(args.stats),
         "performance": read_performance(args.performance_json),
         "thermal": read_thermal(args.thermal_map),
     }
-    html = HTML_TEMPLATE.replace("__TITLE__", args.title.replace("<", "&lt;").replace(">", "&gt;"))
+    html = HTML_TEMPLATE.replace("__TITLE__", html_module.escape(args.title))
     html = html.replace("__DATA__", safe_json(data))
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(html, encoding="utf-8")

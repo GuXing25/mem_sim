@@ -30,7 +30,8 @@ std::uint64_t checked_multiply_u64(std::uint64_t lhs, std::uint64_t rhs,
 }
 
 void validate_address_span(Address address, std::size_t size,
-                           const char *context) {
+                           const char *context,
+                           std::uint64_t capacity_bytes = 0) {
   if (size == 0) {
     return;
   }
@@ -41,6 +42,12 @@ void validate_address_span(Address address, std::size_t size,
   if (last_offset > available) {
     throw std::overflow_error(std::string(context) +
                               " address range exceeds Address space");
+  }
+  if (capacity_bytes != 0 &&
+      (address >= capacity_bytes ||
+       last_offset >= static_cast<std::uintmax_t>(capacity_bytes - address))) {
+    throw std::out_of_range(std::string(context) +
+                            " address range exceeds configured capacity");
   }
 }
 
@@ -216,6 +223,9 @@ std::vector<std::string> split_tokens(const std::string &line) {
 }
 
 Address parse_address_token(const std::string &token) {
+  if (token.empty() || token.front() == '-') {
+    throw std::invalid_argument("invalid memory image address: " + token);
+  }
   std::size_t pos = 0;
   Address value = std::stoull(token, &pos, 0);
   if (pos != token.size()) {
@@ -403,6 +413,106 @@ StorageModelOptions calibrate_power_from_idd(const DramSpec &spec,
   return options;
 }
 
+StorageModelOptions validate_and_calibrate_storage_options(
+    const DramSpec &spec, StorageModelOptions options) {
+  if (options.stack_id < 0) {
+    throw std::invalid_argument("storage stack_id must be non-negative");
+  }
+  if (options.sparse_density_warning_pct < 0.0 ||
+      options.sparse_density_warning_pct > 100.0 ||
+      !std::isfinite(options.sparse_density_warning_pct)) {
+    throw std::invalid_argument(
+        "sparse_density_warning_pct must be finite and in [0, 100]");
+  }
+  const std::initializer_list<std::pair<const char *, int>> positive_ints = {
+      {"thermal_grid_cols_per_tile", options.thermal_grid_cols_per_tile},
+      {"thermal_grid_rows_per_tile", options.thermal_grid_rows_per_tile},
+      {"thermal_tsvs_per_grid", options.thermal_tsvs_per_grid},
+      {"subarrays_per_bank", options.subarrays_per_bank},
+      {"mats_per_subarray_x", options.mats_per_subarray_x},
+      {"mats_per_subarray_y", options.mats_per_subarray_y},
+      {"cells_per_mat_x", options.cells_per_mat_x},
+      {"cells_per_mat_y", options.cells_per_mat_y},
+      {"microbumps_x", options.microbumps_x},
+      {"microbumps_y", options.microbumps_y},
+  };
+  for (const auto &[name, value] : positive_ints) {
+    if (value <= 0) {
+      throw std::invalid_argument(std::string(name) + " must be > 0");
+    }
+  }
+  if (options.ecc_inject_period < 0) {
+    throw std::invalid_argument("ecc_inject_period must be >= 0");
+  }
+  const std::initializer_list<std::pair<const char *, double>> non_negative = {
+      {"power_scale", options.power_scale},
+      {"thermal_cooling_per_cycle", options.thermal_cooling_per_cycle},
+      {"thermal_rise_c_per_pj", options.thermal_rise_c_per_pj},
+      {"thermal_lateral_coupling", options.thermal_lateral_coupling},
+      {"thermal_vertical_coupling", options.thermal_vertical_coupling},
+      {"thermal_tsv_coupling_scale", options.thermal_tsv_coupling_scale},
+      {"thermal_chip_dim_x_m", options.thermal_chip_dim_x_m},
+      {"thermal_chip_dim_y_m", options.thermal_chip_dim_y_m},
+      {"thermal_tsv_radius_m", options.thermal_tsv_radius_m},
+      {"thermal_k_silicon", options.thermal_k_silicon},
+      {"thermal_k_copper", options.thermal_k_copper},
+      {"idd_vdd", options.idd_vdd},
+      {"idd0_ma", options.idd0_ma},
+      {"idd2n_ma", options.idd2n_ma},
+      {"idd3n_ma", options.idd3n_ma},
+      {"idd4r_ma", options.idd4r_ma},
+      {"idd4w_ma", options.idd4w_ma},
+      {"idd5ab_ma", options.idd5ab_ma},
+      {"idd5pb_ma", options.idd5pb_ma},
+      {"idd6x_ma", options.idd6x_ma},
+      {"idd_devices_per_rank", options.idd_devices_per_rank},
+      {"idd_burst_cycles", options.idd_burst_cycles},
+      {"act_energy_pj", options.act_energy_pj},
+      {"act1_energy_pj", options.act1_energy_pj},
+      {"act2_energy_pj", options.act2_energy_pj},
+      {"pre_energy_pj", options.pre_energy_pj},
+      {"preab_energy_pj", options.preab_energy_pj},
+      {"cas_energy_pj", options.cas_energy_pj},
+      {"read_energy_pj", options.read_energy_pj},
+      {"read_energy_per_byte_pj", options.read_energy_per_byte_pj},
+      {"write_energy_pj", options.write_energy_pj},
+      {"write_energy_per_byte_pj", options.write_energy_per_byte_pj},
+      {"refpb_energy_pj", options.refpb_energy_pj},
+      {"refdb_energy_pj", options.refdb_energy_pj},
+      {"refab_energy_pj", options.refab_energy_pj},
+      {"rfmpb_energy_pj", options.rfmpb_energy_pj},
+      {"rfmab_energy_pj", options.rfmab_energy_pj},
+      {"control_energy_pj", options.control_energy_pj},
+  };
+  for (const auto &[name, value] : non_negative) {
+    if (!std::isfinite(value) || value < 0.0) {
+      throw std::invalid_argument(std::string(name) +
+                                  " must be finite and >= 0");
+    }
+  }
+  if (!std::isfinite(options.thermal_ambient_c)) {
+    throw std::invalid_argument("thermal_ambient_c must be finite");
+  }
+  const std::string source = lower_token(options.power_source);
+  if (source != "configured_pj" && source != "manual" && source != "idd" &&
+      source != "dramsim3_idd" && source != "dramsim3") {
+    throw std::invalid_argument(
+        "power_source must be configured_pj or dramsim3_idd");
+  }
+  if (uses_dramsim3_idd_power(options) &&
+      options.idd_devices_per_rank <= 0.0) {
+    throw std::invalid_argument(
+        "idd_devices_per_rank must be > 0 for IDD power mode");
+  }
+  return calibrate_power_from_idd(spec, std::move(options));
+}
+
+std::size_t validated_storage_line_size(const DramSpec &spec) {
+  validate_spec(spec);
+  (void)spec.total_addressable_transactions();
+  return static_cast<std::size_t>(spec.transaction_bytes());
+}
+
 DataBlockMetadata metadata_from_block(const DataBlock &block) {
   return DataBlockMetadata{
       block.initialized,
@@ -422,7 +532,16 @@ DataBlockMetadata metadata_from_block(const DataBlock &block) {
 
 void set_decoded_key(DecodedAddress &decoded, const std::string &key,
                      const std::string &value) {
-  int parsed = std::stoi(value);
+  if (value.empty() || value.front() == '-') {
+    throw std::invalid_argument("invalid non-negative memory coordinate: " +
+                                value);
+  }
+  std::size_t consumed = 0;
+  int parsed = std::stoi(value, &consumed, 10);
+  if (consumed != value.size()) {
+    throw std::invalid_argument("invalid non-negative memory coordinate: " +
+                                value);
+  }
   if (key == "ch" || key == "channel")
     decoded.channel = parsed;
   else if (key == "pc" || key == "pseudo_channel" || key == "pseudo")
@@ -620,7 +739,7 @@ void DataValidator::dump_text(const std::string &path) const {
 }
 
 MemoryImage::MemoryImage(std::size_t line_size, std::uint8_t default_value)
-    : line_size_(std::max<std::size_t>(1, line_size)),
+    : line_size_(line_size),
       default_value_(default_value),
       backend_(make_memory_backend(line_size_, options_.memory_backend)) {
   thermal_peak_temp_c_ = options_.thermal_ambient_c;
@@ -628,10 +747,10 @@ MemoryImage::MemoryImage(std::size_t line_size, std::uint8_t default_value)
 
 MemoryImage::MemoryImage(DramSpec spec, std::uint8_t default_value,
                          StorageModelOptions options)
-    : line_size_(
-          static_cast<std::size_t>(std::max(1, spec.transaction_bytes()))),
+    : line_size_(validated_storage_line_size(spec)),
       default_value_(default_value), spec_(std::move(spec)),
-      options_(calibrate_power_from_idd(*spec_, std::move(options))) {
+      options_(validate_and_calibrate_storage_options(*spec_,
+                                                      std::move(options))) {
   if (options_.memory_backend.capacity_bytes == 0) {
     options_.memory_backend.capacity_bytes =
         spec_->addressable_capacity_bytes();
@@ -663,6 +782,30 @@ std::size_t MemoryImage::line_offset(Address address) const {
   return static_cast<std::size_t>(address % static_cast<Address>(line_size_));
 }
 
+void MemoryImage::validate_decoded_address(
+    const DecodedAddress &decoded) const {
+  if (!spec_.has_value()) {
+    return;
+  }
+  const Organization &o = spec_->org;
+  const auto require_coordinate = [](int value, int count,
+                                     const char *name) {
+    if (value < 0 || value >= count) {
+      throw std::out_of_range(std::string("decoded ") + name +
+                              " is outside the DRAM organization");
+    }
+  };
+  require_coordinate(decoded.channel, o.channels, "channel");
+  require_coordinate(decoded.pseudo_channel, o.pseudo_channels,
+                     "pseudo_channel");
+  require_coordinate(decoded.sid, o.sids, "sid");
+  require_coordinate(decoded.rank, o.ranks, "rank");
+  require_coordinate(decoded.bank_group, o.bank_groups, "bank_group");
+  require_coordinate(decoded.bank, o.banks_per_group, "bank");
+  require_coordinate(decoded.row, o.rows, "row");
+  require_coordinate(decoded.column, o.columns, "column");
+}
+
 PhysicalAddress
 MemoryImage::physical_address(Address address,
                               const DecodedAddress *decoded) const {
@@ -674,6 +817,7 @@ MemoryImage::physical_address(Address address,
   DecodedAddress d;
   if (decoded != nullptr) {
     d = *decoded;
+    validate_decoded_address(d);
   } else if (spec_.has_value()) {
     d = AddressMapper(*spec_).decode(base);
   } else {
@@ -1238,6 +1382,9 @@ void MemoryImage::apply_thermal_event(const PhysicalAddress &physical,
 void MemoryImage::record_command_event(Command command,
                                        const DecodedAddress &decoded,
                                        Cycle cycle, std::size_t payload_bytes) {
+  // 坐标是 MemoryImage/StackModel 的公共输入。即使关闭功耗模型，也不能让
+  // 非法坐标因为下面的快速返回而悄悄通过。
+  validate_decoded_address(decoded);
   if (!options_.power_enabled) {
     return;
   }
@@ -1324,6 +1471,7 @@ void MemoryImage::writeback_row_buffer(StorageKey bank_key, Cycle cycle) {
 }
 
 void MemoryImage::activate_row(const DecodedAddress &decoded, Cycle cycle) {
+  validate_decoded_address(decoded);
   StorageKey bank_key = bank_key_from_decoded(decoded);
   StorageKey row_key = row_key_from_decoded(decoded);
   auto &row_buffer = row_buffers_[bank_key];
@@ -1347,10 +1495,12 @@ void MemoryImage::activate_row(const DecodedAddress &decoded, Cycle cycle) {
 }
 
 void MemoryImage::precharge_bank(const DecodedAddress &decoded, Cycle cycle) {
+  validate_decoded_address(decoded);
   writeback_row_buffer(bank_key_from_decoded(decoded), cycle);
 }
 
 void MemoryImage::precharge_all(const DecodedAddress &decoded, Cycle cycle) {
+  validate_decoded_address(decoded);
   std::vector<StorageKey> targets;
   for (const auto &[bank_key, row_buffer] : row_buffers_) {
     if (!row_buffer.open) {
@@ -1461,7 +1611,8 @@ MemoryImage::row_buffer_block(Address base,
 
 ByteVector MemoryImage::read(Address address, std::size_t size,
                              bool *initialized, const DecodedAddress *decoded) {
-  validate_address_span(address, size, "memory image read");
+  validate_address_span(address, size, "memory image read",
+                        backend_->capacity_bytes());
   ByteVector out(size, default_value_);
   bool all_initialized = true;
   std::size_t copied = 0;
@@ -1474,8 +1625,16 @@ ByteVector MemoryImage::read(Address address, std::size_t size,
     // decoded 只描述请求起始事务行。跨行访问的后续行必须按其地址重新
     // 推导存储坐标，否则会把首行的 row/column 重用于后续行，并可能从
     // 打开的首行 row buffer 中重复读出错误数据。
-    const DecodedAddress *line_decoded =
-        (base == first_base) ? decoded : nullptr;
+    DecodedAddress derived_decoded;
+    const DecodedAddress *line_decoded = decoded;
+    if (base != first_base) {
+      if (spec_.has_value()) {
+        derived_decoded = AddressMapper(*spec_).decode(base);
+        line_decoded = &derived_decoded;
+      } else {
+        line_decoded = nullptr;
+      }
+    }
 
     read_line_accesses_++;
     DataBlock *rb_block = row_buffer_block(base, line_decoded, 0, false);
@@ -1530,7 +1689,8 @@ ByteVector MemoryImage::read(Address address, std::size_t size,
 ByteVector
 MemoryImage::read_initialized_mask(Address address, std::size_t size,
                                    const DecodedAddress *decoded) const {
-  validate_address_span(address, size, "memory image initialized-mask read");
+  validate_address_span(address, size, "memory image initialized-mask read",
+                        backend_->capacity_bytes());
   ByteVector out(size, 0);
   std::size_t copied = 0;
   const Address first_base = line_base(address);
@@ -1539,8 +1699,16 @@ MemoryImage::read_initialized_mask(Address address, std::size_t size,
     Address base = line_base(current);
     std::size_t offset = line_offset(current);
     std::size_t chunk = std::min(size - copied, line_size_ - offset);
-    const DecodedAddress *line_decoded =
-        (base == first_base) ? decoded : nullptr;
+    DecodedAddress derived_decoded;
+    const DecodedAddress *line_decoded = decoded;
+    if (base != first_base) {
+      if (spec_.has_value()) {
+        derived_decoded = AddressMapper(*spec_).decode(base);
+        line_decoded = &derived_decoded;
+      } else {
+        line_decoded = nullptr;
+      }
+    }
 
     if (const DataBlock *rb_block = row_buffer_block(base, line_decoded)) {
       std::copy_n(rb_block->initialized_mask.begin() +
@@ -1564,7 +1732,8 @@ MemoryImage::read_initialized_mask(Address address, std::size_t size,
 void MemoryImage::write(Address address, const ByteVector &data,
                         const ByteVector *mask, const DecodedAddress *decoded,
                         std::uint64_t request_id, Cycle cycle) {
-  validate_address_span(address, data.size(), "memory image write");
+  validate_address_span(address, data.size(), "memory image write",
+                        backend_->capacity_bytes());
   if (mask != nullptr && mask->size() != data.size()) {
     throw std::invalid_argument(
         "memory image write mask size does not match data size");
@@ -1579,8 +1748,16 @@ void MemoryImage::write(Address address, const ByteVector &data,
     std::size_t chunk = std::min(data.size() - copied, line_size_ - offset);
 
     write_line_accesses_++;
-    const DecodedAddress *line_decoded =
-        (base == first_base) ? decoded : nullptr;
+    DecodedAddress derived_decoded;
+    const DecodedAddress *line_decoded = decoded;
+    if (base != first_base) {
+      if (spec_.has_value()) {
+        derived_decoded = AddressMapper(*spec_).decode(base);
+        line_decoded = &derived_decoded;
+      } else {
+        line_decoded = nullptr;
+      }
+    }
     DataBlock backing;
     const bool backing_exists = load_backend_line(base, backing, line_decoded);
     if (!backing_exists) {
@@ -1720,6 +1897,8 @@ void MemoryImage::load_text(const std::string &path) {
       throw std::runtime_error("memory image line " + std::to_string(lineno) +
                                " missing data");
     }
+    validate_address_span(*address, data.size(), "memory image text input",
+                          backend_->capacity_bytes());
 
     std::size_t copied = 0;
     Address first_base = line_base(*address);

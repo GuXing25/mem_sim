@@ -8,6 +8,7 @@
 namespace hbm_sim {
 
 void TimingEngine::reset(const DramSpec &spec) {
+  validate_spec(spec);
   // 每类 scope 都分配独立数组：即使某个 preset 当前不用 SID 或 Rank，
   // scope_count() 也会至少返回 1，使统一索引逻辑不用到处判断空数组。
   //

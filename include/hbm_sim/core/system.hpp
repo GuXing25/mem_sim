@@ -129,6 +129,10 @@ class MemorySystem {
 
   const Stats& stats() const { return stats_; }
   const DramSpec& spec() const { return spec_; }
+  // Controller 的命令、队列、PHY 字段是 channel-local；由于同一 stack 的
+  // Controllers 共享一个 MemoryImage，其 storage/power/thermal/ECC 字段只是
+  // 同一 stack 的共享快照，不能跨 controller 求和。物理统计应读取 stats()
+  // 或 per_stack_stats()，这两个入口已按 MemoryImage 去重聚合。
   const std::vector<Controller>& controllers() const { return controllers_; }
   const std::vector<IssuedCommand>& issued_commands() const { return issued_; }
   std::size_t controller_count() const { return controllers_.size(); }

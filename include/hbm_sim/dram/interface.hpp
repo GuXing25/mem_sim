@@ -1,6 +1,6 @@
 #pragma once
 
-// InterfaceModel 负责把 DramSpec 中的协议开关换算成外部接口占用。
+// InterfaceModel 负责把 DramSpec 中的协议开关换算成接口开销记账量。
 // DramSpec 只描述器件/模式配置；这里集中处理 request-level metadata/ECC
 // 和 command-level CA parity 等开销，避免把带宽口径散落到 Controller 中。
 
@@ -19,8 +19,9 @@ int lpddr_metadata_lane_bits_per_request(const DramSpec& spec);
 // CA parity 这类 command/address bus 级开销。
 int request_protocol_overhead_bits(const DramSpec& spec);
 
-// 单个 payload request 在数据接口上实际传输的 byte 数，包含 payload 和
-// request-level metadata/ECC，按 byte 向上取整。
+// 单个 payload request 的等效接口需求 byte 数，包含 payload 和
+// request-level metadata/ECC，按 byte 向上取整。当前该数值用于统计，不会
+// 自动延长命令/数据总线占用，因而不是 pin-level 实际传输拍数。
 int request_interface_bytes(const DramSpec& spec, std::size_t payload_bytes);
 int request_interface_bytes(const DramSpec& spec);
 

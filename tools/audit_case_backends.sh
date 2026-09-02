@@ -26,7 +26,9 @@ if [[ $sim_binary != /* ]]; then
 fi
 
 trace_file="$repo_root/examples/data_check.trace"
-image_file="$repo_root/examples/memory_image.txt"
+# 通用审计镜像不能带 HBM 专用 channel/SID 坐标，否则在单 channel LPDDR
+# 配置中会正确地被 MemoryImage 拒绝。坐标由各标准的 AddressMapper 推导。
+image_file="$repo_root/examples/backend_audit_image.txt"
 for required in "$case_cfg" "$trace_file" "$image_file"; do
   if [[ ! -f $required ]]; then
     echo "error: required file not found: $required" >&2

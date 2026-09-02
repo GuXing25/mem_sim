@@ -70,7 +70,9 @@ class StackAddressMapper {
 
 class AddressMapper {
  public:
-  explicit AddressMapper(DramSpec spec) : spec_(std::move(spec)) {}
+  explicit AddressMapper(DramSpec spec) : spec_(std::move(spec)) {
+    validate_spec(spec_);
+  }
 
   // 按 DramSpec::address_mapping 指定的模板，把 byte address 映射到 DRAM
   // 层级坐标。模板名按高位到低位解释，与常见论文/Ramulator 习惯一致。

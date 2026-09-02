@@ -18,6 +18,18 @@ namespace {
 
 constexpr std::size_t kMaxValidationErrors = 64;
 
+bool decoded_in_range(const DramSpec &spec, const IssuedCommand &issued) {
+  const Organization &o = spec.org;
+  const DecodedAddress &d = issued.decoded;
+  return issued.stack_id >= 0 && d.channel >= 0 && d.channel < o.channels &&
+         d.pseudo_channel >= 0 &&
+         d.pseudo_channel < o.pseudo_channels && d.sid >= 0 &&
+         d.sid < o.sids && d.rank >= 0 && d.rank < o.ranks &&
+         d.bank_group >= 0 && d.bank_group < o.bank_groups && d.bank >= 0 &&
+         d.bank < o.banks_per_group && d.row >= 0 && d.row < o.rows &&
+         d.column >= 0 && d.column < o.columns;
+}
+
 struct ValidatorScopeState {
   // next_command 与 TimingEngine::TimingScopeState 同义：在某个 scope bucket
   // 内， 每种命令下一次允许发射的最早 cycle。Validator
@@ -570,6 +582,13 @@ validate_single_stack_trace(const DramSpec &spec,
 
   for (const auto &issued : trace) {
     report.checked_commands++;
+    if (!decoded_in_range(spec, issued)) {
+      add_error(report, issued,
+                "contains an out-of-range stack or DRAM coordinate");
+      // scope_index() 的夹紧只用于内部数组防御；非法外部事件不能重放到
+      // 最近的合法 bank，否则坏 trace 可能被错误地判定为通过。
+      continue;
+    }
     const auto &meta = command_meta(issued.command);
 
     if (spec.dual_command_bus) {
@@ -748,6 +767,7 @@ validate_single_stack_trace(const DramSpec &spec,
 CommandValidationReport
 validate_command_trace(const DramSpec &spec,
                        const std::vector<IssuedCommand> &trace) {
+  validate_spec(spec);
   // JEDEC 状态和 timing 约束都止于 stack 边界；逐 stack 重放可避免独立
   // stack 在同一拍访问相同局部坐标时产生伪冲突。
   std::vector<int> stack_ids;

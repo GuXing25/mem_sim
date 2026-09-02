@@ -7,6 +7,7 @@
 namespace hbm_sim {
 
 void RfmManager::reset(const DramSpec& spec) {
+  validate_spec(spec);
   // 每个 bank 一份 ACT 计数和 pending 标记。pending 标记用于避免阈值已触发但
   // RFMPB/RFMAB 还没发出前，连续 ACT 反复生成重复维护请求。
   const std::size_t bank_count = static_cast<std::size_t>(spec.total_banks());

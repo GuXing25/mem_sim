@@ -252,6 +252,24 @@ bounded_random_out="$(mktemp)"
 grep -Eq '^random_address_space_bytes[[:space:]]*: 4096$' "$bounded_random_out"
 grep -Eq '^remaining_requests[[:space:]]*: 0$' "$bounded_random_out"
 rm -f "$bounded_random_out"
+
+# Maintenance 与 burst trace 必须采用和普通请求相同的严格非负解析规则。
+invalid_trace="$(mktemp)"
+printf '0 M REFab 0x0 stack=-1\n' >"$invalid_trace"
+if "$HBM_SIM_BIN" --standard hbm4 --trace "$invalid_trace" --requests 0 \
+    >/tmp/hbm_sim_bad_trace.out 2>&1; then
+  echo "expected a negative maintenance stack id to fail" >&2
+  exit 1
+fi
+grep -F "has invalid stack id: -1" /tmp/hbm_sim_bad_trace.out >/dev/null
+printf '0 BR 0x0 len=64garbage\n' >"$invalid_trace"
+if "$HBM_SIM_BIN" --standard hbm4 --trace "$invalid_trace" --requests 0 \
+    >/tmp/hbm_sim_bad_trace.out 2>&1; then
+  echo "expected a malformed burst length to fail" >&2
+  exit 1
+fi
+grep -F "has invalid burst length: 64garbage" /tmp/hbm_sim_bad_trace.out >/dev/null
+rm -f "$invalid_trace" /tmp/hbm_sim_bad_trace.out
 "$HBM_SIM_BIN" --standard hbm4 --requests 2 \
   --cmd-trace "$auto_output_root/nested/commands.csv" \
   --dfi-trace "$auto_output_root/nested/dfi.csv" \
@@ -305,6 +323,29 @@ if "$HBM_SIM_BIN" --standard hbm4 --requests 1 --power-scale -1 >/tmp/hbm_sim_ba
 fi
 grep -Eq "power_scale must be >= 0" /tmp/hbm_sim_bad_power_scale.out
 rm -f /tmp/hbm_sim_bad_power_scale.out
+
+# 无符号选项不能把 -1 包装成 UINT64_MAX；整数/浮点参数也必须完整消费
+# 输入 token，且拒绝 NaN/Inf，避免错误配置生成貌似正常的统计。
+if "$HBM_SIM_BIN" --standard hbm4 --requests -1 --check-config \
+    >/tmp/hbm_sim_bad_unsigned.out 2>&1; then
+  echo "expected a negative unsigned option to fail" >&2
+  exit 1
+fi
+grep -F "invalid non-negative integer: -1" /tmp/hbm_sim_bad_unsigned.out >/dev/null
+if "$HBM_SIM_BIN" --standard hbm4 --read-ratio 50garbage --check-config \
+    >/tmp/hbm_sim_bad_integer.out 2>&1; then
+  echo "expected an integer with a trailing suffix to fail" >&2
+  exit 1
+fi
+grep -F "invalid integer: 50garbage" /tmp/hbm_sim_bad_integer.out >/dev/null
+if "$HBM_SIM_BIN" --standard hbm4 --power-scale nan --check-config \
+    >/tmp/hbm_sim_bad_float.out 2>&1; then
+  echo "expected a non-finite floating-point option to fail" >&2
+  exit 1
+fi
+grep -F "invalid finite number: nan" /tmp/hbm_sim_bad_float.out >/dev/null
+rm -f /tmp/hbm_sim_bad_unsigned.out /tmp/hbm_sim_bad_integer.out \
+  /tmp/hbm_sim_bad_float.out
 run_and_check lpddr6_efficiency "$HBM_SIM_BIN" --standard lpddr6 --requests 128 \
   --lpddr-efficiency static --metadata-bits-per-request 16
 run_and_check lpddr6_link_cli "$HBM_SIM_BIN" --standard lpddr6 --requests 32 \
@@ -431,6 +472,16 @@ rm -rf "$backend_dir"
 run_and_check hbm4_dramsim3_idd_grid "$HBM_SIM_BIN" --config configs/hbm.cfg --standard hbm4 \
   --requests 64 --power-source dramsim3_idd \
   --thermal-grid-cols-per-tile 4 --thermal-grid-rows-per-tile 4
+if "$HBM_SIM_BIN" --standard hbm4 --requests 1 \
+  --power-source dramsim3_idd --idd-devices-per-rank 0 \
+  >/tmp/hbm_sim_bad_idd_devices.out 2>&1; then
+  cat /tmp/hbm_sim_bad_idd_devices.out
+  echo "expected zero IDD devices_per_rank to fail" >&2
+  exit 1
+fi
+grep -Eq "idd_devices_per_rank must be > 0 for IDD power mode" \
+  /tmp/hbm_sim_bad_idd_devices.out
+rm -f /tmp/hbm_sim_bad_idd_devices.out
 run_and_check hbm3_config "$HBM_SIM_BIN" --config configs/hbm.cfg --standard hbm3 --requests 128
 run_and_check lpddr5_config "$HBM_SIM_BIN" --config configs/lpddr.cfg --standard lpddr5 --requests 128
 run_and_check lpddr6_config "$HBM_SIM_BIN" --config configs/lpddr.cfg --standard lpddr6 --requests 128

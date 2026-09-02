@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cmath>
 #include <cstddef>
 #include <limits>
 #include <stdexcept>
@@ -19,10 +20,6 @@
 
 namespace hbm_sim {
 namespace {
-
-std::size_t clamp_buffer_size(std::size_t value) {
-  return std::max<std::size_t>(1, value);
-}
 
 std::uint64_t rounded_bytes_from_bits(std::uint64_t bits) {
   return (bits + 7) / 8;
@@ -82,6 +79,25 @@ bool ranges_overlap(Address a_start, std::size_t a_size, Address b_start,
          b_start < range_end(a_start, a_size);
 }
 
+void validate_request_decoded(const DramSpec &spec,
+                              const DecodedAddress &decoded) {
+  const Organization &o = spec.org;
+  const auto check = [](int value, int count, const char *name) {
+    if (value < 0 || value >= count) {
+      throw std::out_of_range(std::string("request decoded ") + name +
+                              " is outside the DRAM organization");
+    }
+  };
+  check(decoded.channel, o.channels, "channel");
+  check(decoded.pseudo_channel, o.pseudo_channels, "pseudo_channel");
+  check(decoded.sid, o.sids, "sid");
+  check(decoded.rank, o.ranks, "rank");
+  check(decoded.bank_group, o.bank_groups, "bank_group");
+  check(decoded.bank, o.banks_per_group, "bank");
+  check(decoded.row, o.rows, "row");
+  check(decoded.column, o.columns, "column");
+}
+
 } // namespace
 
 Controller::Controller(DramSpec spec, ControllerOptions options)
@@ -90,13 +106,25 @@ Controller::Controller(DramSpec spec, ControllerOptions options)
       row_policy_(static_cast<std::size_t>(spec_.total_banks()),
                   std::max(1, options_.row_policy_cap)),
       timing_engine_(spec_) {
-  // ControllerOptions 来自 CLI/config，可能被用户设为 0。这里统一 clamp，
-  // 保证后续 buffer_has_space() 和 row_policy_ 不会遇到空容量这类非协议问题。
-  options_.read_buffer_size = clamp_buffer_size(options_.read_buffer_size);
-  options_.write_buffer_size = clamp_buffer_size(options_.write_buffer_size);
-  options_.priority_buffer_size =
-      clamp_buffer_size(options_.priority_buffer_size);
-  options_.row_policy_cap = std::max(1, options_.row_policy_cap);
+  validate_spec(spec_);
+  if (options_.read_buffer_size == 0 || options_.write_buffer_size == 0 ||
+      options_.priority_buffer_size == 0) {
+    throw std::invalid_argument("Controller buffer sizes must be positive");
+  }
+  if (!std::isfinite(options_.write_low_watermark) ||
+      !std::isfinite(options_.write_high_watermark) ||
+      options_.write_low_watermark < 0.0 ||
+      options_.write_high_watermark > 1.0 ||
+      options_.write_low_watermark >= options_.write_high_watermark) {
+    throw std::invalid_argument(
+        "Controller write watermarks must satisfy 0 <= low < high <= 1");
+  }
+  if (options_.row_policy_cap <= 0) {
+    throw std::invalid_argument("Controller row_policy_cap must be positive");
+  }
+  if (options_.global_channel_id < 0) {
+    throw std::invalid_argument("Controller global_channel_id must be non-negative");
+  }
   memory_image_ = options_.memory_image;
   if (!memory_image_) {
     memory_image_ = std::make_shared<MemoryImage>(spec_);
@@ -111,6 +139,21 @@ Controller::Controller(DramSpec spec, ControllerOptions options)
 }
 
 bool Controller::enqueue(Request req) {
+  validate_request_decoded(spec_, req.decoded);
+  if (req.qos_class < 0 || req.target_stack < -1 || req.target_channel < -1) {
+    throw std::invalid_argument(
+        "request qos/stack/channel selectors must be non-negative or unset");
+  }
+  if (req.type != RequestType::Maintenance) {
+    const std::uint64_t capacity = memory_image_->capacity_bytes();
+    const std::size_t size = request_data_size(spec_, req);
+    if (capacity != 0 &&
+        (req.address >= capacity ||
+        static_cast<std::uintmax_t>(size) >
+            static_cast<std::uintmax_t>(capacity - req.address))) {
+      throw std::out_of_range("request address range exceeds DRAM capacity");
+    }
+  }
   req.arrival = clk_;
   if (low_power_active_ && req.type != RequestType::Maintenance) {
     if (explicit_power_down_active_ || explicit_self_refresh_active_) {
@@ -375,8 +418,8 @@ void Controller::finalize_run_stats() {
   stats_.peak_bandwidth_GBps = spec_.peak_bandwidth_GBps();
   if (stats_.cycles > 0 && spec_.cycles_per_second() > 0.0) {
     // achieved_bandwidth_GBps 只统计 payload；achieved_interface_bandwidth_GBps
-    // 统计 payload + metadata/ECC overhead，用来研究链路保护/ECC
-    // 对接口占用的影响。
+    // 统计 payload + metadata/ECC overhead，是协议开销的记账等效需求带宽。
+    // 当前保护 bit 不延长数据总线占用，不能把它解释为 pin-accurate 实测值。
     double bytes = static_cast<double>(stats_.read_bytes + stats_.write_bytes);
     double interface_bytes = static_cast<double>(
         stats_.interface_read_bytes + stats_.interface_write_bytes +
@@ -1534,9 +1577,9 @@ void Controller::issue(Candidate cand) {
   const int command_overhead_bits =
       command_interface_overhead_bits(spec_, issued);
   if (command_overhead_bits > 0) {
-    // LPDDR6 CA parity 这类命令/地址总线保护不属于读写
-    // payload，但会真实占用接口。 因此它进入 command_bits 和总
-    // interface_overhead_bits，最终影响 achieved_if_bw 与 payload_efficiency。
+    // LPDDR6 CA parity 这类命令/地址保护不属于读写 payload。当前把它计入
+    // command_bits 和总 interface_overhead_bits，用于等效需求带宽与效率统计；
+    // 尚未据此增加 CA 总线拍数。
     stats_.interface_command_bits +=
         static_cast<std::uint64_t>(command_overhead_bits);
     stats_.interface_overhead_bits +=

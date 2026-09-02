@@ -86,6 +86,9 @@ REFdb 到 REFdb。这样数值偏保守，但不会比标准短。后续如果�
 - `payload_efficiency_pct`。
 
 HBM CRC/ECC/RAS metadata、LPDDR DBI/link ECC/CA parity 都应通过这里进入接口统计。
+这些 bit 当前只做接口流量和效率记账，不会自动增加 RD/WR 占用周期。因此
+`achieved_if_bw_GBps` 是等效需求带宽，不能解释为已经受链路容量约束后的实测带宽；
+需要研究保护开销对吞吐量的影响时，还要给数据通路加入对应的序列化/重放时延。
 
 ## DFI 字段
 

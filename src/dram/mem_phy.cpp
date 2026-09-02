@@ -95,17 +95,19 @@ MemPhy::MemPhy(DramSpec spec,
                MemPhyOptions options,
                std::shared_ptr<MemoryImage> memory_image)
     : spec_(std::move(spec)), options_(std::move(options)), memory_image_(std::move(memory_image)) {
+  validate_spec(spec_);
   if (!memory_image_) throw std::invalid_argument("MemPhy requires a MemoryImage backend");
   if (options_.command_fifo_depth == 0 || options_.read_fifo_depth == 0 ||
       options_.write_fifo_depth == 0) {
     throw std::invalid_argument("MemPhy FIFO depths must be positive");
   }
-  options_.command_pipeline_cycles = std::max(0, options_.command_pipeline_cycles);
-  options_.read_return_pipeline_cycles = std::max(0, options_.read_return_pipeline_cycles);
-  options_.write_data_pipeline_cycles = std::max(0, options_.write_data_pipeline_cycles);
-  options_.reset_cycles = std::max(0, options_.reset_cycles);
-  options_.initialization_cycles = std::max(0, options_.initialization_cycles);
-  options_.training_cycles = std::max(0, options_.training_cycles);
+  if (options_.command_pipeline_cycles < 0 ||
+      options_.read_return_pipeline_cycles < 0 ||
+      options_.write_data_pipeline_cycles < 0 || options_.reset_cycles < 0 ||
+      options_.initialization_cycles < 0 || options_.training_cycles < 0) {
+    throw std::invalid_argument(
+        "MemPhy lifecycle and pipeline cycles must be non-negative");
+  }
   if (spec_.lpddr_family) {
     adapter_ = std::make_unique<LpddrPhyAdapter>();
   } else {

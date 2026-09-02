@@ -17,6 +17,7 @@
 #include "hbm_sim/controller/controller.hpp"
 #include "hbm_sim/controller/executor.hpp"
 #include "hbm_sim/controller/refresh.hpp"
+#include "hbm_sim/controller/row_policy.hpp"
 #include "hbm_sim/controller/timing.hpp"
 #include "hbm_sim/core/addr_map.hpp"
 #include "hbm_sim/core/stack_model.hpp"
@@ -222,6 +223,109 @@ void test_library_spec_rejects_unimplemented_or_invalid_protocol_modes() {
     rejected = true;
   }
   require(rejected, "library API accepted an unpairable REFdb topology");
+
+  DramSpec bad_tick = hbm_sim::make_spec("hbm4");
+  bad_tick.tick_multiplier = 0;
+  rejected = false;
+  try {
+    hbm_sim::finalize_spec(bad_tick);
+  } catch (const std::invalid_argument &) {
+    rejected = true;
+  }
+  require(rejected, "library API silently clamped a zero tick multiplier");
+
+  DramSpec bad_stack_height = hbm_sim::make_spec("hbm4");
+  bad_stack_height.stack_height = 0;
+  rejected = false;
+  try {
+    hbm_sim::MemoryImage invalid(bad_stack_height);
+  } catch (const std::invalid_argument &) {
+    rejected = true;
+  }
+  require(rejected,
+          "MemoryImage silently replaced an invalid HBM stack height");
+
+  DramSpec bad_density = hbm_sim::make_spec("hbm4");
+  bad_density.density_gb = 0;
+  rejected = false;
+  try {
+    (void)hbm_sim::AddressMapper(bad_density);
+  } catch (const std::invalid_argument &) {
+    rejected = true;
+  }
+  require(rejected, "AddressMapper accepted a non-positive density identity");
+
+  DramSpec bad_overhead = hbm_sim::make_spec("hbm4");
+  bad_overhead.metadata_bits_per_request = -1;
+  rejected = false;
+  try {
+    hbm_sim::finalize_spec(bad_overhead);
+  } catch (const std::invalid_argument &) {
+    rejected = true;
+  }
+  require(rejected, "library API silently clamped negative interface overhead");
+
+  hbm_sim::ControllerOptions bad_controller_options;
+  bad_controller_options.read_buffer_size = 0;
+  rejected = false;
+  try {
+    Controller invalid(hbm_sim::make_spec("hbm4"), bad_controller_options);
+  } catch (const std::invalid_argument &) {
+    rejected = true;
+  }
+  require(rejected, "library API silently clamped a zero controller buffer");
+
+  rejected = false;
+  try {
+    hbm_sim::RowPolicyEngine invalid(0, 1);
+  } catch (const std::invalid_argument &) {
+    rejected = true;
+  }
+  require(rejected, "row-policy API accepted a zero bank count");
+
+  rejected = false;
+  try {
+    hbm_sim::RowPolicyEngine invalid(1, 0);
+  } catch (const std::invalid_argument &) {
+    rejected = true;
+  }
+  require(rejected, "row-policy API silently clamped a zero ClosedCAP limit");
+
+  hbm_sim::StorageModelOptions bad_storage_options;
+  bad_storage_options.thermal_grid_cols_per_tile = 0;
+  rejected = false;
+  try {
+    hbm_sim::MemoryImage invalid(hbm_sim::make_spec("hbm4"), 0,
+                                 bad_storage_options);
+  } catch (const std::invalid_argument &) {
+    rejected = true;
+  }
+  require(rejected, "library API silently clamped an invalid thermal grid");
+
+  hbm_sim::StorageModelOptions bad_idd_options;
+  bad_idd_options.power_source = "dramsim3_idd";
+  bad_idd_options.idd_devices_per_rank = 0.0;
+  rejected = false;
+  try {
+    hbm_sim::MemoryImage invalid(hbm_sim::make_spec("hbm4"), 0,
+                                 bad_idd_options);
+  } catch (const std::invalid_argument &) {
+    rejected = true;
+  }
+  require(rejected,
+          "IDD power mode silently replaced zero devices_per_rank with one");
+
+  DramSpec request_spec = hbm_sim::make_spec("hbm4");
+  Controller request_controller(request_spec);
+  Request invalid_request = make_request(999, RequestType::Read, 0, 0, 0, 0);
+  invalid_request.decoded.bank = request_spec.org.banks_per_group;
+  rejected = false;
+  try {
+    (void)request_controller.enqueue(invalid_request);
+  } catch (const std::out_of_range &) {
+    rejected = true;
+  }
+  require(rejected, "Controller accepted an out-of-range decoded bank");
 }
 
 void test_timing_engine_table_and_window_state() {
@@ -442,6 +546,13 @@ void test_command_trace_plugins() {
   auto double_act_report = hbm_sim::validate_command_trace(spec, double_act);
   require(!double_act_report.ok(),
           "command trace validator missed ACT to an already-open bank");
+
+  std::vector<IssuedCommand> invalid_coordinate = trace;
+  invalid_coordinate.front().decoded.bank = spec.org.banks_per_group;
+  auto coordinate_report =
+      hbm_sim::validate_command_trace(spec, invalid_coordinate);
+  require(!coordinate_report.ok(),
+          "command trace validator silently clamped an invalid bank");
 }
 
 void test_dfi_trace_generation() {
@@ -1268,6 +1379,51 @@ void test_multi_controller_parallel_channels() {
   rr_memory.run({a, b}, 200);
   require(rr_memory.stats().active_controllers == 2,
           "round-robin mapper did not distribute requests");
+
+  hbm_sim::MemorySystemOptions decoded_options;
+  decoded_options.channel_mapper = hbm_sim::ChannelMapperKind::Decoded;
+  MemorySystem invalid_channel_memory(spec, decoded_options);
+  Request invalid_channel = a;
+  invalid_channel.decoded.channel = spec.org.channels;
+  bool invalid_channel_rejected = false;
+  try {
+    (void)invalid_channel_memory.try_submit(invalid_channel);
+  } catch (const std::out_of_range &) {
+    invalid_channel_rejected = true;
+  }
+  require(invalid_channel_rejected,
+          "decoded channel mapper silently clamped an invalid channel");
+
+  MemorySystem invalid_selector_memory(spec);
+  Request invalid_selector = a;
+  invalid_selector.qos_class = -1;
+  bool invalid_selector_rejected = false;
+  try {
+    (void)invalid_selector_memory.try_submit(invalid_selector);
+  } catch (const std::invalid_argument &) {
+    invalid_selector_rejected = true;
+  }
+  require(invalid_selector_rejected,
+          "MemorySystem accepted a negative request QoS selector");
+
+  hbm_sim::MemorySystemOptions invalid_interleave_options;
+  invalid_interleave_options.stack_count = 2;
+  invalid_interleave_options.stack_interleave_bytes =
+      static_cast<std::uint64_t>(spec.transaction_bytes());
+  bool invalid_interleave_rejected = false;
+  try {
+    MemorySystem invalid_interleave(spec, invalid_interleave_options);
+  } catch (const std::invalid_argument &) {
+    invalid_interleave_rejected = true;
+  }
+  require(invalid_interleave_rejected,
+          "MemorySystem accepted a stripe smaller than one host line");
+
+  hbm_sim::MemorySystemOptions blocked_options = invalid_interleave_options;
+  blocked_options.stack_mapping = hbm_sim::StackMappingKind::Blocked;
+  MemorySystem blocked_memory(spec, blocked_options);
+  require(blocked_memory.stack_count() == 2,
+          "blocked mapping incorrectly required an interleave-sized stripe");
 }
 
 void test_active_six_stack_memory_system_routing_qos_and_stats() {
@@ -1429,6 +1585,24 @@ void test_active_six_stack_memory_system_routing_qos_and_stats() {
   }
   require(interleaved_overflow_rejected,
           "interleaved stack mapping silently wrapped the system address");
+
+  hbm_sim::StackAddressMapper single(1, 64, 1024);
+  bool single_decode_rejected = false;
+  try {
+    (void)single.decode(1024);
+  } catch (const std::out_of_range &) {
+    single_decode_rejected = true;
+  }
+  require(single_decode_rejected,
+          "single-stack decode accepted an address at capacity");
+  bool single_encode_rejected = false;
+  try {
+    (void)single.encode(0, 1024);
+  } catch (const std::out_of_range &) {
+    single_encode_rejected = true;
+  }
+  require(single_encode_rejected,
+          "single-stack encode accepted an address at capacity");
 }
 
 void test_write_forward_and_coalesce() {
@@ -1974,6 +2148,38 @@ void test_lpddr6_host_line_transaction_split() {
               memory.stats().interface_read_bytes == 64,
           "LPDDR6 split transaction payload or interface-byte accounting is "
           "incorrect");
+}
+
+void test_hbm3_lpddr5_host_line_transaction_split() {
+  struct Case {
+    const char *standard;
+    std::uint64_t capacity_bytes;
+  };
+  for (const Case test : {Case{"hbm3", 17179869184ULL},
+                          Case{"lpddr5", 2147483648ULL}}) {
+    DramSpec spec = hbm_sim::make_spec(test.standard);
+    require(spec.bytes_per_request() == 64,
+            std::string(test.standard) + " host request must remain 64B");
+    require(spec.transaction_bytes() == 32,
+            std::string(test.standard) +
+                " protocol transaction must be 32B");
+    require(spec.addressable_capacity_bytes() == test.capacity_bytes,
+            std::string(test.standard) +
+                " address geometry does not match its density profile");
+
+    hbm_sim::TrafficOptions options;
+    options.pattern = "stream";
+    options.requests = 1;
+    options.read_ratio = 100;
+    const std::vector<Request> requests =
+        hbm_sim::generate_traffic(spec, options);
+    require(requests.size() == 2 && requests[0].address == 0 &&
+                requests[1].address == 32 &&
+                requests[0].transaction_count == 2 &&
+                requests[1].transaction_count == 2,
+            std::string(test.standard) +
+                " must split one 64B host line into adjacent 32B transactions");
+  }
 }
 
 void test_hbm4_host_line_transaction_split() {
@@ -2746,6 +2952,7 @@ void test_physical_storage_coordinates_and_stats() {
 void test_memory_image_cross_line_read_uses_each_line_address() {
   DramSpec spec = hbm_sim::make_spec("hbm4");
   spec.org.line_size = 16;
+  spec.org.dram_transaction_bytes = 16;
   hbm_sim::MemoryImage image(spec);
   hbm_sim::AddressMapper mapper(spec);
   const DecodedAddress first = mapper.decode(0);
@@ -3033,6 +3240,17 @@ void test_floorplan_power_and_thermal_model() {
               power_off_stats.thermal_updates == 0 &&
               power_off_stats.thermal_peak_temp_c == tuned.thermal_ambient_c,
           "disabled power model still produced storage events");
+
+  DecodedAddress invalid_decoded = decoded;
+  invalid_decoded.bank = spec.org.banks_per_group;
+  bool invalid_power_off_coordinate_rejected = false;
+  try {
+    power_off_image.record_command_event(Command::ACT, invalid_decoded, 11);
+  } catch (const std::out_of_range &) {
+    invalid_power_off_coordinate_rejected = true;
+  }
+  require(invalid_power_off_coordinate_rejected,
+          "power-disabled command path accepted an invalid DRAM coordinate");
 }
 
 void test_dramsim3_idd_power_and_grid_thermal() {
@@ -3482,6 +3700,23 @@ void test_memory_image_text_checkpoint_and_mismatch_report() {
             buffer.str().find("44") != std::string::npos,
         "mismatch report did not include expected/actual/last-writer details");
   }
+
+  const std::string invalid_coordinate_path =
+      "/tmp/hbm_sim_invalid_coordinate_image.txt";
+  {
+    std::ofstream out(invalid_coordinate_path);
+    out << "0x2000 ch=" << spec.org.channels
+        << " pc=0 sid=0 rank=0 bg=0 bank=0 row=0 col=0 data=01\n";
+  }
+  bool invalid_coordinate_rejected = false;
+  try {
+    hbm_sim::MemoryImage invalid_image(spec);
+    invalid_image.load_text(invalid_coordinate_path);
+  } catch (const std::out_of_range &) {
+    invalid_coordinate_rejected = true;
+  }
+  require(invalid_coordinate_rejected,
+          "memory text input accepted an out-of-range decoded coordinate");
 }
 
 void test_data_trace_payload_parsing() {
@@ -3564,6 +3799,24 @@ void test_data_address_range_overflow_is_rejected() {
   }
   require(write_rejected,
           "MemoryImage accepted a write that wrapped Address space");
+
+  const hbm_sim::Address capacity = spec.addressable_capacity_bytes();
+  bool capacity_read_rejected = false;
+  try {
+    (void)image.read(capacity - 1, 2);
+  } catch (const std::out_of_range &) {
+    capacity_read_rejected = true;
+  }
+  require(capacity_read_rejected,
+          "MemoryImage accepted a read that crossed configured capacity");
+  bool capacity_write_rejected = false;
+  try {
+    image.write(capacity - 1, hbm_sim::ByteVector(2, 0xaa));
+  } catch (const std::out_of_range &) {
+    capacity_write_rejected = true;
+  }
+  require(capacity_write_rejected,
+          "MemoryImage accepted a write that crossed configured capacity");
 
   const std::string path = "/tmp/hbm_sim_overflow_burst.trace";
   {
@@ -3775,6 +4028,7 @@ int main() {
   test_lpddr6_efficiency_mode_mapping();
   test_lpddr6_shared_metadata_lane_overhead();
   test_lpddr6_host_line_transaction_split();
+  test_hbm3_lpddr5_host_line_transaction_split();
   test_hbm4_host_line_transaction_split();
   test_async_frontend_response_interface();
   test_async_response_backpressure_holds_completion();
