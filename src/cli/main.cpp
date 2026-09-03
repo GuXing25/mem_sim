@@ -541,7 +541,8 @@ bool is_spec_override_key(const std::string& key) {
       "npdex", "nsrefex", "neccscrub", "nraserr", "nlinkretry",
       "tck_ps", "trc_ns", "tras_ns", "trcdrd_ns", "trcd_rd_ns",
       "trcdwr_ns", "trcd_wr_ns", "trp_ns", "trpab_ns", "trppb_ns",
-      "trtp_ns", "twr_ns", "twtp_ns", "trrds_ns", "trrdl_ns", "trrd_ns",
+      "trtp_ns", "twr_ns", "twtp_ns", "trrds_ns", "trrd_s_ns",
+      "trrdl_ns", "trrd_l_ns", "trrd_ns",
       "tfaw_ns", "twtrs_ns", "twtr_s_ns", "twtrl_ns", "twtr_l_ns",
       "trtw_ns", "tccds_ns", "tccdl_ns", "tccdr_ns", "trfc_ns",
       "trfcab_ns", "trfcpb_ns", "trfcdb_ns", "trfmab_ns", "trfmpb_ns", "trrefd_ns",
@@ -576,8 +577,9 @@ std::string canonical_timing_name_for_key(const std::string& key) {
   if (key == "nwr" || key == "twr_ns" || key == "twtp_ns") return "nWR";
   if (key == "nccds" || key == "tccds_ns") return "nCCDS";
   if (key == "nccdl" || key == "tccdl_ns") return "nCCDL";
-  if (key == "nrrds" || key == "trrds_ns" || key == "trrd_ns") return "nRRDS";
-  if (key == "nrrdl" || key == "trrdl_ns") return "nRRDL";
+  if (key == "nrrds" || key == "trrds_ns" || key == "trrd_s_ns" ||
+      key == "trrd_ns") return "nRRDS";
+  if (key == "nrrdl" || key == "trrdl_ns" || key == "trrd_l_ns") return "nRRDL";
   if (key == "nfaw" || key == "tfaw_ns") return "nFAW";
   if (key == "naadmin" || key == "taad_min_ns") return "nAADMin";
   if (key == "naad" || key == "naadmax" || key == "taad_ns" ||
@@ -1008,8 +1010,8 @@ void apply_spec_overrides(hbm_sim::DramSpec& spec,
     // LPDDR 文档常把写到预充的约束写作 tWTP；本模型的终端 WR->PRE
     // 路径统一保存在 nWR，因此与外部 profile 解析器保持同一别名语义。
     else if (key == "twr_ns" || key == "twtp_ns") spec.timing.nWR = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
-    else if (key == "trrds_ns" || key == "trrd_ns") spec.timing.nRRDS = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
-    else if (key == "trrdl_ns") spec.timing.nRRDL = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
+    else if (key == "trrds_ns" || key == "trrd_s_ns" || key == "trrd_ns") spec.timing.nRRDS = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
+    else if (key == "trrdl_ns" || key == "trrd_l_ns") spec.timing.nRRDL = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
     else if (key == "tfaw_ns") spec.timing.nFAW = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
     else if (key == "twtrs_ns" || key == "twtr_s_ns") spec.timing.nWTRS = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
     else if (key == "twtrl_ns" || key == "twtr_l_ns") spec.timing.nWTRL = hbm_sim::jedec::ns_to_nck(parse_double(value), spec.timing.tCK_ps);
@@ -2046,6 +2048,23 @@ std::vector<std::string> validate_runtime_config(const Cli& cli,
   } else if ((protocol == "hbm" && spec.lpddr_family) ||
              (protocol == "lpddr" && !spec.lpddr_family)) {
     errors.push_back("selected PHY protocol has no executable semantics for base standard " + spec.name);
+  }
+
+  const std::string init_sequence = lower_value(cli.init_sequence);
+  const bool init_disabled = init_sequence.empty() || init_sequence == "none" ||
+                             init_sequence == "off";
+  const bool init_auto = init_sequence == "auto";
+  const bool hbm_init = init_sequence == "hbm" || init_sequence == "hbm3" ||
+                        init_sequence == "hbm4";
+  const bool lpddr_init = init_sequence == "lpddr" || init_sequence == "lpddr5" ||
+                          init_sequence == "lpddr6" ||
+                          init_sequence == "lpddr6_full";
+  if (!init_disabled && !init_auto && !hbm_init && !lpddr_init) {
+    errors.push_back("unsupported init_sequence: " + cli.init_sequence);
+  } else if ((hbm_init && spec.lpddr_family) ||
+             (lpddr_init && !spec.lpddr_family)) {
+    errors.push_back("init_sequence '" + cli.init_sequence +
+                     "' is incompatible with base standard " + spec.name);
   }
 
   bool selected_preset_exists = cli.preset.empty();

@@ -446,6 +446,22 @@ grep -Eq "^active_stacks[[:space:]]*: 2" "$multistack_qos_out"
 grep -Eq "^qos_priority_dispatches[[:space:]]*: [1-9]" "$multistack_qos_out"
 grep -Eq "^data_mismatches[[:space:]]*: 0" "$multistack_qos_out"
 rm -f "$multistack_qos_out"
+
+# 不能只用 qos_priority_dispatches 证明发生了优先级重排；
+# 用同一 Stack/同一拍的确定 trace 直接检查 host 完成顺序。
+qos_order_dir="$(mktemp -d)"
+for qos_policy in fcfs strict_priority; do
+  "$HBM_SIM_BIN" --config configs/hbm.cfg --standard hbm4 \
+    --trace examples/qos_priority.trace --requests 0 --max-cycles 4000 \
+    --stack-dispatch-width 1 --stack-qos-policy "$qos_policy" \
+    --response-trace "$qos_order_dir/$qos_policy.csv" >/dev/null
+done
+fcfs_order="$(tail -n +2 "$qos_order_dir/fcfs.csv" | cut -d, -f1 | paste -sd, -)"
+priority_order="$(tail -n +2 "$qos_order_dir/strict_priority.csv" | cut -d, -f1 | paste -sd, -)"
+test "$fcfs_order" = "0,1,2,3"
+test "$priority_order" = "2,3,1,0"
+rm -rf "$qos_order_dir"
+
 run_and_check hbm4_storage_config "$HBM_SIM_BIN" --config configs/hbm.cfg \
   --standard hbm4 --requests 128
 backend_dir="$(mktemp -d)"
@@ -489,7 +505,7 @@ run_and_check lpddr6_config "$HBM_SIM_BIN" --config configs/lpddr.cfg --standard
 run_and_check hbm4_jedec_template "$HBM_SIM_BIN" --config configs/hbm.cfg \
   --standard hbm4 --requests 64
 run_and_check hbm4_synthetic_research "$HBM_SIM_BIN" \
-  --config experiments/local/hx_hbm4_9000_48gb_16hi.cfg --requests 32
+  --config experiments/local/hx_hbm4_9000_48gb_16hi.cfg --requests 32 --stats-view full
 run_and_check hbm3_reference "$HBM_SIM_BIN" --config configs/validation/hbm3.cfg --standard hbm3 \
   --preset ramulator2_reference_1ch --requests 64
 run_and_check lpddr5_reference "$HBM_SIM_BIN" --config configs/validation/lpddr5.cfg --standard lpddr5 \
@@ -514,6 +530,25 @@ run_and_check hbm4_init_sequence "$HBM_SIM_BIN" --standard hbm4 --requests 16 \
 run_and_check lpddr6_full_init_sequence "$HBM_SIM_BIN" --standard lpddr6 --requests 16 \
   --init-sequence lpddr6_full --lpddr-link-protection true --lpddr-link-ecc true \
   --validate-cmd-trace
+
+# CLI 帮助列出的较老标准初始化名称必须保持可执行，避免帮助、配置模板与生成器漂移。
+for init_case in "hbm3 hbm3" "lpddr5 lpddr5"; do
+  read -r init_standard init_sequence <<<"$init_case"
+  init_out="$("$HBM_SIM_BIN" --standard "$init_standard" --requests 0 \
+    --init-sequence "$init_sequence" --max-cycles 100000 --stats-view full)"
+  grep -Eq '^commands\.MRW[[:space:]]*: [1-9]' <<<"$init_out"
+  grep -Eq '^remaining_requests[[:space:]]*: 0' <<<"$init_out"
+  grep -Eq '^hit_cycle_limit[[:space:]]*: false' <<<"$init_out"
+done
+cross_family_init_out="$(mktemp)"
+if "$HBM_SIM_BIN" --standard hbm4 --init-sequence lpddr6 --check-config \
+    >"$cross_family_init_out" 2>&1; then
+  echo "expected a cross-family init sequence to fail config validation" >&2
+  exit 1
+fi
+grep -F "init_sequence 'lpddr6' is incompatible with base standard HBM4" \
+  "$cross_family_init_out" >/dev/null
+rm -f "$cross_family_init_out"
 run_and_check hbm4_closed_cap "$HBM_SIM_BIN" --standard hbm4 --requests 64 \
   --row-policy closed_cap --row-policy-cap 1
 run_and_check hbm4_addr_mapping "$HBM_SIM_BIN" --standard hbm4 --requests 64 \
@@ -539,6 +574,22 @@ grep -Eq ",1,[^,]*,[^,]*,[^,]*," "$dfi_signal_trace"
 grep -Eq "^preset,name,value_nck,source" "$timing_table"
 grep -Eq "nCL" "$timing_table"
 rm -f "$cmd_trace" "$timing_table" "$dfi_trace" "$dfi_signal_trace"
+
+# 手册公开的 JEDEC 风格 tRRD_S/tRRD_L 拼写必须和无下划线别名等价。
+timing_alias_cfg="$(mktemp)"
+timing_alias_table="$(mktemp)"
+cat >"$timing_alias_cfg" <<'CFG'
+[override]
+tCK_ps = 500
+tRRD_S_ns = 3.0
+tRRD_L_ns = 4.0
+CFG
+"$HBM_SIM_BIN" --config configs/hbm.cfg --config "$timing_alias_cfg" \
+  --standard hbm4 --requests 0 --dump-timing-table "$timing_alias_table" \
+  >/dev/null
+grep -Eq '^"?HBM4"?,"?nRRDS"?,6,' "$timing_alias_table"
+grep -Eq '^"?HBM4"?,"?nRRDL"?,8,' "$timing_alias_table"
+rm -f "$timing_alias_cfg" "$timing_alias_table"
 
 # 显式维护 trace：差分工具用它构造可复现的 refresh/RFM 场景。
 maintenance_trace="$(mktemp)"

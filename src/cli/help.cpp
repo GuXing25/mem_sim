@@ -87,7 +87,7 @@ void print_help(const char* argv0) {
       << "  --random-address-space-bytes N  cap random system addresses; 0 uses model capacity\n"
       << "  --addr-stride BYTES\n"
       << "  --inject-interval N  frontend injection interval in controller ticks\n"
-      << "  --init-sequence none|auto|hbm4|lpddr6|lpddr6_full\n"
+      << "  --init-sequence none|auto|hbm|hbm3|hbm4|lpddr|lpddr5|lpddr6|lpddr6_full\n"
       << "  --init-sequence-interval N  control sequence injection interval\n"
       << "  --read-buffer-size N\n"
       << "  --write-buffer-size N\n"

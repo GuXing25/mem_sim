@@ -21,6 +21,8 @@ image、final memory txt/CSV 导出、DFI beat/signal trace 以及 storage model
 - `timed.trace`：带显式注入 cycle 的 trace 输入样例，格式为 `CYCLE R|W ADDRESS`。
 - `memory_image.txt`：稀疏真实存储区初始内容样例。
 - `data_check.trace`：带 `data=`、`expect=` 和 `mask=` 的数据正确性 trace 样例。
+- `qos_priority.trace`：同一源注入时刻、同 Stack 的多优先级 trace，用于对照
+  `fcfs` 与 `strict_priority` 的完成顺序。
 - `multistack_demos/`：四种标准的多 Stack 工程脚本、共享数据闭环 trace 和使用说明。
 
 修改建议：

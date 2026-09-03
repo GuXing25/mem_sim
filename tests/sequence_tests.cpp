@@ -1003,6 +1003,28 @@ void test_initialization_control_sequence_execution() {
   auto report =
       hbm_sim::validate_command_trace(lpddr, lpddr_memory.issued_commands());
   require(report.ok(), "validator rejected LPDDR6 full init sequence trace");
+
+  bool rejected_cross_family = false;
+  try {
+    hbm_sim::TrafficOptions wrong;
+    wrong.init_sequence = "lpddr6";
+    (void)hbm_sim::generate_control_sequence(hbm4, wrong);
+  } catch (const std::invalid_argument&) {
+    rejected_cross_family = true;
+  }
+  require(rejected_cross_family,
+          "HBM model accepted an LPDDR initialization sequence");
+
+  rejected_cross_family = false;
+  try {
+    hbm_sim::TrafficOptions wrong;
+    wrong.init_sequence = "hbm4";
+    (void)hbm_sim::generate_control_sequence(lpddr, wrong);
+  } catch (const std::invalid_argument&) {
+    rejected_cross_family = true;
+  }
+  require(rejected_cross_family,
+          "LPDDR model accepted an HBM initialization sequence");
 }
 
 void test_hbm4_scoped_timing() {
@@ -1292,6 +1314,8 @@ void test_timing_profile_dimensions() {
     profile << "density_gb = 24\n";
     profile << "stack_height = 12\n";
     profile << "tCK_ps = 625\n";
+    profile << "tRRD_S_ns = 5\n";
+    profile << "tRRD_L_ns = 7.5\n";
     profile << "tRFCab_ns = 450\n";
     profile << "tRFCpb_ns = 240\n";
     profile << "nCL = 28\n";
@@ -1308,6 +1332,8 @@ void test_timing_profile_dimensions() {
   require(external.timing.nRFCpb ==
               hbm_sim::jedec::ns_to_nck(240.0, external.timing.tCK_ps),
           "external timing profile file did not override tRFCpb");
+  require(external.timing.nRRDS == 8 && external.timing.nRRDL == 12,
+          "external timing profile file did not accept tRRD_S/tRRD_L aliases");
   bool external_ncl_vendor = false;
   for (const auto &entry : external.timing_table.entries) {
     if (entry.name == "nCL") {

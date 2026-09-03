@@ -122,8 +122,9 @@ std::string profile_timing_name_for_key(const std::string& key) {
   if (key == "nwr" || key == "twr_ns" || key == "twtp_ns") return "nWR";
   if (key == "nccds" || key == "tccds_ns") return "nCCDS";
   if (key == "nccdl" || key == "tccdl_ns") return "nCCDL";
-  if (key == "nrrds" || key == "trrds_ns" || key == "trrd_ns") return "nRRDS";
-  if (key == "nrrdl" || key == "trrdl_ns") return "nRRDL";
+  if (key == "nrrds" || key == "trrds_ns" || key == "trrd_s_ns" ||
+      key == "trrd_ns") return "nRRDS";
+  if (key == "nrrdl" || key == "trrdl_ns" || key == "trrd_l_ns") return "nRRDL";
   if (key == "nfaw" || key == "tfaw_ns") return "nFAW";
   if (key == "naadmin" || key == "taad_min_ns") return "nAADMin";
   if (key == "naad" || key == "naadmax" || key == "taad_ns" ||

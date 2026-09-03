@@ -9,7 +9,7 @@
 - `dram/`：DRAM 标准描述，包括标准 traits、JEDEC 换算、命令语义、命令状态合法性、接口开销、完整 organization/timing profile 和派生 timing table。新增 HBM/LPDDR 标准参数时优先改这里。
 - `controller/`：控制器内部实现，包括 request buffer 调度、row policy、refresh/RFM manager、timing engine 和命令执行器。它对应 Ramulator2.1 controller 侧的核心骨架。
 - `frontend/`：合成流量和 trace 读取。进入 controller 前要完成地址解码，避免调度热路径重复做映射。
-- `frontend/` 中还维护初始化/训练控制序列生成器。`init_sequence` 会把 `MRW/MRR/DVFS/WCK_TRAIN/PDE/PDX/SREFEN/SREFEX/ECC_SCRUB/RAS_ERR` 这类维护请求预置到普通 workload 前，使 mode register、WCK training、DVFS、链路保护和低功耗状态可以走完整 controller/validator 路径。
+- `frontend/` 中还维护初始化/训练控制序列生成器。`init_sequence` 会把 `MRW/MRR/DVFS/WCK_TRAIN/PDE/PDX/SREFEN/SREFEX/ECC_SCRUB/RAS_ERR` 这类维护请求预置到普通 workload 前，使 mode register、WCK training、DVFS、链路保护和低功耗状态可以走完整 controller/validator 路径；生成器会拒绝 HBM/LPDDR 跨族序列，CLI 的 `--check-config` 也会提前报告该错误。
 - `stats/`：统计数据和稳定文本输出。payload bandwidth、interface bandwidth、system cycles、controller aggregate cycles、refresh credit 和低功耗周期等口径都在这里输出。
 - `validation/`：命令 trace 导出、DFI beat/signal trace 生成、离线 command validator 和 DFI validator。Ramulator2.1/golden trace/DFI 视图扩展应优先复用这个层的结构化事件。
 
