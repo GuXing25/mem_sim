@@ -7,13 +7,13 @@
 
 它们包含系统拓扑、workload、控制器、调度、行策略、地址映射、PHY、
 organization、timing、刷新/RFM、ECC、存储后端、功耗、热模型和输出参数。
-标准参数只在这两份主配置中定义；其他 cfg 通过 `[meta] extends` 继承主配置：
+标准参数只在这两份主配置中定义。普通用户不需要叠加额外配置：
 
 ```text
 2 份标准主配置：hbm.cfg、lpddr.cfg
-4 份验证配置：validation/hbm3.cfg、hbm4.cfg、lpddr5.cfg、lpddr6.cfg
-4 份用例配置：usecases/hbm.cfg、lpddr.cfg、hbm_nstacks.cfg、lpddr_nstacks.cfg
-1 份开发配置：developer.cfg
+4 份内部验证配置：validation/hbm3.cfg、hbm4.cfg、lpddr5.cfg、lpddr6.cfg
+4 份完整 cfg Demo：../examples/configs/{hbm,lpddr,hbm_nstacks,lpddr_nstacks}.cfg
+自包含研究示例：../experiments/local/*.cfg
 ```
 
 `profile_index.csv` 记录参数集的位置、来源和适用边界，`validation/*.csv` 是不参与
@@ -117,13 +117,13 @@ transaction_response_trace = outputs/transactions.csv
 `mmap_sparse/chunk_file` 实验后端时应显式给出，以免默认 full-model 随机地址超出
 实验文件容量。响应 trace 会自动推导所需模式；若又显式写了不兼容模式，配置检查会失败。
 
-## 2.1 配置继承、验证集和四个用例
+## 2.1 用户模型与内部验证配置
 
 ```bash
 ./build-clang-debug/hbm_sim --config configs/validation/hbm4.cfg \
   --preset ramulator2_reference_1ch --check-config
-./build-clang-debug/hbm_sim --config configs/usecases/hbm_nstacks.cfg \
-  --stack-count 4 --check-config
+./build-clang-debug/hbm_sim --config experiments/local/my_hbm4.cfg \
+  --check-config
 ```
 
 继承规则示例：
@@ -133,23 +133,14 @@ transaction_response_trace = outputs/transactions.csv
 extends = ../hbm.cfg  # 相对当前 cfg 所在目录解析
 ```
 
-解析器先加载基础配置，再加载当前文件；循环继承会直接报错。覆盖优先级先看 section 层级，
-只有在同一层级内才由子文件覆盖父文件，所以用例差异应写在 `[override]`，不要写进普通
-`[system]` 去对抗父配置的 `[override]`。`--dump-resolved-config`
-可展开真正执行的全部值。HBM/LPDDR 主配置不再要求 `baseline` preset；选择标准即可运行。
-`ramulator2_reference_1ch`、`dramsim3_hbm2_common` 等只存在于四份验证配置，合成
-9000 Mbps 和链路保护压力参数只存在于 `developer.cfg`。
+继承只用于仓库维护的验证夹具：解析器先加载基础配置，再加载当前文件；循环继承会直接
+报错。普通自定义模型采用完整副本，不使用继承，也不需要多次 `--config` 或开发者 preset。
+`--dump-resolved-config` 可展开真正执行的全部值。HBM/LPDDR 主配置不要求 `baseline`
+preset；选择标准即可运行。`ramulator2_reference_1ch`、`dramsim3_hbm2_common` 等只存在于
+四份验证配置。
 
-四个可直接运行的 cfg：
-
-```bash
-./build-clang-debug/hbm_sim --config configs/usecases/hbm.cfg
-./build-clang-debug/hbm_sim --config configs/usecases/lpddr.cfg
-./build-clang-debug/hbm_sim --config configs/usecases/hbm_nstacks.cfg
-./build-clang-debug/hbm_sim --config configs/usecases/lpddr_nstacks.cfg
-```
-
-兼容的四标准包装脚本仍可使用，它们统一读取两份多实例用例配置：
+四标准多实例包装脚本读取 `examples/configs/` 中两份 `*_nstacks.cfg`，并通过命令行选择
+HBM3/HBM4/LPDDR5/LPDDR6 和产物路径：
 
 ```bash
 bash examples/multistack_demos/hbm3_nstack.sh
@@ -270,26 +261,31 @@ nCL = 30
 
 ## 9. 自定义实验的定位
 
-解析器仍能读取旧式平面 `key=value`，但仓库不再维护这种副本。普通自定义模型应修改
-两份主配置的 `[override]` 或使用 CLI；需要长期保存的实验可以新建一个带 `extends`
-的短配置。验证条件进入四份 validation cfg，非标准压力参数进入 `developer.cfg`，不要
-把它们重新放回标准 section。仓库测试要求 `configs/` 恰好保留公开的 11 份 cfg，因此个人
-实验文件应放在 `experiments/<名称>/` 或仓库外。每次运行都应用
-`--dump-resolved-config` 保存实际生效模型。
+解析器仍能读取旧式平面 `key=value` 和继承配置，但普通用户工作流只有一条：复制
+`configs/hbm.cfg` 或 `configs/lpddr.cfg` 到 `experiments/<名称>/`，修改副本的
+`[model] base_standard`，并在末尾 `[override]` 写出全部差异。副本包含基线和差异，单独一个
+`--config` 即可重放，不依赖外部 preset 或相对继承路径。临时扫描可使用
+CLI 覆盖；仓库维护的外部对照条件仍放在四份 validation cfg。每次运行都应使用
+`--dump-resolved-config` 保存实际生效快照。
 
-## 10. 从头编写一份 cfg
+## 10. 复制并建立一份自定义 cfg
 
-新文件通常不需要重写几百个默认值，只要继承对应家族并写差异。下面每个有效配置行都带
-同行注释，也是仓库测试要求的格式：
+不要从空白文件猜测字段，也不要先在代码或集中注册表中登记型号。以 HBM4 自定义型号为例：
+
+```bash
+mkdir -p experiments/local
+cp configs/hbm.cfg experiments/local/my_hbm4.cfg
+```
+
+然后在副本中修改模型身份，并把所有差异集中写到文件末尾：
 
 ```ini
 [meta]
 schema_version = 2  # 本解析器的配置语法版本；不代表 HBM/LPDDR 协议版本
-extends = ../hbm.cfg  # 父配置路径；相对当前 cfg 文件解析
 
 [model]
 name = my_hbm4_case  # 本次模型的可读名称，不参与算法选择
-base_standard = hbm4  # 基础标准；继承 hbm.cfg 时可选 hbm3/hbm4
+base_standard = hbm4  # 基础标准；HBM 副本可选 hbm3/hbm4
 
 [override]
 requests = 4096  # Host 请求数量；一个请求可能拆成多个 DRAM transaction
@@ -301,9 +297,10 @@ mem_phy_mode = behavioral  # 启用带状态、FIFO、流水和 DFI event 的行
 dfi_version = 6.0.1  # 接口语义参考标签；本身不启用功能，也不表示 DFI 合规
 ```
 
-若文件位于仓库外，`extends` 可写主配置的绝对路径；若需要便携，应保持相对路径并把文件放
-在稳定目录。HBM3/HBM4 不能继承 `lpddr.cfg`，LPDDR5/LPDDR6 不能继承 `hbm.cfg`。
-标准参数的长期修改应放在自己的 cfg；临时扫描可用 CLI。推荐执行：
+以上片段表示要修改副本中已有的 `[model]`，以及向副本已有的 `[override]` 追加键；不要
+创建第二个同名 section。改变速率必须同步核对 `speed_bin_mbps/data_rate_mbps/tCK_ps` 和
+全部相关 Timing；改变密度/层数必须同步核对 SID、row/column 几何及最终容量。型号名称不会
+自动推导这些参数。LPDDR 自定义模型同理从 `configs/lpddr.cfg` 复制。推荐执行：
 
 ```bash
 ./build-clang-debug/hbm_sim --config path/to/my_case.cfg \

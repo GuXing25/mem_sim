@@ -146,14 +146,14 @@ lpddr6
 ```text
 configs/hbm.cfg、configs/lpddr.cfg          两个标准家族主配置
 configs/validation/{hbm3,hbm4,lpddr5,lpddr6}.cfg  四个验证配置
-configs/usecases/{hbm,lpddr,hbm_nstacks,lpddr_nstacks}.cfg  四个完整用例
-configs/developer.cfg                         开发者研究变体
+examples/configs/{hbm,lpddr,hbm_nstacks,lpddr_nstacks}.cfg  四个自包含 cfg Demo
+experiments/local/*.cfg                       可直接运行的自包含研究模型示例
 ```
 
-日常建模从两个主配置或四个完整用例开始。验证配置只用于固定共同参数面和回归口径；
-开发者配置保存合成参数、存储后端等研究变体。子配置通过 `[meta] extends` 继承主配置，
-CLI 按出现顺序继续覆盖。未知算法和不存在的 preset 会直接报错。配置分层、从零编写方法、
-逐项物理含义和检查命令见 [configs/README.md](configs/README.md)。
+日常建模直接使用两个主配置；四个 cfg Demo 展示单实例和多实例的完整副本。建立长期自定义
+模型时复制对应主配置，并在副本末尾 `[override]` 写差异。验证配置只用于固定共同参数面，内部仍可通过
+`[meta] extends` 继承主配置。未知算法和不存在的 preset 会直接报错。配置分层、复制修改
+方法、逐项物理含义和检查命令见 [configs/README.md](configs/README.md)。
 
 四标准多 Stack 工程 demo：
 

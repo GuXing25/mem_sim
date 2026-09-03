@@ -446,7 +446,8 @@ grep -Eq "^active_stacks[[:space:]]*: 2" "$multistack_qos_out"
 grep -Eq "^qos_priority_dispatches[[:space:]]*: [1-9]" "$multistack_qos_out"
 grep -Eq "^data_mismatches[[:space:]]*: 0" "$multistack_qos_out"
 rm -f "$multistack_qos_out"
-run_and_check hbm4_storage_config "$HBM_SIM_BIN" --config configs/hbm.cfg --standard hbm4
+run_and_check hbm4_storage_config "$HBM_SIM_BIN" --config configs/hbm.cfg \
+  --standard hbm4 --requests 128
 backend_dir="$(mktemp -d)"
 run_and_check hbm4_mmap_backend "$HBM_SIM_BIN" --standard hbm4 \
   --trace examples/data_check.trace --requests 0 --max-cycles 4000 \
@@ -487,18 +488,16 @@ run_and_check lpddr5_config "$HBM_SIM_BIN" --config configs/lpddr.cfg --standard
 run_and_check lpddr6_config "$HBM_SIM_BIN" --config configs/lpddr.cfg --standard lpddr6 --requests 128
 run_and_check hbm4_jedec_template "$HBM_SIM_BIN" --config configs/hbm.cfg \
   --standard hbm4 --requests 64
-run_and_check hbm4_synthetic_research "$HBM_SIM_BIN" --config configs/hbm.cfg \
-  --config configs/developer.cfg --standard hbm4 \
-  --preset synthetic_9000_48gb_16hi --requests 32
+run_and_check hbm4_synthetic_research "$HBM_SIM_BIN" \
+  --config experiments/local/hx_hbm4_9000_48gb_16hi.cfg --requests 32
 run_and_check hbm3_reference "$HBM_SIM_BIN" --config configs/validation/hbm3.cfg --standard hbm3 \
   --preset ramulator2_reference_1ch --requests 64
 run_and_check lpddr5_reference "$HBM_SIM_BIN" --config configs/validation/lpddr5.cfg --standard lpddr5 \
   --preset ramulator2_reference_1ch --requests 64
 run_and_check lpddr6_link_protection "$HBM_SIM_BIN" --config configs/lpddr.cfg \
   --standard lpddr6 --preset link_protection --requests 64
-run_and_check lpddr6_synthetic_research "$HBM_SIM_BIN" --config configs/lpddr.cfg \
-  --config configs/developer.cfg --standard lpddr6 \
-  --preset synthetic_linkprot --requests 32
+run_and_check lpddr6_synthetic_research "$HBM_SIM_BIN" \
+  --config experiments/local/lpddr6_synthetic_linkprot.cfg --requests 32
 run_and_check lpddr6_lowdvfs "$HBM_SIM_BIN" --config configs/lpddr.cfg \
   --standard lpddr6 --preset low_dvfs_4267 --requests 32
 run_and_check lpddr6_ca_parity "$HBM_SIM_BIN" --standard lpddr6 --requests 32 \

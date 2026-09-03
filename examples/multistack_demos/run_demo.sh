@@ -15,7 +15,7 @@ demo_bin=${HBM_SIM_BIN:-$demo_root/build-clang-debug/hbm_sim}
 demo_stacks=${STACK_COUNT:-2}
 demo_output_root=${OUTPUT_ROOT:-$demo_root/outputs/demos}
 demo_out=$demo_output_root/${demo_standard}_${demo_stacks}stack
-demo_config=$demo_root/configs/usecases/${demo_family}_nstacks.cfg
+demo_config=$demo_root/examples/configs/${demo_family}_nstacks.cfg
 demo_trace=$demo_root/examples/multistack_demos/two_stack_payload.trace
 
 if [[ ! -x "$demo_bin" ]]; then
