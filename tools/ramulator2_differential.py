@@ -14,6 +14,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from config_selection import REFERENCE_PRESETS, selection_args
+from result_io import count, number, run_simulator
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -382,10 +383,7 @@ def run_project_scenario(binary: Path, config_args: list[str], standard: str, na
                "--cmd-trace", str(command_csv), "--validate-cmd-trace"]
     if scenario.get("row_policy") == "closed":
         command += ["--row-policy", "closed_page"]
-    completed = subprocess.run(command, cwd=ROOT, text=True, stdout=subprocess.PIPE,
-                               stderr=subprocess.PIPE, check=False)
-    if completed.returncode != 0:
-        raise RuntimeError(f"hbm_sim {standard}/{name} failed:\n{completed.stdout}{completed.stderr}")
+    stats, _ = run_simulator(command, cwd=ROOT, diagnostic=True)
     with command_csv.open(newline="", encoding="utf-8") as stream:
         rows = list(csv.DictReader(stream))
     rows = [row for row in rows if int(row["cycle"]) >= measure_cycle]
@@ -398,7 +396,7 @@ def run_project_scenario(binary: Path, config_args: list[str], standard: str, na
                     "BankGroup": int(row["bank_group"]), "Bank": int(row["bank"]),
                     "Row": int(row["row"]), "Column": int(row["column"])},
     } for row in rows]
-    return events, parse_stats(completed.stdout)
+    return events, stats
 
 
 def canonical_events(standard: str, scenario_name: str,
@@ -439,14 +437,12 @@ def canonical_events(standard: str, scenario_name: str,
 def read_project_timings(binary: Path, config_args: list[str], standard: str,
                          temp: Path) -> tuple[dict[str, int], int]:
     output = temp / (standard + "_timing.csv")
-    completed = subprocess.run(
+    stats, _ = run_simulator(
         [str(binary), *config_args, "--requests", "0",
-         "--dump-timing-table", str(output)], cwd=ROOT, text=True,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-    if completed.returncode != 0:
-        raise RuntimeError(f"hbm_sim timing dump failed:\n{completed.stderr}")
-    stats = parse_stats(completed.stdout)
-    multiplier = int(stats.get("tick_multiplier", "1"))
+         "--dump-timing-table", str(output)], cwd=ROOT)
+    multiplier = count(stats, "tick_multiplier")
+    if multiplier == 0:
+        raise ValueError("tick_multiplier must be positive")
     with output.open(newline="", encoding="utf-8") as stream:
         rows = list(csv.DictReader(stream))
     return {row["name"]: int(row["value_nck"]) * multiplier for row in rows}, multiplier
@@ -546,8 +542,8 @@ def main() -> int:
                 has_read = any(event.get("kind") == "request" and event.get("type") == "Read"
                                for event in scenario["events"])
                 if has_read and sequence_ok:
-                    project_latency = float(project_stats.get("avg_read_latency", "0"))
-                    ram_latency = float(ram_result["stats"].get("avg_read_latency", 0.0))
+                    project_latency = number(project_stats, "avg_read_latency")
+                    ram_latency = number(ram_result["stats"], "avg_read_latency")
                     latency_delta = project_latency - ram_latency
                     latency_tolerance = max(
                         float(meta["latency_tolerance"]),

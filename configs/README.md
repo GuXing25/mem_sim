@@ -1,5 +1,9 @@
 # 配置模型
 
+输出配置中的 summary/full 均使用模型—参数—结果精简报告；需要内部计数时显式选
+diagnostic。参数变化摘要以当前程序内置同标准模型为比较基准，因此直接修改标准段
+也会被识别；完整变化清单在结果 JSON 中，复现配置仍用 resolved 导出。
+
 项目对普通使用者只提供两个主入口：
 
 - `configs/hbm.cfg`：HBM 家族，选择 HBM3 或 HBM4。
@@ -7,7 +11,8 @@
 
 它们包含系统拓扑、workload、控制器、调度、行策略、地址映射、PHY、
 organization、timing、刷新/RFM、ECC、存储后端、功耗、热模型和输出参数。
-标准参数只在这两份主配置中定义。普通用户不需要叠加额外配置：
+两份主配置只保留常用主输入，完整协议/Timing 基准统一在 `src/dram/profiles.cpp`；
+派生规则见[配置与参数联动](../文档/配置与参数联动.md)。普通用户不需要叠加额外配置：
 
 ```text
 2 份标准主配置：hbm.cfg、lpddr.cfg
@@ -46,11 +51,11 @@ organization、timing、刷新/RFM、ECC、存储后端、功耗、热模型和�
 
 ## 2. 配置分层
 
-schema-v2 的固定合并顺序为：
+schema 2/3 共用以下合并顺序；schema 3 合并后再执行有检查的自动推导：
 
 ```text
 程序内置默认
-  < 公共 section（如 [system]、[controller]）
+  < 公共 section（如 [memory_system]、[controller]）
   < [family.*]
   < [standard.<标准>.*]
   < [preset.<标准>.<名称>.*]
@@ -64,20 +69,21 @@ schema-v2 的固定合并顺序为：
 | --- | --- |
 | `[model]` | 模型名、基础标准、preset |
 | `[validation]` | `exploratory/standard/device` 校验模式 |
-| `[system]` | stack 数量、跨 stack 映射、入口队列、QoS、响应模式和队列容量 |
-| `[workload]` | 请求数、读写比例、trace、随机地址上限、注入/进度和统计视图 |
+| `[memory_system]`（兼容 `[system]`） | stack 数量、跨 stack 映射、入口队列、QoS、响应模式和队列容量 |
+| `[frontend]`（兼容 `[workload]`） | 请求数、读写比例、trace、随机地址上限、注入/进度 |
 | `[controller]` | buffer、水位、调度器和行策略 |
 | `[controller.scheduler]` | `type = fcfs/frfcfs` |
 | `[controller.row_policy]` | `open_page/closed_page/closed_cap` |
-| `[mapping]` | DRAM 地址映射和 channel mapper |
+| `[controller.addr_mapper]`（兼容 `[mapping]`） | DRAM 地址映射和 channel mapper |
 | `[phy]` | Direct/Behavioral PHY、DFI、FIFO 和训练流水线 |
 | `[architecture]` | 速率、容量、stack height、channel/bank/row/column |
-| `[timing.*]` | nCK 或 ns/us timing 及数值来源 |
-| `[maintenance]` | refresh、RFM、温度和低功耗策略 |
+| `[dram.timing]`（兼容 `[timing.*]`） | nCK 或 ns/us timing 及数值来源 |
+| `[controller.refresh]`（兼容 `[maintenance]`） | refresh、RFM、温度和低功耗策略 |
+| `[audit]` | 来源、厂商和模式标签；名称不会自动启用功能 |
 | `[storage]` | payload backend 与物理拓扑 |
 | `[reliability*]` | 接口开销和 payload SECDED |
 | `[power]`、`[thermal]` | 功耗与热模型输入参数 |
-| `[outputs]` | trace、验证和 dump 路径 |
+| `[outputs]` | 终端视图、完整 stats_json、trace、验证和 dump 路径 |
 | `[override]` | 当前研究实验相对 preset 的显式修改 |
 
 例如只想研究一个非标准 HBM4 组织和时序：
@@ -281,7 +287,7 @@ cp configs/hbm.cfg experiments/local/my_hbm4.cfg
 
 ```ini
 [meta]
-schema_version = 2  # 本解析器的配置语法版本；不代表 HBM/LPDDR 协议版本
+schema_version = 3  # 保留复制模板的联动规则；不代表 HBM/LPDDR 协议版本
 
 [model]
 name = my_hbm4_case  # 本次模型的可读名称，不参与算法选择
@@ -298,9 +304,10 @@ dfi_version = 6.0.1  # 接口语义参考标签；本身不启用功能，也不
 ```
 
 以上片段表示要修改副本中已有的 `[model]`，以及向副本已有的 `[override]` 追加键；不要
-创建第二个同名 section。改变速率必须同步核对 `speed_bin_mbps/data_rate_mbps/tCK_ps` 和
-全部相关 Timing；改变密度/层数必须同步核对 SID、row/column 几何及最终容量。型号名称不会
-自动推导这些参数。LPDDR 自定义模型同理从 `configs/lpddr.cfg` 复制。推荐执行：
+创建第二个同名 section。schema 3 中改 `data_rate_mbps` 后，省略的 speed_bin 和 CK 自动推导，
+ns Timing 按最终 CK 换算；修改几何后密度自动推导，不必另填冗余密度。仍需检查目标时序是否
+有依据、SID/row/column 与层数的物理解释是否合理；型号名称不参与推导。LPDDR 自定义模型
+同理从 `configs/lpddr.cfg` 复制。推荐执行：
 
 ```bash
 ./build-clang-debug/hbm_sim --config path/to/my_case.cfg \

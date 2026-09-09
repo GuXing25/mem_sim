@@ -36,7 +36,9 @@ bool is_common_section(const std::string& section) {
       "common", "system", "workload", "architecture", "timing", "protocol", "controller", "controller.scheduler",
       "controller.row_policy", "mapping", "phy", "maintenance", "storage",
       "power", "thermal", "reliability", "reliability.payload",
-      "fault_injection", "outputs", "validation"};
+      "fault_injection", "outputs", "validation", "frontend", "memory_system",
+      "dram.organization", "dram.timing", "dram.protocol", "controller.refresh",
+      "controller.addr_mapper", "audit"};
   return sections.contains(section) || section.starts_with("timing.");
 }
 

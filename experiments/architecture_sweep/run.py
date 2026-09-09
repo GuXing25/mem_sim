@@ -7,6 +7,7 @@ import argparse
 import csv
 import html
 import subprocess
+import sys
 import tempfile
 import time
 from dataclasses import dataclass
@@ -14,6 +15,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "tools"))
+from result_io import number, read_result
 
 
 @dataclass(frozen=True)
@@ -78,20 +81,8 @@ def cases() -> list[Case]:
     ]
 
 
-def parse_stats(text: str) -> dict[str, str]:
-    result: dict[str, str] = {}
-    for line in text.splitlines():
-        if ":" in line:
-            key, value = line.split(":", 1)
-            result[key.strip()] = value.strip()
-    return result
-
-
 def as_float(stats: dict[str, str], key: str) -> float:
-    try:
-        return float(stats.get(key, "0"))
-    except ValueError:
-        return 0.0
+    return number(stats, key)
 
 
 def common_overrides(standard: str, case: Case) -> dict[str, str | int]:
@@ -220,6 +211,7 @@ def run_case(args: argparse.Namespace, standard: str, case: Case,
             "--trace", str(trace_path), "--requests", "0",
             "--inject-interval", str(args.inject_interval),
             "--dump-resolved-config", str(case_dir / "resolved.cfg"),
+            "--stats-view", "diagnostic", "--stats-json", str(case_dir / "result.json"),
         ]
         try:
             completed = subprocess.run(
@@ -244,7 +236,7 @@ def run_case(args: argparse.Namespace, standard: str, case: Case,
             ) from error
     elapsed = time.monotonic() - started
     (case_dir / "stats.txt").write_text(completed.stdout, encoding="utf-8")
-    stats = parse_stats(completed.stdout)
+    stats = read_result(case_dir / "result.json", require_completed=True)
     hits = as_float(stats, "row_hits")
     misses = as_float(stats, "row_misses")
     conflicts = as_float(stats, "row_conflicts")
@@ -265,7 +257,7 @@ def run_case(args: argparse.Namespace, standard: str, case: Case,
         "refresh_pb_batches": int(as_float(stats, "refresh_pb_batches")),
         "refresh_ab_batches": int(as_float(stats, "refresh_ab_batches")),
         "data_mismatches": int(as_float(stats, "data_mismatches")),
-        "hit_cycle_limit": stats.get("hit_cycle_limit", "false").lower(),
+        "hit_cycle_limit": stats["hit_cycle_limit"].lower(),
         "cycles": int(as_float(stats, "cycles")),
         "wall_seconds": round(elapsed, 3),
     }

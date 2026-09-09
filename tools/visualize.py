@@ -15,6 +15,7 @@ import html as html_module
 import json
 from collections import Counter
 from pathlib import Path
+from result_io import read_result
 from typing import Any
 
 
@@ -135,22 +136,22 @@ def read_dfi_trace(path: Path | None) -> dict[str, Any]:
 def read_stats(path: Path | None) -> dict[str, str]:
     if path is None:
         return {}
-    if not path.is_file():
-        raise SystemExit(f"stats file not found: {path}")
-    result: dict[str, str] = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if ":" not in line:
-            continue
-        key, value = line.split(":", 1)
-        key, value = key.strip(), value.strip()
-        if key and value:
-            result[key] = value
+    result = read_result(path)
+    # Historical input may only provide tick latency. Do not silently relabel
+    # it ns, and do not turn a no-read sentinel into a measured zero latency.
+    if "avg_read_latency_ns" not in result and int(result.get("completed_reads", "0")) > 0:
+        if "avg_read_latency" in result:
+            if "tick_duration_ps" in result:
+                result["avg_read_latency_ns"] = str(float(result["avg_read_latency"]) *
+                                                     float(result["tick_duration_ps"]) / 1000)
+            else:
+                result["avg_read_latency_ticks"] = result["avg_read_latency"]
     # Keep the dashboard readable even when stdout contains a full configuration dump.
     wanted = (
-        "standard", "mem_phy_mode", "phy_protocol", "cycles", "system_cycles",
-        "reads", "writes", "completed_reads", "completed_writes", "avg_read_latency",
+        "standard", "mem_phy_mode", "host_requests", "dram_transactions", "simulation_time_ns",
+        "completed_reads", "completed_writes", "avg_read_latency_ns", "avg_read_latency_ticks",
         "achieved_bw_GBps", "peak_bandwidth_GBps", "bandwidth_util_pct",
-        "data_mismatches", "phy_command_backpressure", "phy_data_backpressure",
+        "row_hit_pct", "data_checked_reads", "data_mismatches",
         "thermal_peak_temp_C", "power_energy_pJ", "cmd_validation", "dfi_validation",
     )
     return {key: result[key] for key in wanted if key in result}

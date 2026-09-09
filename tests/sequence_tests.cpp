@@ -1225,9 +1225,8 @@ void test_timing_profile_dimensions() {
           "HBM4 timing profile did not derive SID count from stack height");
   require(spec.timing.nRFC > hbm_sim::make_spec("hbm4").timing.nRFC,
           "HBM4 timing profile did not apply density-dependent tRFC");
-  require(hbm_sim::validate_timing_table(spec, true).empty(),
-          "vendor-calibrated HBM4 timing profile should satisfy strict timing "
-          "validation");
+  require(!hbm_sim::validate_timing_table(spec, true).empty(),
+          "a vendor profile name alone must not certify uncalibrated timings");
 
   DramSpec generic_again = spec;
   generic_again.vendor_profile = "generic";
@@ -1249,9 +1248,8 @@ void test_timing_profile_dimensions() {
   require(hbm3.timing.nRFCpb ==
               hbm_sim::jedec::ns_to_nck(200.0, hbm3.timing.tCK_ps),
           "HBM3 profile did not apply 16Gb tRFCpb from standard table");
-  require(hbm3.timing.nRREFD ==
-              hbm_sim::jedec::max_ns_or_nck(8.0, 3, hbm3.timing.tCK_ps),
-          "HBM3 profile did not apply tRREFD Max(3nCK, 8ns)");
+  require(hbm3.timing.nRREFD == 8,
+          "HBM3 external-reference baseline changed its 8 nCK tRREFD");
 
   DramSpec hbm3_16hi = hbm3;
   hbm3_16hi.stack_height = 16;
@@ -1301,8 +1299,8 @@ void test_timing_profile_dimensions() {
   hbm_sim::apply_standard_timing_profile(lpddr8);
   hbm_sim::finalize_spec(lpddr8);
   require(lpddr8.timing.nRFC ==
-              hbm_sim::jedec::ns_to_nck(210.0, lpddr8.timing.tCK_ps),
-          "LPDDR6 8Gb profile did not apply density-dependent tRFCab");
+              hbm_sim::jedec::ns_to_nck(280.0, lpddr8.timing.tCK_ps),
+          "LPDDR6 8Gb/subchannel must use Table 302's 16Gb pair density");
 
   const std::string profile_path = "/tmp/hbm_sim_timing_profile_unit.cfg";
   {
@@ -1750,6 +1748,54 @@ void test_closed_cap_row_policy() {
   require(controller.stats().row_policy_ap_upgrades >= 1,
           "closed-cap policy did not upgrade RD to RDA after cap");
   require(controller.stats().rda >= 1, "closed-cap policy did not issue RDA");
+}
+
+void test_maintenance_progress_dependencies() {
+  DramSpec spec = hbm_sim::make_spec("hbm4");
+  spec.org.channels = spec.org.pseudo_channels = spec.org.sids = 1;
+  spec.org.bank_groups = spec.org.banks_per_group = 1;
+  spec.supports_refresh = false;
+  spec.supports_rfm = false;  // explicit maintenance below, no automatic stream
+  spec.hbm_edge_pairing = false;
+  spec.tick_multiplier = 1;
+  hbm_sim::finalize_spec(spec);
+
+  // Two queued PRE requests become redundant after the first closes the bank.
+  Controller pre(spec);
+  require(pre.enqueue(make_request(9100, RequestType::Read, 0, 0, 0, 1)), "enqueue PRE setup read");
+  pre.run_until_done(5000);
+  Request close = make_request(9101, RequestType::Maintenance, 0, 0, 0, 1);
+  close.next = Command::PREPB;
+  require(pre.enqueue(close), "enqueue first PRE");
+  ++close.id;
+  require(pre.enqueue(close), "enqueue redundant PRE");
+  pre.run_until_done(5000);
+  require(pre.done(), "redundant PRE to closed bank blocked priority queue");
+  require(hbm_sim::validate_command_trace(spec, pre.issued_commands()).ok(),
+          "retiring redundant PRE must not emit an illegal command");
+
+  // A write-drain watermark prefers the younger write, but the older read must
+  // complete before this write acquires an active bank that RFM needs to close.
+  hbm_sim::ControllerOptions options;
+  options.write_buffer_size = 1;
+  Controller dependency(spec, options);
+  auto read = make_request(9200, RequestType::Read, 0, 0, 0, 2);
+  auto write = read;
+  write.id = 9201;
+  write.type = RequestType::Write;
+  require(dependency.enqueue(read) && dependency.enqueue(write), "enqueue ordered read/write");
+  for (int tick = 0; tick < 100 && dependency.issued_commands().empty(); ++tick)
+    dependency.tick();
+  require(!dependency.issued_commands().empty(), "dependency must make initial progress");
+  auto maintenance = make_request(9202, RequestType::Maintenance, 0, 0, 0, 2);
+  maintenance.next = Command::RFMPB;
+  require(dependency.enqueue(maintenance), "enqueue RFM");
+  dependency.run_until_done(5000);
+  require(dependency.done() && dependency.stats().completed_reads == 1 &&
+              dependency.stats().completed_writes == 1,
+          "RFM/active-write/older-read circular dependency prevented completion");
+  require(hbm_sim::validate_command_trace(spec, dependency.issued_commands()).ok(),
+          "maintenance dependency progress violated command timing");
 }
 
 void test_lpddr6_refresh_manager() {
@@ -4038,6 +4084,7 @@ int main() {
   test_write_forward_and_coalesce();
   test_closed_page_row_policy();
   test_closed_cap_row_policy();
+  test_maintenance_progress_dependencies();
 
   // 第五组：LPDDR6/LPDDR5 专用路径，包括 REFdb、PRAC/RFM、CAS/WCK 和 efficiency
   // mapping。

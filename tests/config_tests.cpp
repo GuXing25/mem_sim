@@ -29,7 +29,8 @@ void require_complete_example(
     const hbm_sim::config::ConfigDocument &example,
     const std::string &label) {
   for (const auto &entry : master.entries) {
-    if (entry.section == "model" || entry.section == "override")
+    if (entry.section == "model" || entry.section == "override" ||
+        entry.key == "stats_view")
       continue;
     require(has_entry(example.entries, entry.section, entry.key, entry.value),
             label + " is missing or changed master field [" + entry.section +

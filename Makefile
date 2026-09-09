@@ -11,6 +11,9 @@ SEQUENCE_TEST := $(BUILD_DIR)/sequence_tests
 TIMING_BOUNDARY_TEST := $(BUILD_DIR)/timing_boundary_tests
 PHY_TEST := $(BUILD_DIR)/phy_tests
 CONFIG_TEST := $(BUILD_DIR)/config_tests
+MODEL_CONFIG_TEST := $(BUILD_DIR)/model_config_tests
+SCHEDULER_CONTRACT_TEST := $(BUILD_DIR)/scheduler_contract_tests
+RESULT_VALUE_TEST := $(BUILD_DIR)/result_value_tests
 # 主程序需要 src/cli/main.cpp；测试程序需要复用库代码但不能链接 CLI main。
 SRCS := $(shell find src -name '*.cpp' | sort)
 LIB_SRCS := $(filter-out src/cli/main.cpp,$(SRCS))
@@ -60,6 +63,12 @@ $(PHY_TEST): $(LIB_OBJS) tests/phy_tests.cpp $(BUILD_CONFIG) | $(BUILD_DIR)
 $(CONFIG_TEST): $(LIB_OBJS) tests/config_tests.cpp $(BUILD_CONFIG) | $(BUILD_DIR)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $(LIB_OBJS) tests/config_tests.cpp $(LDLIBS) -o $@
 
+$(MODEL_CONFIG_TEST): $(LIB_OBJS) tests/model_config_tests.cpp $(BUILD_CONFIG) | $(BUILD_DIR)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $(LIB_OBJS) tests/model_config_tests.cpp $(LDLIBS) -o $@
+
+$(SCHEDULER_CONTRACT_TEST): $(LIB_OBJS) tests/scheduler_contract_tests.cpp $(BUILD_CONFIG) | $(BUILD_DIR)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $(LIB_OBJS) tests/scheduler_contract_tests.cpp $(LDLIBS) -o $@
+
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
@@ -102,8 +111,20 @@ sequence-test: $(SEQUENCE_TEST)
 phy-test: $(PHY_TEST)
 	./$(PHY_TEST)
 
-config-test: $(CONFIG_TEST)
+config-test: $(CONFIG_TEST) $(MODEL_CONFIG_TEST)
 	./$(CONFIG_TEST) .
+	./$(MODEL_CONFIG_TEST)
+
+.PHONY: scheduler-contract-test result-test
+scheduler-contract-test: $(SCHEDULER_CONTRACT_TEST)
+	./$(SCHEDULER_CONTRACT_TEST)
+
+$(RESULT_VALUE_TEST): $(LIB_OBJS) tests/result_value_tests.cpp $(BUILD_CONFIG) | $(BUILD_DIR)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $(LIB_OBJS) tests/result_value_tests.cpp $(LDLIBS) -o $@
+
+result-test: $(TARGET) $(RESULT_VALUE_TEST)
+	./$(RESULT_VALUE_TEST)
+	python3 tests/result_tests.py ./$(TARGET)
 
 phy-smoke: $(TARGET)
 	HBM_SIM_BIN=./$(TARGET) HBM_SIM_SOURCE_DIR=. bash ./tests/phy_smoke.sh
@@ -148,7 +169,7 @@ ramulator-validation: reference-validation
 
 # Make 兼容验收覆盖核心单元、CLI、配置、可视化、多 Stack/后端和架构实验。
 # 性能/敏感性 sweep 与外部 Ramulator 参考仍是显式目标，避免默认验收意外拉长。
-test: smoke sequence-test phy-test config-test phy-smoke visualization-smoke \
+test: smoke sequence-test phy-test config-test scheduler-contract-test result-test phy-smoke visualization-smoke \
 	multistack-backend-smoke multistack-demos-smoke architecture-sweep-smoke \
 	timing-boundary-validation model-validation
 

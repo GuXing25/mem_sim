@@ -9,6 +9,7 @@ trap 'rm -rf -- "$vis_tmp_dir"' EXIT
 "$vis_bin" \
   --config "$vis_source/configs/hbm.cfg" --standard hbm4 \
   --requests 16 \
+  --stats-json "$vis_tmp_dir/result.json" \
   --read-ratio 50 \
   --cmd-trace "$vis_tmp_dir/commands.csv" \
   --dfi-trace "$vis_tmp_dir/dfi.csv" \
@@ -22,7 +23,7 @@ JSON
 python3 "$vis_source/tools/visualize.py" \
   --command-trace "$vis_tmp_dir/commands.csv" \
   --dfi-trace "$vis_tmp_dir/dfi.csv" \
-  --stats "$vis_tmp_dir/stats.txt" \
+  --stats "$vis_tmp_dir/result.json" \
   --performance-json "$vis_tmp_dir/performance.json" \
   --thermal-map "$vis_tmp_dir/thermal.txt" \
   --max-events 5 \

@@ -1,0 +1,145 @@
+#include "hbm_sim/config/model.hpp"
+#include "hbm_sim/dram/jedec.hpp"
+#include <cmath>
+#include <iostream>
+#include <limits>
+#include <stdexcept>
+
+using namespace hbm_sim;
+using namespace hbm_sim::config;
+
+namespace {
+void require(bool test, const char* message) {
+  if (!test) throw std::runtime_error(message);
+}
+template<class Fn> void rejects(Fn fn) {
+  try { fn(); } catch (const std::exception&) { return; }
+  throw std::runtime_error("contradictory input was not rejected");
+}
+}
+
+int main() {
+  try {
+    for (const char* standard : {"hbm3", "hbm4", "lpddr5", "lpddr6"}) {
+      auto legacy = build_model(standard);
+      auto reference = make_spec(standard);
+      require(legacy.addressable_capacity_bytes() == reference.addressable_capacity_bytes(),
+              "extraction changed legacy capacity");
+      require(legacy.timing.nCL == reference.timing.nCL, "extraction changed legacy RL");
+      const auto resolved = build_model(standard, {}, 3);
+      require(resolved.addressable_capacity_bytes() == legacy.addressable_capacity_bytes(),
+              "auto resolution changed geometry");
+      const auto half = build_model(standard, {{"columns", std::to_string(legacy.org.columns / 2)}}, 3);
+      require(half.addressable_capacity_bytes() * 2 == legacy.addressable_capacity_bytes(),
+              "column count must change geometry capacity");
+      require(std::abs(half.density_gb * 2 - resolved.density_gb) < 1e-12,
+              "geometry must change derived density");
+      rejects([&] { build_model(standard, {{"columns", "0"}}, 3); });
+      rejects([&] { build_model(standard, {{"density_gb", "999"}}, 3); });
+      rejects([&] { build_model(standard, {{"data_rate_mbps", "6400"},
+                                         {"speed_bin_mbps", "8000"}}, 3); });
+      rejects([&] { build_model(standard, {{"tck_ps", "0"}}, 3); });
+    }
+    auto small = build_model("hbm3", {{"rows", "16"}, {"columns", "16"}}, 3);
+    require(small.density_gb > 0 && small.density_gb < 1,
+            "fractional geometry density must not be rounded to integer Gb");
+    auto fast = build_model("hbm4", {{"data_rate_mbps", "9000"}}, 3);
+    require(fast.speed_bin_mbps == 9000 && std::abs(fast.timing.tCK_ps - 4000000.0 / 9000) < 1e-9,
+            "speed/tCK coupling failed");
+    auto one_channel = build_model("hbm4", {{"channels", "1"}}, 3);
+    require(one_channel.data_bus_bits == 64, "HBM interface width must follow channels");
+    const auto taller = build_model("hbm4", {{"stack_height", "16"}}, 3);
+    require(taller.org.sids == 2 && taller.density_gb == 16 &&
+            taller.addressable_capacity_bytes() == build_model("hbm4", {}, 3).addressable_capacity_bytes(),
+            "changing physical height must not silently change the chosen logical SID dimension");
+    auto lp5 = build_model("lpddr5", {{"lpddr_wck_ratio", "2"}}, 3);
+    require(std::abs(lp5.timing.tCK_ps - 625.0) < 1e-9, "LPDDR5 ratio clock coupling failed");
+    require(fast.timing.nRFC == jedec::ns_to_nck(450.0, fast.timing.tCK_ps),
+            "profile ns timing must use the final resolved CK, not an earlier rounded CK");
+    for (int height : {4, 8, 12, 16}) {
+      const int index = height / 4 - 1;
+      const int rfc24[] = {360, 410, 450, 490};
+      const int rfc32[] = {400, 450, 490, 530};
+      for (int density : {24, 32}) {
+        const auto table = build_model("hbm4", {{"density_gb", std::to_string(density)},
+            {"stack_height", std::to_string(height)}}, 2);
+        require(table.timing.nRFC == jedec::ns_to_nck(density == 24 ? rfc24[index] : rfc32[index],
+                                                     table.timing.tCK_ps),
+                "HBM4 Table 108 density/height RFC lookup failed");
+      }
+    }
+    for (const char* family : {"hbm3", "hbm4"}) {
+      const auto unsupported = build_model(family, {{"density_gb", "7.5"}}, 2);
+      for (const auto& entry : unsupported.timing_table.entries)
+        if (entry.name == "nRFC" || entry.name == "nRFCpb")
+          require(entry.source == TimingValueSource::ResearchDefault,
+                  "interpolated research density must not be labeled JEDEC");
+    }
+    const auto low = build_model("lpddr6", {{"lpddr_dvfs_mode", "low"},
+        {"lpddr_low_data_rate_mbps", "4267"}}, 3);
+    require(low.data_rate_mbps == 4267 && low.timing.nCL == 46,
+            "low DVFS must resolve rate before profile selection");
+    const auto disabled = build_model("lpddr6", {{"lpddr_dvfs_mode", "disabled"},
+        {"data_rate_mbps", "8533"}}, 3);
+    require(disabled.data_rate_mbps == 8533 && disabled.timing.nCL == 54,
+            "disabled DVFS must still select timing at the explicitly requested rate");
+    rejects([] { build_model("lpddr6", {{"lpddr_wck_ratio", "4"}}, 3); });
+    const auto lp6 = build_model("lpddr6");
+    require(lp6.lpddr_wck_ratio == 2, "LPDDR6 WCK:CK must be 2:1");
+    require(lp6.timing.nRFC == jedec::ns_to_nck(380, lp6.timing.tCK_ps) &&
+            lp6.timing.nRFCpb == jedec::ns_to_nck(210, lp6.timing.tCK_ps),
+            "16Gb/subchannel must select 32Gb Table 302 refresh row");
+    require(lp6.timing.nRFMab == jedec::ns_to_nck(400, lp6.timing.tCK_ps) &&
+            lp6.timing.nRFMpb == jedec::ns_to_nck(350, lp6.timing.tCK_ps),
+            "LPDDR6 RFM must follow Tables 366/367, not the density-dependent RFC table");
+    const auto lp6_refresh_override = build_model("lpddr6", {{"nrfc", "2000"}, {"nrfcpb", "1000"}}, 3);
+    require(lp6_refresh_override.timing.nRFMab == jedec::ns_to_nck(400, lp6_refresh_override.timing.tCK_ps) &&
+            lp6_refresh_override.timing.nRFMpb == jedec::ns_to_nck(350, lp6_refresh_override.timing.tCK_ps),
+            "LPDDR6 RFM must not be re-derived from an explicit RFC override");
+    require(build_model("lpddr6", {{"nrfmab", "1500"}}, 3).timing.nRFMab == 1500,
+            "LPDDR6 independent RFM research override was lost");
+    const auto six_gb_pair = build_model("lpddr6", {{"density_gb", "3"}});
+    require(six_gb_pair.timing.nRFC == jedec::ns_to_nck(210, six_gb_pair.timing.tCK_ps),
+            "3Gb/subchannel must select the defined 6Gb pair row");
+    const auto missing_density = build_model("lpddr6", {{"density_gb", "12.5"}});
+    for (const auto& entry : missing_density.timing_table.entries)
+      if (entry.name == "nRFC" || entry.name == "nRFCpb")
+        require(entry.source == TimingValueSource::ResearchDefault,
+                "absent Table 302 density must not be labeled JEDEC");
+    rejects([] { build_model("hbm4", {{"rows", "2147483647"}, {"columns", "2147483647"}}, 3); });
+    rejects([] { build_model("hbm4", {{"unsupported_timing", "10"}}, 3); });
+    // Explicit zero and auto are different: zero is not silently replaced.
+    rejects([] { build_model("hbm4", {{"data_rate_mbps", "0"}}, 3); });
+    require(build_model("hbm4", {{"density_gb", "auto"}}, 3).density_gb == 32,
+            "explicit auto density failed");
+    require(build_model("hbm4", {{"density_gb", "16"}}, 2).density_gb == 16,
+            "legacy schema must retain independently specified density");
+    const auto derived_timing = build_model("hbm4", {{"nras", "80"}, {"nrp", "40"},
+        {"trfcab_ns", "500"}}, 3);
+    require(derived_timing.timing.nRC == 120 &&
+            derived_timing.timing.nRFMab == derived_timing.timing.nRFC,
+            "explicit primary timing did not update omitted dependent constraint");
+    require(build_model("hbm4", {{"nras", "80"}, {"nrp", "40"}, {"nrc", "125"}}, 3)
+                .timing.nRC == 125, "explicit nRC must stay independently configurable");
+    rejects([] { build_model("hbm4", {{"nrp", "30"}, {"trp_ns", "15"}}, 3); });
+    for (const auto& entry : derived_timing.timing_table.entries)
+      if (entry.name == "nRC")
+        require(entry.source == TimingValueSource::ResearchDefault,
+                "arithmetic must not certify research dependencies");
+    const auto named_hbm = build_model("hbm4", {{"mode_profile", "link_crc"},
+        {"vendor_profile", "imaginary_vendor"}}, 3);
+    require(named_hbm.hbm_link_crc_bits_per_request == 0,
+            "audit name must not enable HBM CRC");
+    require(!validate_timing_table(named_hbm, true).empty(),
+            "vendor label must not certify built-in research timings");
+    const auto named_lp = build_model("lpddr6", {{"mode_profile", "linkprot_on_eff_on_ca_parity"}}, 3);
+    const auto plain_lp = build_model("lpddr6", {}, 3);
+    require(!named_lp.lpddr_ca_parity_enabled && !named_lp.lpddr_link_protection &&
+            named_lp.timing.nWR == plain_lp.timing.nWR,
+            "audit name must not enable LPDDR features or switch its timing branch");
+    std::cout << "model config tests passed\n";
+  } catch (const std::exception& error) {
+    std::cerr << error.what() << '\n';
+    return 1;
+  }
+}

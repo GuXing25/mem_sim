@@ -421,7 +421,7 @@ void validate_spec(const DramSpec &spec) {
   }
   if (spec.data_rate_mbps <= 0 || spec.data_bus_bits <= 0 ||
       spec.internal_prefetch_size <= 0 || spec.speed_bin_mbps <= 0 ||
-      spec.density_gb <= 0 || spec.timing.tCK_ps <= 0.0 ||
+      spec.density_gb <= 0 || !std::isfinite(spec.density_gb) || spec.timing.tCK_ps <= 0.0 ||
       !std::isfinite(spec.timing.tCK_ps) || spec.tick_multiplier <= 0) {
     throw std::invalid_argument(
         "data rate, bus width, prefetch, speed bin, density, tCK and "

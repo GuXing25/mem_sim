@@ -26,9 +26,7 @@ int tck_ps_for_speed(int data_rate_mbps) {
   return static_cast<int>(std::llround(4000000.0 / static_cast<double>(data_rate_mbps)));
 }
 
-bool vendor_calibrated(const DramSpec& spec) {
-  return spec.vendor_profile != "generic" && spec.vendor_profile != "jedec" && !spec.vendor_profile.empty();
-}
+
 
 void mark(DramSpec& spec, const char* name, TimingValueSource source, const std::string& note) {
   set_timing_source(spec, name, source, note);
@@ -41,14 +39,6 @@ void mark_many(DramSpec& spec,
   for (const char* name : names) {
     mark(spec, name, source, note);
   }
-}
-
-bool mode_contains(const DramSpec& spec, const std::string& needle) {
-  std::string mode = spec.mode_profile;
-  std::transform(mode.begin(), mode.end(), mode.begin(), [](unsigned char c) {
-    return static_cast<char>(std::tolower(c));
-  });
-  return mode.find(needle) != std::string::npos;
 }
 
 std::string trim_profile_value(std::string value) {
@@ -248,7 +238,7 @@ void apply_profile_file_value(DramSpec& spec,
     spec.data_rate_mbps = spec.speed_bin_mbps;
     spec.timing.tCK_ps = static_cast<double>(tck_ps_for_speed(spec.data_rate_mbps));
   }
-  else if (key == "density_gb") spec.density_gb = parse_profile_int(value);
+  else if (key == "density_gb") spec.density_gb = parse_profile_double(value);
   else if (key == "stack_height") spec.stack_height = parse_profile_int(value);
   else if (key == "data_rate_mbps") {
     spec.data_rate_mbps = parse_profile_int(value);
@@ -365,37 +355,39 @@ struct TimingNs {
   bool standard_defined = true;
 };
 
-TimingNs hbm3_trfcab_ns(int density_gb, int stack_height) {
+TimingNs hbm3_trfcab_ns(double density_gb, int stack_height) {
   // JESD238B.01 表 93 按裸片密度和堆叠高度给出 tRFCab。标准中标记 TBD 的项
   // 使用最近的非 TBD 研究值，使仿真器可运行，同时保留密度和堆叠高度输入。
   const int stack = std::max(4, stack_height);
+  const bool exact_height = stack_height == 4 || stack_height == 8 ||
+                            stack_height == 12 || stack_height == 16;
   if (density_gb <= 8) {
     if (stack <= 4) return {260.0, false};
-    if (stack <= 8) return {260.0, true};
-    if (stack <= 12) return {310.0, true};
-    return {350.0, true};
+    if (stack <= 8) return {260.0, density_gb == 8 && exact_height};
+    if (stack <= 12) return {310.0, density_gb == 8 && exact_height};
+    return {350.0, density_gb == 8 && exact_height};
   }
   if (density_gb <= 16) {
-    if (stack <= 4) return {260.0, true};
-    if (stack <= 8) return {350.0, true};
-    if (stack <= 12) return {410.0, true};
-    return {450.0, true};
+    if (stack <= 4) return {260.0, density_gb == 16 && exact_height};
+    if (stack <= 8) return {350.0, density_gb == 16 && exact_height};
+    if (stack <= 12) return {410.0, density_gb == 16 && exact_height};
+    return {450.0, density_gb == 16 && exact_height};
   }
   if (density_gb <= 24) {
-    if (stack <= 4) return {310.0, true};
-    if (stack <= 8) return {410.0, true};
-    if (stack <= 12) return {450.0, true};
+    if (stack <= 4) return {310.0, density_gb == 24 && exact_height};
+    if (stack <= 8) return {410.0, density_gb == 24 && exact_height};
+    if (stack <= 12) return {450.0, density_gb == 24 && exact_height};
     return {450.0, false};
   }
   if (stack <= 8) return {450.0, false};
   return {520.0, false};
 }
 
-TimingNs hbm3_trfcpb_ns(int density_gb) {
+TimingNs hbm3_trfcpb_ns(double density_gb) {
   // JESD238B.01 表 93 给出 16Gb 和 24Gb tRFCpb；8Gb/32Gb 仍为 TBD。
   if (density_gb <= 8) return {200.0, false};
-  if (density_gb <= 16) return {200.0, true};
-  if (density_gb <= 24) return {240.0, true};
+  if (density_gb <= 16) return {200.0, density_gb == 16};
+  if (density_gb <= 24) return {240.0, density_gb == 24};
   return {240.0, false};
 }
 
@@ -471,24 +463,22 @@ Lpddr6CoreTimingNs lpddr6_core_timing_ns(bool dvfsl_enabled, bool link_protectio
   return t;
 }
 
-TimingNs lpddr6_trfcab_ns(int density_gb) {
+TimingNs lpddr6_trfcab_ns(double density_gb) {
   // JESD209-6 表 302 按每两个子通道的密度给出刷新恢复时间。
-  if (density_gb <= 4) return {210.0, false};
-  if (density_gb <= 8) return {210.0, true};
-  if (density_gb <= 16) return {280.0, true};
-  if (density_gb <= 32) return {380.0, true};
+  if (density_gb <= 8) return {210.0, density_gb == 6 || density_gb == 8};
+  if (density_gb <= 16) return {280.0, density_gb == 12 || density_gb == 16};
+  if (density_gb <= 32) return {380.0, density_gb == 24 || density_gb == 32};
   return {380.0, false};
 }
 
-TimingNs lpddr6_trfcdb_ns(int density_gb) {
-  if (density_gb <= 4) return {140.0, false};
-  if (density_gb <= 8) return {140.0, true};
-  if (density_gb <= 16) return {160.0, true};
-  if (density_gb <= 32) return {210.0, true};
+TimingNs lpddr6_trfcdb_ns(double density_gb) {
+  if (density_gb <= 8) return {140.0, density_gb == 6 || density_gb == 8};
+  if (density_gb <= 16) return {160.0, density_gb == 12 || density_gb == 16};
+  if (density_gb <= 32) return {210.0, density_gb == 24 || density_gb == 32};
   return {210.0, false};
 }
 
-void apply_hbm4_profile(DramSpec& spec) {
+void apply_hbm4_profile(DramSpec& spec, double resolved_tck_ps) {
   if (spec.speed_bin_mbps <= 0) spec.speed_bin_mbps = spec.data_rate_mbps > 0 ? spec.data_rate_mbps : 8000;
   if (spec.density_gb <= 0) spec.density_gb = 32;
   if (spec.stack_height <= 0) spec.stack_height = 8;
@@ -498,6 +488,7 @@ void apply_hbm4_profile(DramSpec& spec) {
   spec.name = "HBM4";
   spec.data_rate_mbps = spec.speed_bin_mbps;
   spec.timing.tCK_ps = static_cast<double>(tck_ps_for_speed(spec.speed_bin_mbps));
+  if (resolved_tck_ps > 0) spec.timing.tCK_ps = resolved_tck_ps;
   spec.full_stack_model = true;
   spec.hbm_full_32_channel_stack = true;
   spec.org.channels = 32;
@@ -527,10 +518,6 @@ void apply_hbm4_profile(DramSpec& spec) {
   spec.column_bus_scope = spec.hbm_sid_interleave ? TimingScope::Sid : TimingScope::PseudoChannel;
   if (spec.supports_ecc && spec.hbm_ecc_bits_per_request == 0 && spec.ecc_bits_per_request == 0) {
     spec.hbm_ecc_bits_per_request = 16;
-  }
-  if (spec.hbm_link_crc_bits_per_request == 0 && spec.mode_profile.find("link_crc") != std::string::npos) {
-    spec.hbm_link_crc_bits_per_request = 16;
-    spec.hbm_link_crc_mode = "crc16";
   }
   spec.hbm_ecc_scheme =
       spec.hbm_ecc_bits_per_request > 0 ? "metadata_16b_per_32B_transaction" : "none";
@@ -595,11 +582,22 @@ void apply_hbm4_profile(DramSpec& spec) {
   spec.timing.nCAS = 0;
   spec.timing.nCS = 2;
   spec.timing.nPPD = 2;
-  spec.timing.nRPab = 20;
+  spec.timing.nRPab = spec.timing.nRP;
 
   double trfc_ab_ns = 450.0;
   double trfc_pb_ns = 280.0;
-  if (spec.density_gb <= 24) {
+  const bool standard_refresh_density = spec.density_gb == 24 || spec.density_gb == 32;
+  const bool standard_refresh_height = spec.stack_height == 4 || spec.stack_height == 8 ||
+                                       spec.stack_height == 12 || spec.stack_height == 16;
+  if (standard_refresh_density && standard_refresh_height) {
+    // JESD270-4A Table 108, pp.195-196: density is per die; RFCab also
+    // depends on stack height. Other geometries use research fallbacks below.
+    const int height_index = spec.stack_height / 4 - 1;
+    const double per24[] = {360, 410, 450, 490};
+    const double per32[] = {400, 450, 490, 530};
+    trfc_ab_ns = spec.density_gb == 24 ? per24[height_index] : per32[height_index];
+    trfc_pb_ns = spec.density_gb == 24 ? 240 : 280;
+  } else if (spec.density_gb <= 24) {
     trfc_ab_ns = 380.0;
     trfc_pb_ns = 240.0;
   } else if (spec.density_gb >= 48) {
@@ -627,33 +625,37 @@ void apply_hbm4_profile(DramSpec& spec) {
   spec.timing.nRASERR = spec.hbm_link_retry_enabled ? jedec::ns_to_nck(32.0, spec.timing.tCK_ps) : 0;
   spec.timing.nLINKRETRY = spec.hbm_link_retry_enabled ? jedec::ns_to_nck(16.0, spec.timing.tCK_ps) : 0;
 
-  const bool vendor = vendor_calibrated(spec);
   const std::string note = "HBM4 profile=" + spec.timing_profile + ", vendor=" + spec.vendor_profile +
                            ", speed=" + std::to_string(spec.speed_bin_mbps) +
                            ", density=" + std::to_string(spec.density_gb) +
                            "Gb, stack=" + std::to_string(spec.stack_height) + "Hi.";
   mark_many(spec,
-            {"nBL", "nCCDS", "nCCDL", "nRREFD", "nREFI", "nREFIpb", "nRFC", "nRFCpb", "nRFMab", "nRFMpb"},
+            {"nBL", "nCCDS", "nCCDL", "nRREFD", "nREFI"},
             TimingValueSource::JEDEC,
             note);
+  mark(spec, "nRFC", standard_refresh_density && standard_refresh_height
+                           ? TimingValueSource::JEDEC : TimingValueSource::ResearchDefault,
+       "JESD270-4A Table 108, density/height lookup; unmatched rows are research fallbacks.");
+  mark(spec, "nRFCpb", standard_refresh_density
+                             ? TimingValueSource::JEDEC : TimingValueSource::ResearchDefault,
+       "JESD270-4A Table 108, 24/32 Gb per die; other densities are research fallbacks.");
+  mark(spec, "nREFIpb", spec.stack_height == 8 || spec.stack_height == 12 || spec.stack_height == 16
+                             ? TimingValueSource::JEDEC : TimingValueSource::ResearchDefault,
+       "JESD270-4A Table 108 explicitly lists 8/12/16-High rotation intervals.");
+  mark_many(spec, {"nRFMab", "nRFMpb"}, TimingValueSource::ResearchDefault,
+            "Project RFM recovery defaults copied from RFC; requires device RFM/DRFM evidence.");
   mark_many(spec, {"nMRW", "nMRR", "nECCSCRUB"},
-            vendor ? TimingValueSource::Vendor : TimingValueSource::ResearchDefault,
+            TimingValueSource::ResearchDefault,
             "HBM4 control/RAS/link timing requires device mode table or vendor reliability guide.");
   if (spec.hbm_link_retry_enabled) {
     mark_many(spec, {"nRASERR", "nLINKRETRY"},
-              vendor ? TimingValueSource::Vendor : TimingValueSource::ResearchDefault,
+              TimingValueSource::ResearchDefault,
               "HBM4 enabled link-retry timing requires a vendor reliability guide.");
   }
-  if (vendor) {
-    mark_many(spec,
-              {"nCL", "nCWL", "nRCDRD", "nRCDWR", "nRP", "nRAS", "nRC", "nRTP", "nWR",
-               "nRRDS", "nRRDL", "nFAW", "nRTW", "nWTRS", "nWTRL", "nCCDR", "nRPab"},
-              TimingValueSource::Vendor,
-              note);
-  }
+
 }
 
-void apply_hbm3_profile(DramSpec& spec) {
+void apply_hbm3_profile(DramSpec& spec, double resolved_tck_ps) {
   if (spec.speed_bin_mbps <= 0) spec.speed_bin_mbps = spec.data_rate_mbps > 0 ? spec.data_rate_mbps : 6400;
   if (spec.density_gb <= 0) spec.density_gb = 16;
   if (spec.stack_height <= 0) spec.stack_height = 8;
@@ -663,14 +665,15 @@ void apply_hbm3_profile(DramSpec& spec) {
   spec.name = "HBM3";
   spec.data_rate_mbps = spec.speed_bin_mbps;
   spec.timing.tCK_ps = static_cast<double>(tck_ps_for_speed(spec.speed_bin_mbps));
+  if (resolved_tck_ps > 0) spec.timing.tCK_ps = resolved_tck_ps;
   spec.full_stack_model = true;
   spec.org.channels = 16;
   spec.org.pseudo_channels = 2;
-  spec.org.sids = 1;
+  spec.org.sids = 2;
   spec.org.ranks = 1;
   spec.org.bank_groups = 4;
   spec.org.banks_per_group = 4;
-  spec.org.rows = 1 << 15;
+  spec.org.rows = 1 << 14;
   spec.org.columns = 1 << 5;
   spec.org.line_size = 64;
   spec.org.dram_transaction_bytes = 32;
@@ -678,20 +681,21 @@ void apply_hbm3_profile(DramSpec& spec) {
   spec.internal_prefetch_size = 8;
   spec.tick_multiplier = 2;
   spec.timing.nBL = 2;
-  spec.timing.nCL = spec.speed_bin_mbps <= 5600 ? 24 : 26;
-  spec.timing.nCWL = spec.speed_bin_mbps <= 5600 ? 7 : 8;
-  spec.timing.nRCDRD = spec.timing.nCL;
-  spec.timing.nRCDWR = spec.timing.nCWL + 6;
-  spec.timing.nRP = spec.timing.nRCDRD;
-  spec.timing.nRAS = 48;
-  spec.timing.nRC = spec.timing.nRAS + spec.timing.nRP;
-  spec.timing.nRTP = 6;
-  spec.timing.nWR = 24;
+  spec.timing.nCL = 20;
+  spec.timing.nCWL = 10;
+  spec.timing.nRCDRD = jedec::ns_to_nck(31 * 0.625, spec.timing.tCK_ps);
+  spec.timing.nRCDWR = jedec::ns_to_nck(15 * 0.625, spec.timing.tCK_ps);
+  spec.timing.nRP = jedec::ns_to_nck(26 * 0.625, spec.timing.tCK_ps);
+  spec.timing.nRAS = jedec::ns_to_nck(45 * 0.625, spec.timing.tCK_ps);
+  spec.timing.nRC = std::max(spec.timing.nRAS + spec.timing.nRP,
+                             jedec::ns_to_nck(72 * 0.625, spec.timing.tCK_ps));
+  spec.timing.nRTP = jedec::ns_to_nck(9 * 0.625, spec.timing.tCK_ps);
+  spec.timing.nWR = jedec::ns_to_nck(33 * 0.625, spec.timing.tCK_ps);
   spec.timing.nCCDS = 2;
   spec.timing.nCCDL = jedec::hbm_tccdl_nck(spec.timing.tCK_ps);
   spec.timing.nCCDR = spec.timing.nCCDS + 1;
-  spec.timing.nRRDS = 8;
-  spec.timing.nRRDL = 8;
+  spec.timing.nRRDS = jedec::ns_to_nck(4 * 0.625, spec.timing.tCK_ps);
+  spec.timing.nRRDL = jedec::ns_to_nck(5 * 0.625, spec.timing.tCK_ps);
   spec.timing.nFAW = 24;
   spec.timing.nAADMin = 1;
   spec.timing.nAADMax = 8;
@@ -701,16 +705,16 @@ void apply_hbm3_profile(DramSpec& spec) {
   spec.timing.nCS = 2;
   spec.timing.nPPD = 2;
   spec.timing.nRPab = 20;
-  spec.timing.nWTRS = 8;
-  spec.timing.nWTRL = 12;
-  spec.timing.nRTW = 18;
+  spec.timing.nWTRS = jedec::ns_to_nck(7 * 0.625, spec.timing.tCK_ps);
+  spec.timing.nWTRL = jedec::ns_to_nck(10 * 0.625, spec.timing.tCK_ps);
+  spec.timing.nRTW = 20;
   const TimingNs trfc_ab = hbm3_trfcab_ns(spec.density_gb, spec.stack_height);
   const TimingNs trfc_pb = hbm3_trfcpb_ns(spec.density_gb);
   spec.timing.nRFC = jedec::ns_to_nck(trfc_ab.value, spec.timing.tCK_ps);
   spec.timing.nRFCpb = jedec::ns_to_nck(trfc_pb.value, spec.timing.tCK_ps);
   spec.timing.nRFMab = 0;
   spec.timing.nRFMpb = 0;
-  spec.timing.nRREFD = jedec::max_ns_or_nck(8.0, 3, spec.timing.tCK_ps);
+  spec.timing.nRREFD = jedec::ns_to_nck(8 * 0.625, spec.timing.tCK_ps);
   spec.timing.nREFDB2ACT = 0;
   spec.timing.nREFDB2REFDBS = 0;
   spec.timing.nREFDB2REFDBL = 0;
@@ -726,11 +730,17 @@ void apply_hbm3_profile(DramSpec& spec) {
   spec.timing.nECCSCRUB = 0;
   spec.timing.nRASERR = 0;
   spec.timing.nLINKRETRY = 0;
+  mark_many(spec, {"nCL", "nCWL", "nRCDRD", "nRCDWR", "nRP", "nRAS", "nRC",
+                   "nRTP", "nWR", "nRRDS", "nRRDL", "nFAW", "nWTRS", "nWTRL",
+                   "nRTW", "nMRW", "nMRR"},
+            spec.data_rate_mbps == 6400 ? TimingValueSource::ExternalReference
+                                       : TimingValueSource::ResearchDefault,
+            "Ramulator HBM3 6400 baseline; time-based row constraints rescaled by CK. RL/WL at other rates are research assumptions.");
   const std::string note = "HBM3 JESD238B.01 Table 93 profile=" + spec.timing_profile +
                            ", density=" + std::to_string(spec.density_gb) +
                            "Gb, stack=" + std::to_string(spec.stack_height) + "Hi.";
   mark_many(spec,
-            {"nBL", "nCCDS", "nCCDL", "nRREFD", "nREFI", "nREFIpb"},
+            {"nBL", "nCCDS", "nCCDL", "nREFI", "nREFIpb"},
             TimingValueSource::JEDEC,
             note);
   mark_many(spec,
@@ -738,15 +748,12 @@ void apply_hbm3_profile(DramSpec& spec) {
             (trfc_ab.standard_defined && trfc_pb.standard_defined) ? TimingValueSource::JEDEC
                                                                    : TimingValueSource::ResearchDefault,
             note);
-  if (vendor_calibrated(spec)) {
-    mark_many(spec,
-              {"nCL", "nCWL", "nRCDRD", "nRCDWR", "nRP", "nRAS", "nRC", "nRFC", "nRFCpb"},
-              TimingValueSource::Vendor,
-              "HBM3 vendor profile " + spec.vendor_profile);
-  }
+  mark(spec, "nRREFD", TimingValueSource::ExternalReference,
+       "Controlled HBM3 reference interval; not a JEDEC tRREFD claim.");
+
 }
 
-void apply_lpddr6_profile(DramSpec& spec) {
+void apply_lpddr6_profile(DramSpec& spec, double resolved_tck_ps) {
   if (spec.speed_bin_mbps <= 0) spec.speed_bin_mbps = spec.data_rate_mbps > 0 ? spec.data_rate_mbps : 10667;
   if (spec.density_gb <= 0) spec.density_gb = 16;
   if (spec.lpddr_dvfs_mode == LpddrDvfsMode::Low) {
@@ -760,6 +767,7 @@ void apply_lpddr6_profile(DramSpec& spec) {
   spec.org = Organization{};
   spec.timing = Timing{};
   spec.timing.tCK_ps = static_cast<double>(tck_ps_for_speed(spec.data_rate_mbps));
+  if (resolved_tck_ps > 0) spec.timing.tCK_ps = resolved_tck_ps;
   spec.name = "LPDDR6";
   spec.org.channels = 1;
   spec.org.pseudo_channels = 2;
@@ -787,15 +795,10 @@ void apply_lpddr6_profile(DramSpec& spec) {
 
   const int speed = spec.data_rate_mbps;
   const bool dvfsl_enabled = spec.lpddr_dvfs_mode != LpddrDvfsMode::Disabled;
-  const bool mode_requests_link = mode_contains(spec, "linkprot_on") || mode_contains(spec, "link_on") ||
-                                  mode_contains(spec, "link_ecc_on");
-  const bool ca_parity_requested = spec.lpddr_ca_parity_enabled ||
-                                   mode_contains(spec, "ca_parity_on") ||
-                                   mode_contains(spec, "ca_parity");
-  const bool link_protection = spec.lpddr_link_protection || spec.lpddr_link_ecc_enabled || mode_requests_link;
-  const bool efficiency_mode = spec.lpddr_efficiency_mode != LpddrEfficiencyMode::Normal ||
-                               mode_contains(spec, "eff_on") || mode_contains(spec, "efficiency_on") ||
-                               mode_contains(spec, "efficiency_enabled");
+  // Identity labels must not secretly enable protocol features.
+  const bool ca_parity_requested = spec.lpddr_ca_parity_enabled;
+  const bool link_protection = spec.lpddr_link_protection || spec.lpddr_link_ecc_enabled;
+  const bool efficiency_mode = spec.lpddr_efficiency_mode != LpddrEfficiencyMode::Normal;
   const Lpddr6CoreTimingNs core = lpddr6_core_timing_ns(dvfsl_enabled, link_protection, efficiency_mode);
 
   spec.lpddr_link_protection = link_protection;
@@ -833,12 +836,15 @@ void apply_lpddr6_profile(DramSpec& spec) {
   spec.timing.nREFDB2ACT = spec.timing.nRREFD;
   spec.timing.nREFDB2REFDBS = jedec::ns_to_nck(47.0, spec.timing.tCK_ps);
   spec.timing.nREFDB2REFDBL = jedec::ns_to_nck(90.0, spec.timing.tCK_ps);
-  const TimingNs trfc_ab = lpddr6_trfcab_ns(spec.density_gb);
-  const TimingNs trfc_db = lpddr6_trfcdb_ns(spec.density_gb);
+  // density_gb is per subchannel; Table 302 is explicitly per TWO
+  // subchannels, independent of how many channels the experiment instantiates.
+  const TimingNs trfc_ab = lpddr6_trfcab_ns(2.0 * spec.density_gb);
+  const TimingNs trfc_db = lpddr6_trfcdb_ns(2.0 * spec.density_gb);
   spec.timing.nRFC = jedec::ns_to_nck(trfc_ab.value, spec.timing.tCK_ps);
   spec.timing.nRFCpb = jedec::ns_to_nck(trfc_db.value, spec.timing.tCK_ps);
-  spec.timing.nRFMab = spec.timing.nRFC;
-  spec.timing.nRFMpb = spec.timing.nRFCpb;
+  // JESD209-6 p396 Tables 366/367: five row-refresh spans, not tRFC.
+  spec.timing.nRFMab = jedec::ns_to_nck(5.0 * 80.0, spec.timing.tCK_ps);
+  spec.timing.nRFMpb = jedec::ns_to_nck(5.0 * 70.0, spec.timing.tCK_ps);
   spec.timing.nREFI = jedec::us_to_nck(3.906, spec.timing.tCK_ps);
   spec.timing.nREFIpb = jedec::ns_to_nck(spec.refresh_temperature_mode == RefreshTemperatureMode::Normal ? 488.0 : 244.0,
                                          spec.timing.tCK_ps);
@@ -881,26 +887,36 @@ void apply_lpddr6_profile(DramSpec& spec) {
              "nWCK2CK", "nWCKPST", "nCAS", "nWTRS", "nWTRL", "nRREFD", "nRFC",
              "nREFDB2ACT", "nREFDB2REFDBS", "nREFDB2REFDBL",
              "nRFCpb", "nRFMab", "nRFMpb", "nREFI", "nREFIpb"},
-            vendor_calibrated(spec) ? TimingValueSource::Vendor : TimingValueSource::JEDEC,
+            TimingValueSource::JEDEC,
             "LPDDR6 profile=" + spec.timing_profile + ", mode=" + spec.mode_profile +
                 ", vendor=" + spec.vendor_profile +
                 ", JESD209-6 Tables 300/301/302/414-423.");
   mark_many(spec,
             {"nMRW", "nMRR", "nWCKSYNC", "nWCKTRAIN", "nDVFS", "nPDEX", "nSREFEX"},
-            vendor_calibrated(spec) ? TimingValueSource::Vendor : TimingValueSource::JEDEC,
+            TimingValueSource::JEDEC,
             "LPDDR6 control/link timing profile for MR programming, WCK training, DVFS and link protection.");
   if (spec.lpddr_link_protection || spec.lpddr_link_ecc_enabled) {
     mark_many(spec, {"nECCSCRUB", "nRASERR", "nLINKRETRY"},
-              vendor_calibrated(spec) ? TimingValueSource::Vendor : TimingValueSource::ResearchDefault,
+              TimingValueSource::ResearchDefault,
               "LPDDR6 enabled link-protection recovery timing requires a vendor reliability guide.");
   }
-  if (!vendor_calibrated(spec) && (!trfc_ab.standard_defined || !trfc_db.standard_defined)) {
+  if (!trfc_ab.standard_defined || !trfc_db.standard_defined) {
     mark_many(spec, {"nRFC", "nRFCpb"}, TimingValueSource::ResearchDefault,
-              "LPDDR6 density falls on a JESD209-6 TBD refresh row; using closest defined research value.");
+              "LPDDR6 density per two subchannels is absent/TBD in Table 302; nearest research value, not interpolation guaranteed by JEDEC.");
+  }
+  mark_many(spec, {"nRFMab", "nRFMpb"}, TimingValueSource::JEDEC,
+            "JESD209-6 p396 Tables 366/367: tRFMab=5*80ns, tRFMpb=5*70ns; independent of tRFC density lookup.");
+  mark_many(spec, {"nAADMin"}, TimingValueSource::Derived,
+            "Project ACT1/ACT2 scheduling granularity, not the JEDEC tAAD maximum deadline.");
+  { // A vendor_profile name alone is not calibration evidence.
+    mark_many(spec, {"nWCK2CK", "nWCKPST", "nCAS", "nWCKSYNC", "nWCKTRAIN",
+                     "nDVFS", "nMRW", "nMRR", "nPDEX", "nSREFEX"},
+              TimingValueSource::ResearchDefault,
+              "Behavioral controller/PHY control window; not pin-level tWCK2CK or a verified vendor training table.");
   }
 }
 
-void apply_lpddr5_profile(DramSpec& spec) {
+void apply_lpddr5_profile(DramSpec& spec, double resolved_tck_ps) {
   if (spec.speed_bin_mbps <= 0) spec.speed_bin_mbps = spec.data_rate_mbps > 0 ? spec.data_rate_mbps : 6400;
   if (spec.density_gb <= 0) spec.density_gb = 16;
 
@@ -911,6 +927,7 @@ void apply_lpddr5_profile(DramSpec& spec) {
   // LPDDR5 preset 的 CK:WCK 关系与 HBM/LPDDR6 数据率换算不同；6400Mbps
   // 对应当前模型使用的 1.25ns CK。
   spec.timing.tCK_ps = 8000000.0 / static_cast<double>(spec.data_rate_mbps);
+  if (resolved_tck_ps > 0) spec.timing.tCK_ps = resolved_tck_ps;
   spec.org.channels = 1;
   spec.org.pseudo_channels = 1;
   spec.org.sids = 1;
@@ -947,7 +964,7 @@ void apply_lpddr5_profile(DramSpec& spec) {
   spec.timing.nAADMin = 1;
   spec.timing.nAADMax = 8;
   spec.timing.nWCK2CK = 1;
-  spec.timing.nWCKPST = 8;
+  spec.timing.nWCKPST = 1;
   spec.timing.nCAS = 0;
   spec.timing.nCS = 2;
   spec.timing.nPPD = 2;
@@ -956,23 +973,23 @@ void apply_lpddr5_profile(DramSpec& spec) {
   spec.timing.nWTRL = 10;
   spec.timing.nRTW = 16;
   spec.timing.nCCDR = 2;
-  spec.timing.nRFC = 224;
-  spec.timing.nRFCpb = 128;
+  spec.timing.nRFC = jedec::ns_to_nck(280.0, spec.timing.tCK_ps);
+  spec.timing.nRFCpb = jedec::ns_to_nck(140.0, spec.timing.tCK_ps);
   spec.timing.nRFMab = 0;
   spec.timing.nRFMpb = 0;
   spec.timing.nRREFD = 0;
   spec.timing.nREFDB2ACT = 0;
   spec.timing.nREFDB2REFDBS = 0;
   spec.timing.nREFDB2REFDBL = 0;
-  spec.timing.nREFI = 3125;
-  spec.timing.nREFIpb = 390;
+  spec.timing.nREFI = jedec::ns_to_nck(3906.25, spec.timing.tCK_ps);
+  spec.timing.nREFIpb = jedec::ns_to_nck(488.28125, spec.timing.tCK_ps);
   spec.timing.nMRW = 8;
   spec.timing.nMRR = 8;
   spec.timing.nWCKSYNC = spec.timing.nWCK2CK;
   spec.timing.nWCKTRAIN = 0;
   spec.timing.nDVFS = 0;
-  spec.timing.nPDEX = 8;
-  spec.timing.nSREFEX = 256;
+  spec.timing.nPDEX = spec.low_power_mode == LowPowerMode::Off ? 0 : 8;
+  spec.timing.nSREFEX = spec.low_power_mode == LowPowerMode::Off ? 0 : 256;
   spec.timing.nECCSCRUB = 64;
   spec.timing.nRASERR = 64;
   spec.timing.nLINKRETRY = 16;
@@ -983,18 +1000,18 @@ void apply_lpddr5_profile(DramSpec& spec) {
              "nWCK2CK", "nWCKPST", "nCAS", "nCS", "nPPD", "nREFI", "nREFIpb"},
             TimingValueSource::JEDEC,
             "LPDDR5 generic profile; select a vendor profile for device-specific RL/WL and row timing.");
-  if (vendor_calibrated(spec)) {
-    mark_many(spec,
-              {"nCL", "nCWL", "nRCDRD", "nRCDWR", "nRP", "nRPab", "nRAS", "nRC",
-               "nRTP", "nWR", "nWTRS", "nWTRL", "nRFC", "nRFCpb"},
-              TimingValueSource::Vendor,
-              "LPDDR5 vendor profile " + spec.vendor_profile);
-  }
+  mark_many(spec, {"nCL", "nCWL", "nRCDRD", "nRCDWR", "nRP", "nRPab", "nRAS",
+                   "nRC", "nRTP", "nWR", "nWTRS", "nWTRL", "nRFC", "nRFCpb",
+                   "nWCKPST", "nREFI", "nREFIpb", "nPDEX", "nSREFEX"},
+            spec.data_rate_mbps == 6400 && spec.density_gb == 16
+                ? TimingValueSource::ExternalReference : TimingValueSource::ResearchDefault,
+            "Ramulator LPDDR5 6400/16Gb baseline; other speed/density choices need device timing. No inferred density refresh table.");
+
 }
 
 }  // namespace
 
-void apply_standard_timing_profile(DramSpec& spec) {
+void apply_standard_timing_profile(DramSpec& spec, double resolved_tck_ps) {
   // 重新应用 profile 时丢弃上一轮 profile/external-file 的来源标记，避免
   // vendor -> generic 切换后遗留 Vendor 标签。配置的逐项 source override
   // 总是在本函数之后应用。
@@ -1002,16 +1019,16 @@ void apply_standard_timing_profile(DramSpec& spec) {
 
   switch (spec.standard) {
     case DramStandard::Hbm4:
-      apply_hbm4_profile(spec);
+      apply_hbm4_profile(spec, resolved_tck_ps);
       break;
     case DramStandard::Hbm3:
-      apply_hbm3_profile(spec);
+      apply_hbm3_profile(spec, resolved_tck_ps);
       break;
     case DramStandard::Lpddr6:
-      apply_lpddr6_profile(spec);
+      apply_lpddr6_profile(spec, resolved_tck_ps);
       break;
     case DramStandard::Lpddr5:
-      apply_lpddr5_profile(spec);
+      apply_lpddr5_profile(spec, resolved_tck_ps);
       break;
     case DramStandard::Unknown:
       throw std::invalid_argument("cannot apply timing profile without standard traits");

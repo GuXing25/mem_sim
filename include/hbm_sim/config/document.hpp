@@ -1,7 +1,7 @@
 #pragma once
 
 // 分节配置文档只负责“读取、选择和分层”，不直接修改 DramSpec/Controller。
-// CLI 仍保留逐 key 映射，因此每个公开配置项最终影响哪个模型字段依然可审计。
+// model.hpp 的构建模块保留逐 key 映射；每个公开项影响哪个模型字段仍可审计。
 
 #include <cstddef>
 #include <string>

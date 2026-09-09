@@ -40,6 +40,7 @@ mkdir -p "$demo_out"
   --dump-timing-table "$demo_out/timing.csv" \
   --dump-thermal-map "$demo_out/thermal_{stack}.txt" \
   --validate-cmd-trace --validate-dfi-trace \
+  --stats-view full --stats-json "$demo_out/result.json" \
   | tee "$demo_out/stats.txt"
 
 # Dashboard 同时合并所有 Stack 的热网格；命令轨迹本身已经带 stack_id。
@@ -50,7 +51,7 @@ done
 python3 "$demo_root/tools/visualize.py" \
   --command-trace "$demo_out/commands.csv" \
   --dfi-trace "$demo_out/dfi.csv" \
-  --stats "$demo_out/stats.txt" \
+  --stats "$demo_out/result.json" \
   "${thermal_args[@]}" \
   --out "$demo_out/dashboard.html" \
   --title "${demo_standard^^} ${demo_stacks}-Stack validation dashboard"

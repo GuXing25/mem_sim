@@ -7,7 +7,8 @@
 主要文件：
 
 - `compare_stats.py`：比较两次仿真输出中的关键统计字段，用于轻量 golden/baseline 对比。
-- `view_stats.py`：把一份或多份 `key : value` 统计文件按指定字段输出为对齐表格。
+- `view_stats.py`：把一份或多份完整 JSON / `key : value` 统计文件按指定字段输出为对齐表格。
+- `result_io.py`：共同结果读取器；实验工具要求完成状态、整数计数与必要字段，不再把缺失值补零。
 - `audit_case_backends.sh`：用相同配置、trace 和初始 image 审计 sparse/mmap/chunk 三种后端。
 - `config_selection.py`：验证工具共享的 master/preset 选择表，避免重新维护配置路径。
 - `model_validation.py`：运行项目原生 HBM4 配置，检查分析公式、性能阈值、真实存储、full-stack、DFI、来源和 project identity。
@@ -27,7 +28,9 @@
 观测需求，可在此 HTML 数据格式之外增加独立 streamer，而不改变现有 trace 入口。
 
 ```bash
+mkdir -p outputs/visualization
 ./build-clang-debug/hbm_sim --config configs/hbm.cfg --standard hbm4 --requests 128 \
+  --stats-json outputs/visualization/result.json \
   --cmd-trace outputs/visualization/commands.csv \
   --dfi-trace outputs/visualization/dfi.csv \
   --dump-thermal-map outputs/visualization/thermal_map.txt \
@@ -36,7 +39,7 @@
 python3 tools/visualize.py \
   --command-trace outputs/visualization/commands.csv \
   --dfi-trace outputs/visualization/dfi.csv \
-  --stats outputs/visualization/stats.txt \
+  --stats outputs/visualization/result.json \
   --thermal-map outputs/visualization/thermal_map.txt \
   --out outputs/visualization/dashboard.html
 ```

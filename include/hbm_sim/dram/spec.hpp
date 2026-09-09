@@ -316,7 +316,9 @@ struct DramSpec {
   std::string vendor_profile = "generic";
   std::string mode_profile = "default";
   int speed_bin_mbps = 0;
-  int density_gb = 0;
+  // Gibit per die (HBM) or per subchannel/rank (LPDDR). Fractional research
+  // geometries must not be rounded to an unrelated density table row.
+  double density_gb = 0;
   int stack_height = 0;
   // true 时，tick() 每周期分别尝试一条 column 和一条 row 命令。
   bool dual_command_bus = false;

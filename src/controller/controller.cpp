@@ -1173,9 +1173,11 @@ bool Controller::candidate_eligible(const Request &req, Command cmd,
       is_data_command(cmd) && has_unresolved_overlapping_write(req)) {
     return false;
   }
-  if (req.type == RequestType::Write && is_data_command(cmd) &&
+  if (req.type == RequestType::Write &&
       has_unresolved_overlapping_read(req, req.controller_sequence)) {
-    // FR-FCFS 可以重排独立地址，但不能让后到写覆盖仍未完成的先到读。
+    // Do not acquire an active bank for a write waiting on an older read.
+    // Otherwise maintenance waits for this active write, while that older read
+    // is blocked by maintenance priority: a circular wait before data issue.
     return false;
   }
   if (!bus_matches(req, cmd, bus)) {
@@ -1207,6 +1209,16 @@ bool Controller::phy_admission_ok(Command cmd,
 Controller::Candidate
 Controller::pick_priority_if(BusClass bus,
                              PhyBackpressureObservation *phy_block) {
+  while (!priority_buffer_.empty()) {
+    const Request& head = priority_buffer_.front();
+    const BankState& bank = banks_[head.decoded.flat_bank(spec_)];
+    if (head.next != Command::PREPB || bank.activating || bank.open_row >= 0)
+      break;
+    // Another PRE/refresh/auto-precharge already satisfied this maintenance
+    // request. Retire it without emitting an illegal PRE to a closed bank.
+    row_policy_.on_issue(options_.row_policy, head.decoded.flat_bank(spec_), Command::PREPB);
+    priority_buffer_.pop_front();
+  }
   if (priority_buffer_.empty()) {
     return {};
   }
@@ -1226,8 +1238,18 @@ Controller::Candidate
 Controller::pick_rw_if(BusClass bus, PhyBackpressureObservation *phy_block) {
   set_write_mode();
   if (write_mode_) {
-    return pick_best_ready_from(write_buffer_, BufferKind::Write, bus, true,
-                                phy_block);
+    auto write = pick_best_ready_from(write_buffer_, BufferKind::Write, bus, true,
+                                      phy_block);
+    if (write.valid) return write;
+    // A write-drain watermark cannot prevent the older reads needed by queued
+    // writes from progressing. Do not relax bank/timing/PHY eligibility.
+    const bool read_dependency = std::any_of(write_buffer_.begin(), write_buffer_.end(),
+        [&](const Request& req) {
+          return has_unresolved_overlapping_read(req, req.controller_sequence);
+        });
+    if (read_dependency)
+      return pick_best_ready_from(read_buffer_, BufferKind::Read, bus, true, phy_block);
+    return {};
   }
   return pick_best_ready_from(read_buffer_, BufferKind::Read, bus, true,
                               phy_block);

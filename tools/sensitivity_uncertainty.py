@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from result_io import run_simulator
 
 from config_selection import REFERENCE_PRESETS, selection_args
 
@@ -31,15 +32,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--csv-out", type=Path)
     parser.add_argument("--json-out", type=Path)
     return parser.parse_args()
-
-
-def parse_stats(text: str) -> dict[str, str]:
-    result = {}
-    for line in text.splitlines():
-        if ":" in line:
-            key, value = line.split(":", 1)
-            result[key.strip()] = value.strip()
-    return result
 
 
 def timing_table(binary: Path, standard: str, temp: Path) -> dict[str, int]:
@@ -71,19 +63,20 @@ def simulate(binary: Path, standard: str, requests: int, seed: int,
                "--pattern", "random", "--read-ratio", "100", "--inject-interval", "2",
                "--seed", str(seed), "--max-cycles", "100000000"]
     command += extra or []
-    completed = subprocess.run(command, cwd=ROOT, text=True, stdout=subprocess.PIPE,
-                               stderr=subprocess.PIPE, check=False)
-    if completed.returncode:
-        raise RuntimeError(f"sensitivity run failed:\n{completed.stdout}{completed.stderr}")
-    stats = parse_stats(completed.stdout)
+    stats, _ = run_simulator(command, cwd=ROOT)
     if stats.get("hit_cycle_limit", "true").lower() != "false":
         raise RuntimeError("sensitivity run hit cycle limit")
-    return {
+    result = {
         "latency_ticks": float(stats["avg_read_latency"]),
         "throughput_GBps": float(stats["achieved_bw_GBps"]),
-        "energy_pJ": float(stats["power_energy_pJ"]),
-        "peak_temperature_C": float(stats["thermal_peak_temp_C"]),
     }
+    # Timing-only reference cases disable these models. Their old diagnostic
+    # zeroes were not measurements and must not appear as sensitivity results.
+    if stats["power_model_enabled"] == "true":
+        result["energy_pJ"] = float(stats["power_energy_pJ"])
+    if stats["thermal_model_enabled"] == "true":
+        result["peak_temperature_C"] = float(stats["thermal_peak_temp_C"])
+    return result
 
 
 def quantile(values: list[float], probability: float) -> float:
@@ -212,7 +205,7 @@ def main() -> int:
         })
 
     report = {
-        "schema_version": 1,
+        "schema_version": 2,
         "scope": "oat_timing_sensitivity_and_bounded_input_uncertainty",
         "parameters": list(PARAMETERS), "fraction": args.fraction,
         "requests": args.requests, "seed": args.seed,
