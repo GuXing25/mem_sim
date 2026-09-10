@@ -1,5 +1,11 @@
 # 测试
 
+配置/标准口径回归新增：LPDDR6 BL24 的速度分档与读写边界，REFdb 刷新行计数器
+的 S/L 边界、两轮推进、重复 Bank 拒绝、REFab/SREFEX 同步及跨 SC/Rank 隔离。
+在线 Controller 生成的 REFdb 轮转还需通过独立 validator，不能只检查参数表。
+`timing_boundary_tests` 单独隔离静态表项后，另用完整状态输出 S/L 证据行；
+`result_contract` 检查参考夹具容量、首尾地址数据闭环及越界拒绝。
+
 结果精简回归：`result_value_tests` 检查 C++ 整数精度、JSON 转义、null、非有限值拒绝及
 迟到错误覆盖成功状态；`result_contract` 检查四标准、三后端/两 PHY、直接修改标准段、
 容量联动、ns 单位、默认/summary 一致性、诊断显式选择与历史结果读取。

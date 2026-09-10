@@ -106,6 +106,12 @@ tick_duration_ps = tCK_ps / tick_multiplier
 HBM 的 ranks=1 是中性软件维度，不表示标准定义了可自由堆叠的 Rank 层。
 bank_groups/banks_per_group 属于逻辑 PC/SID/rank 范围，不是整 die 的 bank 总数。
 
+`columns` 在所有配置中都表示事务槽，不因验证用途改变单位。HBM4 BL8 的 32 个槽
+恰好对应 JESD270-4A Table 4 的 CA[4:0]，不能笼统说它“不是原始列地址数”。
+HBM4 8Hi 的每 SID 2 BG × 2 SID = 每 PC 4 BG，与 Table 5 的 PC 口径一致。
+4/8/12/16Hi→1/2/3/4 SID 是 HBM4 标准组织关系；12Hi 缺少 Ramulator 预设，
+不等于缺少 JEDEC 依据。HBM3/LPDDR5 的本次核对来自外部源码，未取得对应 JEDEC 原文。
+
 | 修改项 | 自动变化 | 仍需自己确认 |
 |---|---|---|
 | rows、columns、BG、bank、PC、SID、rank、channel | 几何容量、折算 density；channel/PC 可影响默认总位宽 | 地址映射、热位置、刷新分支；不自动补成厂商组织 |
@@ -195,7 +201,7 @@ density_gb = auto
 | `strict_timing_table` | 禁止未校准的必要默认值 | 目标器件参数齐备后应设为 true |
 | `data_rate_mbps` | Mb/s/pin，外部每 pin 数据率 | 主输入；触发时钟和速度档联动，见第 2 节 |
 | `data_bus_bits` | 每实例接口总位宽，bit | 省略时派生；显式研究位宽须符合模型合法性 |
-| `prefetch_size` | 内部预取/BL 相关组织 | 谨慎；标准相关 |
+| `prefetch_size` | 保留的内部预取/BL 相关身份字段 | 当前不自动推导 transaction、columns 或 nBL；不要把改它当作切换突发模式 |
 | `line_size` | host line byte | 可；可拆 transaction |
 | `dram_transaction_bytes` | 单 RD/WR payload byte | 可；必须满足 burst/总线组织 |
 | `tck_ps` | 时钟周期 ps | 谨慎；应由速度档推导 |
@@ -206,7 +212,7 @@ density_gb = auto
 | `ranks` | 每 PC/SC/SID 下的软件 rank 维度 | HBM 通常为 1；非 1 是研究扩展，影响容量 |
 | `bank_groups` | 每 PC/SC、SID、rank 下的 BG 数 | 标准相关；REFdb 要求可配对 |
 | `banks_per_group` | 每 BG bank 数 | 标准相关 |
-| `rows`、`columns` | bank 行列数 | 可，需与密度/transaction 对齐 |
+| `rows`、`columns` | 每 Bank 行数、每行事务槽数 | columns × transaction_bytes 是行容量；外部原始 column 需先换算 |
 | `full_stack_model` | 使用完整 stack 组织口径 | 可；不等于 stack_count>1 |
 
 <a id="appendix-a-3"></a>
@@ -259,13 +265,19 @@ density_gb = auto
 
 上表已经注明 canonical key；长短名称指向同一字段，配置中保持一种写法即可。
 
+配置与默认 PHY 统一记录 `dfi_version=6.0.1`；这是来源标签，不是版本功能开关。
+`dfi_phase_count` 仍用于事件 phase 的取模；已移除的适配器内部 `dfi_phases` 没有消费者，
+不能将它的删除理解为取消相位配置。signal-like CSV 保留项目历史名称，
+`dfi_cs_n/dfi_reset_n/dfi_wrdata_mask` 等不等同于规范的
+`dfi_cs/dfi_reset/dfi_wrdata_dbi_mask` 端口；address/bank/cke/odt 也不是规范 CA packing。
+
 <a id="appendix-a-5"></a>
 
 ### 3.5 Refresh、RFM、低功耗和协议模式
 
 | 配置键 | 含义 | 说明 |
 |---|---|---|
-| `refresh_policy` | per_bank/all_bank | 选择 REFpb/REFab 维护策略 |
+| `refresh_policy` | per_bank/all_bank | 项目枚举；LPDDR6 的 per_bank 实际选择 REFdb 双 Bank 刷新，标准没有 REFpb 命令 |
 | `refresh_temperature_mode` / `--refresh-temperature` | normal/high/extended | 刷新温度模式 |
 | `refresh_high_temp_multiplier` | 高温刷新频率倍率，正整数 | 越大则刷新间隔越短；与器件温度档核对 |
 | `refresh_postpone_limit` | 最大延后 | 策略参数 |
@@ -347,7 +359,7 @@ density_gb = auto
 | 参数 | JEDEC 风格含义 | 项目当前实现/公式 | 适用与校准影响 |
 |---|---|---|---|
 | `tCK_ps` | CK 周期，所有基于时间的约束换算基准 | ns/us 覆盖先按该值向上换算；调度再乘 `tick_multiplier` | 改速度档时由主输入推导它，再展开时间项；错误会成比例影响所有延迟和带宽时间基准 |
-| `nBL` | burst 占用的 CK 数/列总线数据窗口 | 参与 `read_latency=nCL+nBL`、写恢复 `nCWL+nBL+nWR`、同类 RD/WR 间隔和 DFI beat 完成；不逐 beat 模拟 DQ 电气波形 | 四标准都使用；它是项目调度占用量，不应直接当作 JEDEC 文本中的 BL 编码值 |
+| `nBL` | burst 占用的 CK 数/列总线数据窗口 | 参与 `read_latency=nCL+nBL`、写恢复 `nCWL+nBL+nWR`、同类 RD/WR 间隔和 DFI beat 完成；不逐 beat 模拟 DQ 电气波形 | LPDDR6 BL24、WCK:CK=2 时为 6 CK，不再随低速档变为 4；不等于 BL 编码值 |
 | `nCL` | Read Latency/CAS read latency：读命令到首批有效读数据 | 读完成简化为 `nCL+nBL`；LPDDR RD→WR 还使用 `nCL+nBL+2-nCWL` | speed-bin/mode/vendor 相关；增大通常提高读延迟并拉长读写换向 |
 | `nCWL` | Write Latency/CAS write latency：写命令到写数据 | WR→PRE 使用 `nCWL+nBL+nWR`；WR→RD 使用 `nCWL+nBL+nWTRS`；PHY 默认写延迟也可由它派生 | speed-bin/mode/vendor 相关；影响写完成后可预充和总线换向 |
 
@@ -387,6 +399,11 @@ density_gb = auto
 
 #### 3.6.7 LPDDR WCK、CAS 和命令间隔
 
+LPDDR6 BL24 的不同 BG 列间隔 `nCCDS=6`；同 BG 的 `nCCDL` 按 Table 382
+的速率上界分档：≤6400→6、≤8533→8、≤10667→10、≤12800→12 CK。
+超过 12800 Mb/s 保留 12 CK 研究回退并标为 research_default，不声称已有标准依据。
+此规则不表示支持 BL48 全部模式，也不自动校准 RL/WL、WCK training 或 DVFS。
+
 | 参数 | JEDEC 风格含义 | 项目当前实现 | 适用与边界 |
 |---|---|---|---|
 | `nWCK2CK` | WCK 与 CK 同步后到可使用 WCK/数据命令的等待 | CAS_RD/CAS_WR/WCK sync 后设置 `wck_ready_at`；always-on 模式通常为 0 | LPDDR5/6；影响按需 WCK 的首访问延迟 |
@@ -403,17 +420,21 @@ density_gb = auto
 | 参数 | JEDEC 风格含义 | 项目当前实现/作用域 | 校准影响 |
 |---|---|---|---|
 | `nRFC` | all-bank refresh cycle time | HBM PseudoChannel 或 LPDDR Rank 的 REFab→ACT/PRE/REF 恢复；RFMab 为 0 时也可回退使用 | 密度/温度相关；决定 all-bank 维护停顿 |
-| `nRFCpb` | per-bank refresh cycle time | Bank scope REFpb/REFdb→ACT；RFMpb 为 0 时回退使用 | per-bank 刷新可与其他 bank 交错，作用域必须正确 |
+| `nRFCpb` | HBM/LPDDR5 per-bank、LPDDR6 dual-bank 恢复时间 | REFdb 对两个目标 Bank 都约束 ACT1/后续 REFdb；RFMpb 为 0 时回退使用 | LPDDR6 字段沿用内部名称，不表示存在 REFpb 命令 |
 | `nRFMab` | all-bank RFM 占用/恢复时间 | RFMab 后在 PseudoChannel/Rank scope 阻塞 ACT/PRE/RFMpb；为 0 时回退 `nRFC` | 仅启用 RFM 时有意义；阈值策略与时序应分开校准 |
 | `nRFMpb` | per-bank RFM 占用/恢复时间 | Bank scope RFMpb→ACT；为 0 时回退 `nRFCpb` | 影响高 ACT 压力场景的维护损失 |
 | `nRREFD` | refresh 到后续 ACT/refresh 的附加间隔 | HBM REFpb 在 PseudoChannel scope 到 ACT；LPDDR6 可作为 REFdb→ACT fallback | 不等同 `nRFCpb`；一个是共享 scope 间隔，一个是目标 bank 占用 |
 | `nREFDB2ACT` | LPDDR6 dual-bank refresh 后到 ACT 的恢复 | PseudoChannel scope REFdb/RFMpb→ACT1；为 0 时依次回退 `nRREFD/nRRDS` | LPDDR6 专用，应从对应 REFdb 表获取 |
-| `nREFDB2REFDBS` | REFdb 到下一次 short-pair REFdb 间隔 | Bank scope REFdb→REFdb 的目标短间隔；REFdb 的 partner 由“相同 BA + 相邻 BG pair（0↔1、2↔3）”集中解码 | 与 long 间隔分开配置；必须使用偶数 `bank_groups>=2` |
-| `nREFDB2REFDBL` | REFdb 到下一次 long-pair REFdb 间隔 | PseudoChannel scope REFdb→REFdb；当前 scheduler 对任意连续 REFdb 保守施加该 long gate，因而可能覆盖短 gate | 这是公开资料不完整时的保守口径；获得完整 bank-pair 表后应改为条件关系 |
+| `nREFDB2REFDBS` | 同一刷新行/计数器内、不同 Bank 对的间隔 | 每 Subchannel/SID/Rank 重放计数；本轮尚未覆盖全部 Bank 时，下一次 REFdb 用 S | JESD209-6 §7.6.1/7.6.2；一轮完成前不得重复 Bank |
+| `nREFDB2REFDBL` | 不同刷新行/计数器之间的间隔 | 完成 Bank 数/2 次 REFdb 后，下一次用 L；REFab、自刷新退出同步计数 | 标准 16 Bank 为 8 次一轮；其他几何是研究推广，不再无条件施加 L |
 | `nREFI` | all-bank refresh 的平均调度周期 | RefreshManager 在 all-bank policy 下生成 refresh 到期点，并受温度倍率影响 | 它不是 refresh 占用时长；减半会提高维护频率 |
 | `nREFIpb` | per-bank/轮转 refresh 的调度周期 | per-bank policy 优先使用；为 0 时回退 `nREFI` | 与 bank rotation、stack height、温度模式相关 |
 
 #### 3.6.9 Mode、低功耗、ECC 和 RAS
+
+REFdb 当前仅支持相同 BA、相邻 BG（0↔1、2↔3）的固定配对，不支持任意 dBG 编码。
+显式维护 trace 也应完整轮转或用 REFab/自刷新同步；单纯等待不能使同一轮重复 Bank 合法。
+计数在命令实际发出时推进，而不是在维护请求入队时推进；在线与离线分别维护状态。
 
 | 参数 | JEDEC 风格含义 | 项目当前实现/作用域 | 校准边界 |
 |---|---|---|---|

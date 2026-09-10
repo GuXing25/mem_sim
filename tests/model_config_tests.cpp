@@ -2,6 +2,7 @@
 #include "hbm_sim/dram/jedec.hpp"
 #include "hbm_sim/core/system.hpp"
 #include "hbm_sim/core/data.hpp"
+#include "hbm_sim/controller/timing.hpp"
 #include <cmath>
 #include <iostream>
 #include <limits>
@@ -134,6 +135,42 @@ int main() {
         {"lpddr_low_data_rate_mbps", "4267"}}, 3);
     require(low.data_rate_mbps == 4267 && low.timing.nCL == 46,
             "low DVFS must resolve rate before profile selection");
+    // Independent JEDEC Table 381/382 expectations, not values copied from
+    // the generated constraint list. Test both sides of each speed boundary.
+    for (const auto [rate, same_bg] : {std::pair{4267, 6}, {6400, 6},
+         {6401, 8}, {8533, 8}, {8534, 10}, {10667, 10},
+         {10668, 12}, {12800, 12}}) {
+      const auto burst = build_model("lpddr6", {{"data_rate_mbps", std::to_string(rate)}}, 3);
+      require(burst.timing.nBL == 6 && burst.timing.nCCDS == 6 &&
+                  burst.timing.nCCDL == same_bg,
+              "LPDDR6 BL24 DQ/array timings disagree with Table 381/382");
+      DecodedAddress start{};
+      auto check_boundary = [&](Command first, Command next, DecodedAddress target,
+                                int expected_nck) {
+        TimingEngine engine(burst);
+        constexpr Cycle issued = 100;
+        engine.apply_constraints(burst, start, first, issued);
+        const Cycle ready = issued + expected_nck * burst.tick_multiplier;
+        require(!engine.constraint_ready(burst, target, next, ready - 1),
+                "LPDDR6 burst-related command allowed one tick too early");
+        require(engine.constraint_ready(burst, target, next, ready),
+                "LPDDR6 burst-related command blocked at exact boundary");
+      };
+      auto other_bg = start;
+      other_bg.bank_group = 1;
+      auto same_group = start;
+      same_group.bank = 1;
+      for (const auto command : {Command::RD, Command::WR}) {
+        check_boundary(command, command, other_bg, 6);
+        check_boundary(command, command, same_group, same_bg);
+      }
+      check_boundary(Command::WR, Command::RD, other_bg,
+                     burst.timing.nCWL + 6 + burst.timing.nWTRS);
+      check_boundary(Command::WR, Command::RD, same_group,
+                     burst.timing.nCWL + 6 + burst.timing.nWTRL);
+      check_boundary(Command::WR, Command::PREPB, start,
+                     burst.timing.nCWL + 6 + burst.timing.nWR);
+    }
     const auto disabled = build_model("lpddr6", {{"lpddr_dvfs_mode", "disabled"},
         {"data_rate_mbps", "8533"}}, 3);
     require(disabled.data_rate_mbps == 8533 && disabled.timing.nCL == 54,

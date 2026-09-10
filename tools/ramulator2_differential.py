@@ -28,7 +28,7 @@ STANDARD_CONFIG = {
         "cycle_tolerance": 2, "latency_tolerance": 2.0,
         "dimensions": {"channels": 1, "ranks": 1, "sids": 2,
                        "pseudo_channels": 2, "bank_groups": 4,
-                       "banks": 4, "columns": 32, "transaction_bytes": 32},
+                       "banks": 4, "rows": 16384, "columns": 32, "transaction_bytes": 32},
         "timing_map": {
             "nBL": "nBL", "nCL": "nCL", "nCWL": "nCWL",
             "nRCDRD": "nRCDRD", "nRCDWR": "nRCDWR", "nRP": "nRP",
@@ -48,7 +48,7 @@ STANDARD_CONFIG = {
         "cycle_tolerance": 2, "latency_tolerance": 2.0,
         "dimensions": {"channels": 1, "ranks": 1, "sids": 2,
                        "pseudo_channels": 2, "bank_groups": 2,
-                       "banks": 8, "columns": 32, "transaction_bytes": 32},
+                       "banks": 8, "rows": 16384, "columns": 32, "transaction_bytes": 32},
         "timing_map": {
             "nBL": "nBL", "nCL": "nCL", "nCWL": "nCWL",
             "nRCDRD": "nRCDRD", "nRCDWR": "nRCDWR", "nRP": "nRP",
@@ -69,7 +69,7 @@ STANDARD_CONFIG = {
         "cycle_tolerance": 8, "latency_tolerance": 2.0,
         "dimensions": {"channels": 1, "ranks": 1, "sids": 1,
                        "pseudo_channels": 1, "bank_groups": 4,
-                       "banks": 4, "columns": 1024, "transaction_bytes": 32},
+                       "banks": 4, "rows": 65536, "columns": 64, "transaction_bytes": 32},
         "timing_map": {
             "nBL": "nBL_min", "nCL": "nCL", "nCWL": "nCWL",
             "nRCDRD": "nRCD", "nRCDWR": "nRCD", "nRP": "nRP",
@@ -90,7 +90,7 @@ STANDARD_CONFIG = {
         "cycle_tolerance": 8, "latency_tolerance": 2.0,
         "dimensions": {"channels": 1, "ranks": 1, "sids": 1,
                        "pseudo_channels": 1, "bank_groups": 4,
-                       "banks": 4, "columns": 1024, "transaction_bytes": 32},
+                       "banks": 4, "rows": 65536, "columns": 64, "transaction_bytes": 32},
         "timing_map": {
             "nBL": "nBL_min", "nCL": "nRL", "nCWL": "nWL",
             "nRCDRD": "nRCDr", "nRCDWR": "nRCDw", "nRP": "nRP",
@@ -234,6 +234,26 @@ for standard, entry in payload["standards"].items():
         standard_result["timings"] = dut.timings
         standard_result["tick_multiplier"] = dut.tick_multiplier
         standard_result["level_names"] = dut.level_names
+        org, _ = dut.dram.resolve()
+        cls = type(dut.dram)
+        # Match AddrMapperBase::init: Column excludes prefetch address bits.
+        # LPDDR6 has BL24 but an address-prefetch factor of 16 and 32B payload.
+        prefetch = cls.internal_prefetch_size
+        assert org["column"] % prefetch == 0
+        tx_bytes = cls.data_payload_bytes or prefetch * org["channel_width"] // 8
+        geometry = {
+            "channels": 1, "ranks": org.get("rank", 1), "sids": org.get("sid", 1),
+            "pseudo_channels": org.get("pseudochannel", 1),
+            "bank_groups": org["bankgroup"], "banks": org["bank"],
+            "rows": org["row"], "columns": org["column"] // prefetch,
+            "transaction_bytes": tx_bytes,
+        }
+        standard_result["geometry"] = geometry
+        standard_result["column_conversion"] = {
+            "reference_columns": org["column"], "address_prefetch_factor": prefetch,
+            "transaction_columns": geometry["columns"],
+            "reference_mapper": "PassThroughAddrMapper (coordinate scenarios); normalized geometry follows AddrMapperBase",
+        }
     result["standards"][standard] = standard_result
 json.dump(result, sys.stdout)
 """
@@ -278,6 +298,16 @@ def scenarios_for(standard: str) -> dict[str, dict[str, object]]:
         scenarios["parallel_sid"] = {
             "events": [req("Read", sid=0), req("Read", sid=1)]}
     scenarios.update(MAINTENANCE_SCENARIOS[standard])
+    d = STANDARD_CONFIG[standard]["dimensions"]
+    scenarios.update({
+        "address_row_end": {"events": [req("Read", column=d["columns"] - 1)]},
+        "address_next_row": {"events": [req("Read", row=1)]},
+        "address_last_bank": {"events": [req("Read", bank_group=d["bank_groups"] - 1,
+                                             bank=d["banks"] - 1)]},
+        "address_last_transaction": {"events": [req("Read", row=d["rows"] - 1,
+            column=d["columns"] - 1, bank_group=d["bank_groups"] - 1, bank=d["banks"] - 1,
+            sid=d["sids"] - 1, pseudo_channel=d["pseudo_channels"] - 1)]},
+    })
     return scenarios
 
 
@@ -427,17 +457,17 @@ def canonical_events(standard: str, scenario_name: str,
 
 
 def read_project_timings(binary: Path, config_args: list[str], standard: str,
-                         temp: Path) -> tuple[dict[str, int], int]:
+                         temp: Path) -> tuple[dict[str, int], int, dict]:
     output = temp / (standard + "_timing.csv")
     stats, _ = run_simulator(
         [str(binary), *config_args, "--requests", "0",
-         "--dump-timing-table", str(output)], cwd=ROOT)
+         "--dump-timing-table", str(output)], cwd=ROOT, diagnostic=True)
     multiplier = count(stats, "tick_multiplier")
     if multiplier == 0:
         raise ValueError("tick_multiplier must be positive")
     with output.open(newline="", encoding="utf-8") as stream:
         rows = list(csv.DictReader(stream))
-    return {row["name"]: int(row["value_nck"]) * multiplier for row in rows}, multiplier
+    return {row["name"]: int(row["value_nck"]) * multiplier for row in rows}, multiplier, stats
 
 
 def add(checks: list[Check], name: str, passed: bool, detail: str) -> None:
@@ -471,9 +501,23 @@ def main() -> int:
             config = (args.config or meta["config"]).resolve()
             config_args = (["--config", str(config)] if args.config
                            else selection_args(standard, str(meta["preset"])))
-            project_timings, multiplier = read_project_timings(
+            project_timings, multiplier, geometry_stats = read_project_timings(
                 binary, config_args, standard, temp)
             ram = ramulator["standards"][standard]
+            dims = ram["geometry"]
+            add(checks, f"{standard}_normalized_reference_geometry",
+                dims == meta["dimensions"], f"reference={dims} fixture={meta['dimensions']}")
+            capacity = 1
+            for value in dims.values():
+                capacity *= value
+            observed_geometry = {key: count(geometry_stats, "banks_per_group" if key == "banks"
+                else "dram_transaction_bytes" if key == "transaction_bytes" else key)
+                for key in dims}
+            add(checks, f"{standard}_executed_geometry", observed_geometry == dims,
+                f"executed={observed_geometry} reference={dims}")
+            add(checks, f"{standard}_capacity_bytes",
+                count(geometry_stats, "capacity_per_instance_bytes") == capacity,
+                f"executed={count(geometry_stats, 'capacity_per_instance_bytes')} reference={capacity}")
             timing_diffs = {}
             for project_name, ram_name in meta["timing_map"].items():
                 project_value = project_timings.get(project_name)
@@ -560,6 +604,9 @@ def main() -> int:
                 "timing_mapping": meta["timing_map"], "timing_differences": timing_diffs,
                 "cycle_tolerance": args.cycle_tolerance if args.cycle_tolerance is not None
                                    else meta["cycle_tolerance"],
+                "normalized_geometry": dims,
+                "capacity_bytes": capacity,
+                "column_conversion": ram["column_conversion"],
                 "scenarios": results,
             }
 
@@ -590,7 +637,8 @@ def main() -> int:
                 "pseudo-channels; the resulting two-request mean-latency difference is 3 ticks."),
         },
         "claim_boundary": (
-            "Only aligned shared timing/address/command/controller scenarios are checked. "
+            "Normalized transaction geometry/capacity and selected shared timing/address/command/controller scenarios are checked. "
+            "Ramulator receives address vectors through PassThroughAddrMapper; this is not a full external byte-address-mapper equivalence proof. "
             "Project payload, DFI, multi-stack, power, thermal, provenance, and vendor "
             "behavior remain outside this reference comparison."),
     }

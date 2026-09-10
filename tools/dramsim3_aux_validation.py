@@ -123,6 +123,21 @@ def main() -> int:
         project_stats, _ = run_simulator(
             [str(binary), *PROJECT_SELECTION, "--trace", str(project_trace),
              "--cmd-trace", str(project_csv), "--validate-cmd-trace"], cwd=ROOT, diagnostic=True)
+        # DRAMsim3 normalizes HBM input columns by *2, then divides by BL
+        # for transaction addressing (configuration.cc InitDRAMParams /
+        # SetAddressMapping). Do not equate the raw INI count with our slots.
+        transaction_bytes = int(system["bus_width"]) // 8 * int(structure["BL"])
+        transaction_columns = int(structure["columns"]) * 2 // int(structure["BL"])
+        row_bytes = transaction_columns * transaction_bytes
+        capacity_bytes = (row_bytes * int(structure["rows"]) *
+                          int(structure["bankgroups"]) * int(structure["banks_per_group"]))
+        add(checks, "older_hbm_transaction_geometry",
+            int(project_stats["columns"]) == transaction_columns and
+            int(project_stats["dram_transaction_bytes"]) == transaction_bytes and
+            int(project_stats["capacity_per_instance_bytes"]) == capacity_bytes and
+            int(project_stats["stack_height"]) == int(structure["num_dies"]),
+            f"reference slots={transaction_columns}, transaction={transaction_bytes}B, "
+            f"row={row_bytes}B, channel capacity={capacity_bytes}B, dies={structure['num_dies']}")
         with project_csv.open(newline="", encoding="utf-8") as stream:
             project_commands = [{"cycle": int(row["cycle"]), "command": row["command"]}
                                 for row in csv.DictReader(stream)]

@@ -18,6 +18,36 @@ BINARY = Path(sys.argv.pop(1)).resolve()
 
 
 class ResultContract(unittest.TestCase):
+    def test_reference_fixture_capacity_and_last_address(self):
+        # Exercise actual cfg -> resolver -> byte-addressed backend, independently
+        # of the pass-through coordinate harness used by the external comparison.
+        cases = [('hbm3', 'ramulator2_reference_1ch', 2**30, 32, 32),
+                 ('hbm4', 'ramulator2_reference_1ch', 2**30, 32, 32),
+                 ('lpddr5', 'ramulator2_reference_1ch', 2**31, 64, 32),
+                 ('lpddr6', 'ramulator2_reference_1ch', 2**31, 64, 32),
+                 ('hbm3', 'dramsim3_hbm2_common', 2**29, 32, 64)]
+        with tempfile.TemporaryDirectory(prefix='hbm_reference_geometry_') as directory:
+            trace = Path(directory) / 'boundary.trace'
+            for standard, preset, capacity, columns, transaction in cases:
+                with self.subTest(standard=standard, preset=preset):
+                    common = [str(BINARY), '--config', str(ROOT / 'configs/validation' / f'{standard}.cfg'),
+                              '--preset', preset, '--requests', '0', '--trace', str(trace)]
+                    last = capacity - transaction
+                    first_data, last_data = '12' * transaction, '34' * transaction
+                    trace.write_text(f'0 W 0x0 data={first_data}\n1000 W {last:#x} data={last_data}\n'
+                                     f'2000 R 0x0 expect={first_data}\n3000 R {last:#x} expect={last_data}\n')
+                    stats, _ = run_simulator([*common, '--validate-cmd-trace'], cwd=ROOT, diagnostic=True)
+                    self.assertEqual(count(stats, 'capacity_per_instance_bytes'), capacity)
+                    self.assertEqual(count(stats, 'columns'), columns)
+                    self.assertEqual(count(stats, 'data_mismatches'), 0)
+                    self.assertEqual(count(stats, 'data_checked_reads'), 2)
+                    self.assertEqual(count(stats, 'completed_reads'), 2)
+                    self.assertEqual(count(stats, 'completed_writes'), 2)
+                    self.assertEqual(count(stats, 'remaining_requests'), 0)
+                    trace.write_text(f'0 R {capacity:#x}\n')
+                    invalid = subprocess.run(common, cwd=ROOT, capture_output=True, text=True, timeout=30)
+                    self.assertNotEqual(invalid.returncode, 0, 'address at capacity must be rejected')
+
     def test_hbm_template_sid_and_resolved_replay(self):
         with tempfile.TemporaryDirectory(prefix='hbm_sid_contract_') as directory:
             root = Path(directory)

@@ -1791,6 +1791,163 @@ void test_maintenance_progress_dependencies() {
           "maintenance dependency progress violated command timing");
 }
 
+void test_lpddr6_refdb_counter_boundaries() {
+  auto spec = hbm_sim::make_spec("lpddr6");
+  spec.org.channels = 1;
+  spec.org.ranks = 2;
+  set_fixture_density_from_geometry(spec);
+  const Cycle scale = spec.tick_multiplier;
+  const Cycle short_gap = spec.timing.nREFDB2REFDBS * scale;
+  const Cycle long_gap = spec.timing.nREFDB2REFDBL * scale;
+  const int pairs = spec.org.bank_groups * spec.org.banks_per_group / 2;
+  hbm_sim::TimingEngine engine(spec);
+  std::vector<IssuedCommand> trace;
+  Cycle time = 1000;
+  auto address_for = [&](int pair) {
+    DecodedAddress d;
+    d.bank_group = (pair / spec.org.banks_per_group) * 2;
+    d.bank = pair % spec.org.banks_per_group;
+    return d;
+  };
+  // Two complete sweeps: the 8th->9th interval must be L, all others S.
+  for (int i = 0; i < 2 * pairs; ++i) {
+    auto d = address_for(i % pairs);
+    if (i > 0) {
+      require(!engine.constraint_ready(spec, d, Command::REFDB, time - 1),
+              "REFdb accepted one tick before counter-dependent boundary");
+      require(engine.constraint_ready_at(spec, d, Command::REFDB) == time,
+              "REFdb ready_at disagrees with refresh-counter boundary");
+    }
+    require(engine.constraint_ready(spec, d, Command::REFDB, time),
+            "REFdb rejected at counter-dependent boundary");
+    trace.emplace_back(time, i + 1, Command::REFDB, hbm_sim::BusClass::Unified, d);
+    engine.apply_constraints(spec, d, Command::REFDB, time);
+    auto other_pc = d;
+    other_pc.pseudo_channel = 1;
+    auto other_rank = d;
+    other_rank.rank = 1;
+    require(engine.constraint_ready(spec, other_pc, Command::REFDB, time) &&
+                engine.constraint_ready(spec, other_rank, Command::REFDB, time),
+            "REFdb counters leaked across subchannels or ranks");
+    time += (i + 1) % pairs == 0 ? long_gap : short_gap;
+  }
+  require(hbm_sim::validate_command_trace(spec, trace).ok(),
+          "validator rejected legal REFdb short/long sweeps");
+  for (int bad_index : {1, pairs}) {
+    auto bad = trace;
+    --bad[bad_index].cycle;
+    require(!hbm_sim::validate_command_trace(spec, bad).ok(),
+            "validator missed an early REFdb S/L transition");
+  }
+  // REFab synchronizes a partial sweep; the following REFdb starts at count 0.
+  trace.resize(3);
+  engine.reset(spec);
+  for (const auto &event : trace)
+    engine.apply_constraints(spec, event.decoded, event.command, event.cycle);
+  time = trace.back().cycle + spec.timing.nRFCpb * scale;
+  const auto d = address_for(0);
+  trace.emplace_back(time, 100, Command::REFAB, hbm_sim::BusClass::Unified, d);
+  engine.apply_constraints(spec, d, Command::REFAB, time);
+  time += spec.timing.nRFC * scale;
+  for (int i = 0; i < pairs; ++i) {
+    auto target = address_for(i);
+    require(engine.constraint_ready(spec, target, Command::REFDB, time),
+            "REFab did not reset the partial REFdb counter");
+    trace.emplace_back(time, 101 + i, Command::REFDB, hbm_sim::BusClass::Unified, target);
+    engine.apply_constraints(spec, target, Command::REFDB, time);
+    time += short_gap;
+  }
+  require(hbm_sim::validate_command_trace(spec, trace).ok(),
+          "validator failed to synchronize REFdb counter on REFab");
+  // Both members, including the implicit partner, retain tRFCdb recovery.
+  engine.reset(spec);
+  engine.apply_constraints(spec, d, Command::REFDB, 1000);
+  const auto partner = hbm_sim::lpddr_refdb_partner(spec, d);
+  const Cycle recovery = 1000 + spec.timing.nRFCpb * scale;
+  require(!engine.constraint_ready(spec, partner, Command::ACT1, recovery - 1) &&
+              engine.constraint_ready(spec, partner, Command::ACT1, recovery),
+          "implicit REFdb partner lost tRFCdb recovery");
+  require(!engine.constraint_ready(spec, partner, Command::REFDB, recovery + long_gap),
+          "REFdb repeated a bank pair before the sweep completed");
+  std::vector<IssuedCommand> duplicate{
+      {1000, 1, Command::REFDB, hbm_sim::BusClass::Unified, d},
+      {recovery + long_gap, 2, Command::REFDB, hbm_sim::BusClass::Unified, partner}};
+  require(!hbm_sim::validate_command_trace(spec, duplicate).ok(),
+          "validator accepted a repeated bank despite a long enough time gap");
+  // SRX resets every subchannel/rank in this model's channel-level control domain.
+  auto other_pc = d;
+  other_pc.pseudo_channel = 1;
+  auto other_rank = d;
+  other_rank.rank = 1;
+  std::vector<IssuedCommand> isolated;
+  for (int sweep_step = 0; sweep_step < 2; ++sweep_step) {
+    int offset = 0;
+    for (auto target : {d, other_pc, other_rank}) {
+      target.bank = sweep_step;
+      isolated.emplace_back(1000 + sweep_step * short_gap + offset,
+                            10 + sweep_step * 3 + offset,
+                            Command::REFDB, hbm_sim::BusClass::Unified, target);
+      ++offset;
+    }
+  }
+  require(hbm_sim::validate_command_trace(spec, isolated).ok(),
+          "validator shared a REFdb counter across subchannels/ranks");
+  engine.apply_constraints(spec, other_pc, Command::REFDB, 1000);
+  engine.apply_constraints(spec, other_rank, Command::REFDB, 1000);
+  const Cycle exit = recovery + 10000;
+  engine.apply_constraints(spec, d, Command::SREFEX, exit);
+  for (const auto &target : {d, other_pc, other_rank})
+    require(engine.constraint_ready(spec, target, Command::REFDB, exit + 10000),
+            "SREFEX did not synchronize all channel-local REFdb counters");
+  std::vector<IssuedCommand> self_refresh{
+      {1000, 1, Command::REFDB, hbm_sim::BusClass::Unified, d},
+      {1001, 5, Command::REFDB, hbm_sim::BusClass::Unified, other_pc},
+      {1002, 6, Command::REFDB, hbm_sim::BusClass::Unified, other_rank},
+      {exit, 2, Command::SREFEN, hbm_sim::BusClass::Unified, d},
+      {exit + 10000, 3, Command::SREFEX, hbm_sim::BusClass::Unified, d},
+      {exit + 20000, 4, Command::REFDB, hbm_sim::BusClass::Unified, d},
+      {exit + 20001, 7, Command::REFDB, hbm_sim::BusClass::Unified, other_pc},
+      {exit + 20002, 8, Command::REFDB, hbm_sim::BusClass::Unified, other_rank}};
+  require(hbm_sim::validate_command_trace(spec, self_refresh).ok(),
+          "validator failed to reset REFdb state at self-refresh exit");
+
+  engine.reset(spec);
+  engine.apply_constraints(spec, partner, Command::PREPB, 1000);
+  const Cycle precharge_ready = 1000 + spec.timing.nRP * scale;
+  require(!engine.constraint_ready(spec, d, Command::REFDB, precharge_ready - 1) &&
+              engine.constraint_ready(spec, d, Command::REFDB, precharge_ready) &&
+              engine.constraint_ready_at(spec, d, Command::REFDB) == precharge_ready,
+          "REFdb ignored its implicit partner's precharge recovery");
+  const Cycle act2 = 100 + spec.timing.nAADMin * scale;
+  const Cycle precharge = act2 + spec.timing.nRAS * scale + 100;
+  std::vector<IssuedCommand> precharged{
+      {100, 1, Command::ACT1, hbm_sim::BusClass::Unified, partner},
+      {act2, 1, Command::ACT2, hbm_sim::BusClass::Unified, partner},
+      {precharge, 2, Command::PREPB, hbm_sim::BusClass::Unified, partner},
+      {precharge + spec.timing.nRP * scale, 3, Command::REFDB, hbm_sim::BusClass::Unified, d}};
+  require(hbm_sim::validate_command_trace(spec, precharged).ok(),
+          "validator rejected exact implicit-partner precharge boundary");
+  --precharged.back().cycle;
+  require(!hbm_sim::validate_command_trace(spec, precharged).ok(),
+          "validator missed early REFdb after implicit-partner precharge");
+
+  spec.supports_refresh = false;
+  spec.supports_rfm = false;
+  Controller controller(spec);
+  for (int i = 0; i < 2 * pairs; ++i) {
+    auto target = address_for(i % pairs);
+    auto request = make_request(200 + i, RequestType::Maintenance, 0,
+                                target.bank_group, target.bank, 0);
+    request.next = Command::REFDB;
+    require(controller.enqueue(request), "failed to enqueue REFdb sweep");
+  }
+  controller.run_until_done(20000);
+  require(controller.done() && controller.stats().refdb == static_cast<std::uint64_t>(2 * pairs),
+          "online controller failed to complete two legal REFdb sweeps");
+  require(hbm_sim::validate_command_trace(spec, controller.issued_commands()).ok(),
+          "online REFdb schedule failed independent validation");
+}
+
 void test_lpddr6_refresh_manager() {
   DramSpec spec = hbm_sim::make_spec("lpddr6");
   spec.org.channels = 1;
@@ -2188,7 +2345,7 @@ void test_lpddr6_host_line_transaction_split() {
           "two 16Gb LPDDR6 subchannels should expose a 4 GiB device");
   require(
       hbm_sim::request_interface_bytes(spec) == 32,
-      "LPDDR6 link-protection-off transaction should carry 32 interface bytes");
+      "LPDDR6 protection-off accounting is 32B demand, not 36B physical DQ occupancy");
 
   hbm_sim::TrafficOptions options;
   options.pattern = "stream";
@@ -4219,6 +4376,7 @@ int main() {
 
   // 第五组：LPDDR6/LPDDR5 专用路径，包括 REFdb、PRAC/RFM、CAS/WCK 和 efficiency
   // mapping。
+  test_lpddr6_refdb_counter_boundaries();
   test_lpddr6_refresh_manager();
   test_lpddr6_dual_bank_refresh_pair();
   test_refdb_does_not_precharge_other_pseudo_channel();

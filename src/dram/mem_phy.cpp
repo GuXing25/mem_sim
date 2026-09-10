@@ -66,7 +66,6 @@ PhyCommandEncoding HbmPhyAdapter::encode(const DramSpec& spec,
                                          Command command,
                                          BusClass bus) const {
   PhyCommandEncoding result;
-  result.dfi_phases = std::max(1, spec.dfi_phase_count);
   result.row_path = bus == BusClass::Row || command_meta(command).row_command;
   result.column_path = bus == BusClass::Column || command_meta(command).column_command;
   // HBM 的行为级 CA 摘要按 edge-pairing 模式表达半拍，否则每命令一条 CA edge。
@@ -74,12 +73,11 @@ PhyCommandEncoding HbmPhyAdapter::encode(const DramSpec& spec,
   return result;
 }
 
-PhyCommandEncoding LpddrPhyAdapter::encode(const DramSpec& spec,
+PhyCommandEncoding LpddrPhyAdapter::encode(const DramSpec&,
                                            Command command,
                                            BusClass bus) const {
   (void)bus;
   PhyCommandEncoding result;
-  result.dfi_phases = std::max(1, spec.dfi_phase_count);
   result.row_path = command_meta(command).row_command;
   result.column_path = command_meta(command).column_command;
   // LPDDR 的 CA 命令按 double-data-rate edge 摘要；split ACT 明确保留 ACT1/ACT2。

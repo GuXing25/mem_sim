@@ -1420,6 +1420,7 @@ bool Controller::timing_ok(const Request &req, Command cmd) const {
            clk_ >= row.next_row && timing_engine_.faw_ready(spec_, req.decoded);
   case Command::REFDB:
     return dual_bank_target_idle(req.decoded) && clk_ >= bank.next_act &&
+           clk_ >= banks_[lpddr_refdb_partner(spec_, req.decoded).flat_bank(spec_)].next_act &&
            clk_ >= row.next_row && timing_engine_.faw_ready(spec_, req.decoded);
   case Command::RFMPB:
     return !bank.activating && bank.open_row < 0 && clk_ >= bank.next_act &&

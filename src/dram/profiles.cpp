@@ -496,7 +496,10 @@ void apply_lpddr6_profile(DramSpec& spec, double resolved_tck_ps) {
   spec.lpddr_link_protection = link_protection;
   spec.lpddr_link_ecc_enabled = spec.lpddr_link_ecc_enabled || link_protection;
   spec.lpddr_ca_parity_enabled = ca_parity_requested;
-  spec.timing.nBL = speed >= 10000 ? 6 : 4;
+  // JESD209-6 Table 381: a BL24 DQ burst is 6 CK at every rate
+  // (24 UI / (2 edges * WCK:CK=2)). This is NOT the same-BG array
+  // cycle, which is selected separately from Table 382 below.
+  spec.timing.nBL = 6;
   spec.timing.nCL = speed >= 10000 ? 62 : (speed >= 8533 ? 54 : 46);
   spec.timing.nCWL = speed >= 10000 ? 26 : (speed >= 8533 ? 22 : 18);
   spec.timing.nRCDRD = jedec::max_ns_or_nck(core.rcd_read, 2, spec.timing.tCK_ps);
@@ -508,8 +511,10 @@ void apply_lpddr6_profile(DramSpec& spec, double resolved_tck_ps) {
   spec.timing.nRC = spec.timing.nRAS + spec.timing.nRP;
   spec.timing.nRTP = spec.timing.nBL + jedec::ns_to_nck(core.rtp_tail, spec.timing.tCK_ps);
   spec.timing.nWR = jedec::max_ns_or_nck(core.wtp, 6, spec.timing.tCK_ps);
-  spec.timing.nCCDS = speed >= 10000 ? 6 : 4;
-  spec.timing.nCCDL = speed >= 10000 ? 10 : 8;
+  spec.timing.nCCDS = 6;
+  // Table 382 BL24 limits are inclusive at the upper data-rate bound.
+  spec.timing.nCCDL = speed <= 6400 ? 6 : speed <= 8533 ? 8
+                                      : speed <= 10667 ? 10 : 12;
   spec.timing.nRRDS = jedec::max_ns_or_nck(3.75, 4, spec.timing.tCK_ps);
   spec.timing.nRRDL = spec.timing.nRRDS;
   spec.timing.nFAW = 4 * spec.timing.nRRDS;
@@ -600,6 +605,13 @@ void apply_lpddr6_profile(DramSpec& spec, double resolved_tck_ps) {
             "JESD209-6 p396 Tables 366/367: tRFMab=5*80ns, tRFMpb=5*70ns; independent of tRFC density lookup.");
   mark_many(spec, {"nAADMin"}, TimingValueSource::Derived,
             "Project ACT1/ACT2 scheduling granularity, not the JEDEC tAAD maximum deadline.");
+  mark_many(spec, {"nBL", "nCCDS"}, TimingValueSource::JEDEC,
+            "JESD209-6 Table 381: BL24 minimum DQ transfer / different-BG column interval = 6 CK; not BL48 or BL/n_max.");
+  mark_many(spec, {"nCCDL"}, speed <= 12800 ? TimingValueSource::JEDEC
+                                          : TimingValueSource::ResearchDefault,
+            speed <= 12800
+                ? "JESD209-6 Table 382: BL24 same-BG column interval at the selected data rate."
+                : "Beyond Table 382's 12800 Mb/s range: retained 12-CK research fallback, not a verified high-rate array cycle.");
   { // A vendor_profile name alone is not calibration evidence.
     mark_many(spec, {"nWCK2CK", "nWCKPST", "nCAS", "nWCKSYNC", "nWCKTRAIN",
                      "nDVFS", "nMRW", "nMRR", "nPDEX", "nSREFEX"},

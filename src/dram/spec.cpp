@@ -168,10 +168,9 @@ TimingTable build_timing_table(const DramSpec &spec) {
       tv("nREFDB2ACT", t.nREFDB2ACT, lpddr6 ? jedec : derived, false,
          "LPDDR6 REFdb->ACT different-bank recovery.", lpddr6),
       tv("nREFDB2REFDBS", t.nREFDB2REFDBS, lpddr6 ? jedec : derived, false,
-         "LPDDR6 REFdb->REFdb short-pair interval.", lpddr6),
+         "LPDDR6 REFdb->REFdb interval within the same refresh-row counter.", lpddr6),
       tv("nREFDB2REFDBL", t.nREFDB2REFDBL, lpddr6 ? jedec : derived, false,
-         "LPDDR6 REFdb->REFdb long-pair interval; current scheduler uses it "
-         "conservatively.",
+         "LPDDR6 REFdb->REFdb interval across a refresh-row counter boundary.",
          lpddr6),
       tv("nREFI", t.nREFI, jedec),
       tv("nREFIpb", t.nREFIpb, jedec),
@@ -291,9 +290,6 @@ std::vector<TimingConstraint> make_hbm_constraints(const Timing &t) {
 std::vector<TimingConstraint> make_lpddr_constraints(const Timing &t) {
   const int nrefdb2act =
       t.nREFDB2ACT > 0 ? t.nREFDB2ACT : (t.nRREFD > 0 ? t.nRREFD : t.nRRDS);
-  const int nrefdb2refdbs = t.nREFDB2REFDBS > 0 ? t.nREFDB2REFDBS : t.nRRDL;
-  const int nrefdb2refdbl =
-      t.nREFDB2REFDBL > 0 ? t.nREFDB2REFDBL : nrefdb2refdbs;
   return {
       // LPDDR 当前使用统一命令总线，因此 RD/WR 首先在 Channel scope 上受 burst
       // 间隔限制；LPDDR6 preset 会把部分 scope 调到 pseudo-channel 来表达
@@ -340,6 +336,8 @@ std::vector<TimingConstraint> make_lpddr_constraints(const Timing &t) {
          t.nRCDWR, "nRCDWR"),
       tc(TimingScope::Bank, {Command::ACT1}, {Command::PREPB}, t.nRAS, "nRAS"),
       tc(TimingScope::Bank, {Command::PREPB}, {Command::ACT1}, t.nRP, "nRP"),
+      tc(TimingScope::Bank, {Command::PREPB}, {Command::REFDB}, t.nRP, "nRP"),
+      tc(TimingScope::Rank, {Command::PREAB}, {Command::REFDB}, t.nRPab, "nRPab"),
       tc(TimingScope::Bank, {Command::RD}, {Command::PREPB}, t.nRTP, "nRTP"),
       tc(TimingScope::Bank, {Command::WR}, {Command::PREPB},
          t.nCWL + t.nBL + t.nWR, "nCWL+nBL+nWR"),
@@ -353,10 +351,14 @@ std::vector<TimingConstraint> make_lpddr_constraints(const Timing &t) {
          t.nRFMpb > 0 ? t.nRFMpb : t.nRFCpb, "nRFMpb_or_nRFCpb"),
       tc(TimingScope::PseudoChannel, {Command::REFDB}, {Command::ACT1},
          nrefdb2act, "nREFDB2ACT"),
-      tc(TimingScope::Bank, {Command::REFDB}, {Command::REFDB}, nrefdb2refdbs,
-         "nREFDB2REFDBS"),
-      tc(TimingScope::PseudoChannel, {Command::REFDB}, {Command::REFDB},
-         nrefdb2refdbl, "nREFDB2REFDBL"),
+      // S/L selection depends on the refresh-row bank counter, not the
+      // addressed bank. TimingEngine and the independent validator replay it.
+      tc(TimingScope::Bank, {Command::REFDB}, {Command::REFDB}, t.nRFCpb,
+         "nRFCpb"),
+      tc(TimingScope::Rank, {Command::REFDB}, {Command::REFAB}, t.nRFCpb,
+         "nRFCpb"),
+      tc(TimingScope::Rank, {Command::REFAB}, {Command::REFDB, Command::REFAB},
+         t.nRFC, "nRFC"),
       tc(TimingScope::PseudoChannel, {Command::RFMPB}, {Command::ACT1},
          nrefdb2act, "nREFDB2ACT"),
       tc(TimingScope::PseudoChannel, {Command::RFMPB}, {Command::RFMPB},
