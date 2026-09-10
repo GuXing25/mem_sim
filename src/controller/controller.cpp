@@ -190,10 +190,10 @@ bool Controller::enqueue(Request req) {
       stats_.read_forwards++;
       bool initialized = true;
       ByteVector initialized_mask;
-      const PhysicalStorageStats storage_before =
-          memory_image_->storage_stats();
+      const EccStatusCounters storage_before =
+          memory_image_->ecc_status_counters();
       req.payload = read_forward_payload(req, &initialized, &initialized_mask);
-      const PhysicalStorageStats storage_after = memory_image_->storage_stats();
+      const EccStatusCounters storage_after = memory_image_->ecc_status_counters();
       req.response_ecc_corrected = storage_after.ecc_corrected_errors >
                                    storage_before.ecc_corrected_errors;
       req.response_ecc_uncorrectable = storage_after.ecc_uncorrectable_errors >
@@ -734,11 +734,11 @@ Controller::complete_read(Request &req,
     ecc_corrected = phy_completion->ecc_corrected;
     ecc_uncorrectable = phy_completion->ecc_uncorrectable;
   } else {
-    const PhysicalStorageStats storage_before = memory_image_->storage_stats();
+    const EccStatusCounters storage_before = memory_image_->ecc_status_counters();
     actual = memory_image_->read(req.address, size, &initialized, &storage);
     initialized_mask = memory_image_->read_initialized_mask(
         req.address, actual.size(), &storage);
-    const PhysicalStorageStats storage_after = memory_image_->storage_stats();
+    const EccStatusCounters storage_after = memory_image_->ecc_status_counters();
     ecc_corrected = storage_after.ecc_corrected_errors >
                     storage_before.ecc_corrected_errors;
     ecc_uncorrectable = storage_after.ecc_uncorrectable_errors >

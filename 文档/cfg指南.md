@@ -109,7 +109,7 @@ bank_groups/banks_per_group 属于逻辑 PC/SID/rank 范围，不是整 die 的 
 |---|---|---|
 | rows、columns、BG、bank、PC、SID、rank、channel | 几何容量、折算 density；channel/PC 可影响默认总位宽 | 地址映射、热位置、刷新分支；不自动补成厂商组织 |
 | stack_count | 实例和控制器数量、总容量、理论总带宽 | 每实例文件、工作集分布、注入压力 |
-| stack_height | HBM density 分摊、物理 layer 映射 | 不自动改变 sids，也不自动扩大逻辑容量 |
+| stack_height | HBM 在 SID 为 auto/未指定时先推导 SID，再计算容量、density 和物理 layer | 显式整数 SID 保持不变；非支持层数需显式研究组织 |
 | data_rate_mbps | speed_bin、tCK、profile 中时间项展开 | 用户显式 nCK 不会自动保持原 ns；RL/WL 需目标模式表 |
 | LPDDR5 lpddr_wck_ratio | CK 换算；允许 2 或 4 | 速率与模式有效性 |
 | LPDDR6 lpddr_wck_ratio | 当前仅实现 2:1 | 其他比例会拒绝，不能视为自由连续参数 |
@@ -119,12 +119,19 @@ bank_groups/banks_per_group 属于逻辑 PC/SID/rank 范围，不是整 die 的 
 | memory_capacity_bytes | 设置后端地址上限；0 使用几何容量 | 不改 DRAM 几何；输入必须同时落在几何与后端范围内 |
 | thermal 网格、chunk 缓存 | 热离散或宿主缓存成本 | 不改变 DRAM 逻辑容量 |
 
-仅 speed_bin_mbps、data_rate_mbps、density_gb、tck_ps、data_bus_bits 支持此处的 auto
+仅 speed_bin_mbps、data_rate_mbps、density_gb、tck_ps、data_bus_bits、sids 支持此处的 auto
 输入机制。不要给任意 timing 或算法写 auto。`dram_transaction_bytes=0`、
 DFI 中约定的 0 是各自的默认推导约定，不等于通用 auto。
 
 显式 density/speed/tCK 与推导值冲突会报错；tCK 允许整数 ps 表的有限舍入容差。
 显式 data_bus_bits 可作为独立研究位宽，不强制等于默认位宽公式，但仍受合法性校验。
+HBM 的 SID 自动规则只覆盖本模型支持的 4/8/12/16Hi 组织；其他层数必须填写显式正整数
+SID，不能凭取整获得“标准组织”。显式 SID 不随层数变化，也不表示厂商组织已认证。
+例如 HBM4 主模板从 8Hi 改为 16Hi、保持 `sids=auto` 和其他几何不变，SID 2→4、
+每 Stack 容量 32→64 GiB、折算每 die 密度仍为 32 Gibit；若同时显式 `sids=2`，
+则容量仍为 32 GiB、密度变为 16 Gibit。刷新参数按现有 Timing 规则使用最终密度/层数。
+新建模型省略 SID 可随指定层数推导；库对已有模型仅覆盖无关字段时保留现有 SID，
+需要重新按当前层数选择时显式传入 `sids=auto`。配置快照导出具体整数以固定重放组织。
 联动不是“所有看起来有关系的参数都会自动改”：实际逻辑见
 [resolve_coupled_inputs / apply_coupled_model](../src/config/model.cpp)。
 
@@ -183,7 +190,7 @@ density_gb = auto
 | `timing_override_source` | vendor/jedec/external_reference/research_default/derived | 按所在段绑定；顺序不影响同段来源，默认 research_default |
 | `speed_bin_mbps` | Timing 速率选择，Mb/s/pin | schema 3 通常省略，跟随 data_rate_mbps；冲突时报错 |
 | `density_gb` | Gibit；HBM 按平均每 die，LPDDR 按每子通道/rank | 所有版本均由几何推导，可为小数；显式值须与推导值一致 |
-| `stack_height` | 物理 die 层数 | 影响物理映射和密度分摊；不在逻辑容量乘积外再次乘入，不自动改变 SID |
+| `stack_height` | 物理 die 层数 | HBM 自动 SID 的主输入；影响物理映射和密度分摊，不在逻辑容量乘积外再次乘入 |
 | `strict_timing_table` | 禁止未校准的必要默认值 | 目标器件参数齐备后应设为 true |
 | `data_rate_mbps` | Mb/s/pin，外部每 pin 数据率 | 主输入；触发时钟和速度档联动，见第 2 节 |
 | `data_bus_bits` | 每实例接口总位宽，bit | 省略时派生；显式研究位宽须符合模型合法性 |
@@ -194,7 +201,7 @@ density_gb = auto
 | `tick_multiplier` | 模拟 tick 与 CK 比例 | 谨慎；影响所有 nCK 解释 |
 | `channels` | 每 stack channel 数 | 可；需与 profile/容量一致 |
 | `pseudo_channels` | 每 channel 的 PC/SC 数 | HBM 称 PC，LPDDR 称 subchannel |
-| `sids` | 每 PC 下独立寻址的 SID 数量 | HBM 逻辑维度，不等同物理 die 数；LPDDR 通常为 1 |
+| `sids` | 每 PC 下独立寻址的 SID 数量 | auto 时 HBM 4/8/12/16Hi→1/2/3/4；LPDDR→1；显式正整数固定研究组织 |
 | `ranks` | 每 PC/SC/SID 下的软件 rank 维度 | HBM 通常为 1；非 1 是研究扩展，影响容量 |
 | `bank_groups` | 每 PC/SC、SID、rank 下的 BG 数 | 标准相关；REFdb 要求可配对 |
 | `banks_per_group` | 每 BG bank 数 | 标准相关 |
@@ -525,7 +532,7 @@ LPDDR ACT1 → RD/WR    = nRCDRD / nRCDWR（绝对 gate）
 | `dfi_signal_trace` | DFI-like signal CSV 路径 |
 | `dump_timing_table` | 最终 timing CSV |
 | `memory_image` | 初始 image |
-| `dump_memory_image` | 最终文本镜像；持久二进制 payload 由 memory_data_file 指定 |
+| `dump_memory_image` | 最终镜像按扩展名选择格式：`.csv` 为明细表，`.bin` 为可重载二进制 checkpoint，其他扩展名为文本镜像；与 `memory_data_file` 指定的持久后端文件不是同一种格式 |
 | `dump_memory_csv` | 最终 CSV image |
 | `verify_golden` | 仿真后 golden 校验 |
 | `mismatch_report` | 不匹配报告 |

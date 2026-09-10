@@ -18,6 +18,110 @@ BINARY = Path(sys.argv.pop(1)).resolve()
 
 
 class ResultContract(unittest.TestCase):
+    def test_hbm_template_sid_and_resolved_replay(self):
+        with tempfile.TemporaryDirectory(prefix='hbm_sid_contract_') as directory:
+            root = Path(directory)
+            config = root / 'copy.cfg'
+            config.write_text((ROOT / 'configs/hbm.cfg').read_text().replace(
+                'stack_height = 8', 'stack_height = 16'))
+            snapshot, first, replay = root / 'resolved.cfg', root / 'first.json', root / 'replay.json'
+            for standard, capacity in (('hbm3', 32 * 2**30), ('hbm4', 64 * 2**30)):
+                trace = root / 'sid.trace'
+                trace.write_text(f'W 0x0 data=12\nW {capacity - 32:#x} data=34\n'
+                                 f'R 0x0 expect=12\nR {capacity - 32:#x} expect=34\n')
+                common = [str(BINARY), '--standard', standard, '--requests', '0', '--trace', str(trace),
+                          '--validate-cmd-trace', '--validate-dfi-trace']
+                run = subprocess.run([*common, '--config', str(config), '--stats-json', str(first),
+                                      '--dump-resolved-config', str(snapshot)],
+                                     cwd=ROOT, capture_output=True, text=True, timeout=30)
+                self.assertEqual(run.returncode, 0, run.stderr)
+                a = json.loads(first.read_text())
+                self.assertEqual(a['run_status'], 'completed')
+                self.assertEqual(a['model']['sids'], 4)
+                self.assertEqual(a['model']['capacity_per_instance_bytes'], capacity)
+                self.assertEqual(a['validation']['cmd_validation'], 'pass')
+                self.assertEqual(a['validation']['dfi_validation'], 'pass')
+                self.assertEqual(a['validation']['data_checked_reads'], 2)
+                self.assertEqual(a['validation']['data_mismatches'], 0)
+                self.assertRegex(snapshot.read_text(), r'(?m)^sids = 4$')
+                run = subprocess.run([*common, '--config', str(snapshot), '--stats-json', str(replay)],
+                                     cwd=ROOT, capture_output=True, text=True, timeout=30)
+                self.assertEqual(run.returncode, 0, run.stderr)
+                b = json.loads(replay.read_text())
+                for key in ('model', 'metrics', 'validation'):
+                    self.assertEqual(a[key], b[key], key)
+
+    def test_profile_index_matches_resolved_model(self):
+        with tempfile.TemporaryDirectory(prefix='hbm_index_contract_') as directory:
+            resolved = Path(directory) / 'resolved.cfg'
+            with (ROOT / 'configs/profile_index.csv').open(newline='') as stream:
+                rows = list(csv.DictReader(stream))
+            self.assertTrue(rows)
+            for row in rows:
+                with self.subTest(config=row['config'], preset=row['preset']):
+                    arguments = [str(BINARY), '--config', row['config'], '--standard',
+                                 row['standard'].lower(), '--check-config',
+                                 '--dump-resolved-config', str(resolved)]
+                    if row['preset']:
+                        arguments += ['--preset', row['preset']]
+                    run = subprocess.run(arguments, cwd=ROOT, text=True, capture_output=True, timeout=20)
+                    self.assertEqual(run.returncode, 0, run.stderr)
+                    text = resolved.read_text()
+                    for key in ('speed_bin_mbps', 'density_gb', 'stack_height'):
+                        values = re.findall(r'^' + key + r' = (.+)$', text, re.M)
+                        self.assertEqual(len(values), 1, (key, values))
+                        self.assertAlmostEqual(float(row[key]), float(values[0]), places=8,
+                                               msg=f'{key} index must describe the executed model')
+                    self.assertIn('reference_model', row)
+
+    def test_default_hbm4_row_reuse_includes_routed_channel(self):
+        # Independent address calculation: before 2048 transactions, the XOR
+        # routed channel makes every bank/row distinct despite repeated columns.
+        def keys(hosts):
+            result = []
+            for transaction in range(hosts * 2):
+                remainder = transaction // 32
+                bank, remainder = remainder % 8, remainder // 8
+                bg, remainder = remainder % 2, remainder // 2
+                pc, remainder = remainder % 2, remainder // 2
+                sid, remainder = remainder % 2, remainder // 2
+                channel = (transaction ^ (transaction >> 6) ^ (transaction >> 12)) % 32
+                result.append((channel, pc, sid, bg, bank, remainder // 32))
+            return result
+        self.assertEqual(len(set(keys(1024))), 2048)
+        self.assertEqual(len({key[1:] for key in keys(1024)}), 64)
+        self.assertEqual(len(set(keys(2048))), 2048)
+        with tempfile.TemporaryDirectory(prefix='hbm_row_hit_contract_') as directory:
+            output = Path(directory) / 'result.json'
+            for requests in (1024, 2048):
+                run = subprocess.run([str(BINARY), '--config', 'configs/hbm.cfg', '--standard',
+                                      'hbm4', '--requests', str(requests), '--stats-json', str(output)],
+                                     cwd=ROOT, text=True, capture_output=True, timeout=30)
+                self.assertEqual(run.returncode, 0, run.stderr)
+                metrics = json.loads(output.read_text())['metrics']
+                self.assertEqual(metrics['dram_transactions'], requests * 2)
+                if requests == 1024:
+                    self.assertEqual(metrics['row_hit_pct'], 0)
+                else:
+                    # Geometry predicts 50% address reuse, not the exact row-hit
+                    # statistic: refresh and first-scheduling state also matter.
+                    self.assertGreater(metrics['row_hit_pct'], 0)
+                    self.assertLessEqual(metrics['row_hit_pct'], 50)
+
+    def test_lpddr_default_density_and_neutral_sid(self):
+        with tempfile.TemporaryDirectory(prefix='lpddr_default_contract_') as directory:
+            output = Path(directory) / 'result.json'
+            for standard, capacity in (('lpddr5', 2**31), ('lpddr6', 2**32)):
+                run = subprocess.run([str(BINARY), '--config', 'configs/lpddr.cfg', '--standard',
+                                      standard, '--requests', '8', '--stats-json', str(output)],
+                                     cwd=ROOT, text=True, capture_output=True, timeout=20)
+                self.assertEqual(run.returncode, 0, run.stderr)
+                model = json.loads(output.read_text())['model']
+                self.assertEqual(model['capacity_per_instance_bytes'], capacity)
+                self.assertEqual(model['density_gb'], 16)
+                self.assertNotIn('sids', model)
+                self.assertNotIn('Nominal density_gb differs', run.stdout)
+
     def test_shared_text_parser(self):
         import model_validation
         import ramulator2_differential

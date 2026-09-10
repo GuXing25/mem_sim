@@ -261,7 +261,7 @@ ResolvedModelInputs resolve_coupled_inputs(const DramSpec& baseline,
   // Only documented dependent fields accept auto. A typo or a meaningless auto
   // on a protocol/algorithm field must reach the normal strict parser and fail.
   const std::set<std::string> dependent{
-      "speed_bin_mbps", "data_rate_mbps", "data_bus_bits", "density_gb", "tck_ps"};
+      "speed_bin_mbps", "data_rate_mbps", "data_bus_bits", "density_gb", "tck_ps", "sids"};
   for (const auto& [key, value] : inputs) {
     if (!dependent.contains(key)) result.overrides.emplace_back(key, value);
   }
@@ -313,7 +313,28 @@ ResolvedModelInputs resolve_coupled_inputs(const DramSpec& baseline,
   auto& org = geometry.org;
   org.channels = positive_int("channels", org.channels);
   org.pseudo_channels = positive_int("pseudo_channels", org.pseudo_channels);
-  org.sids = positive_int("sids", org.sids);
+  if (!automatic("sids")) {
+    // An explicit SID is an independent research-geometry input, not a value
+    // to overwrite with the default height mapping.
+    org.sids = positive_int("sids", org.sids);
+  } else if (explicit_values.contains("sids") || explicit_values.contains("stack_height")) {
+    if (baseline.lpddr_family) {
+      org.sids = 1;
+    } else {
+      const int height = positive_int("stack_height", baseline.stack_height);
+      // Supported HBM organization convention, not arbitrary-height rounding
+      // or a claim that every corresponding device/timing table is available.
+      if (height != 4 && height != 8 && height != 12 && height != 16)
+        throw std::invalid_argument("automatic HBM sids requires stack_height 4, 8, 12 or 16; "
+                                    "set explicit sids for a research organization");
+      org.sids = height / 4;
+    }
+    result.derived.push_back({"sids", std::to_string(org.sids),
+        baseline.lpddr_family ? "LPDDR neutral SID = 1"
+                              : "supported HBM organization: stack_height / 4"});
+  }
+  // Without a height/SID input, preserve an already-configured baseline's
+  // geometry (e.g. a library caller applying only a timing override).
   org.ranks = positive_int("ranks", org.ranks);
   org.bank_groups = positive_int("bank_groups", org.bank_groups);
   org.banks_per_group = positive_int("banks_per_group", org.banks_per_group);
@@ -328,7 +349,7 @@ ResolvedModelInputs resolve_coupled_inputs(const DramSpec& baseline,
   const auto capacity = geometry.addressable_capacity_bytes();
   if (capacity == 0) throw std::invalid_argument("DRAM geometry capacity overflow");
   // Freeze the very geometry used above. Profile expansion must not silently
-  // replace an omitted SID/row dimension when stack_height or speed changes.
+  // replace the resolved SID/row dimensions when stack_height or speed changes.
   for (const auto& [key, value] : std::initializer_list<std::pair<const char*, int>>{
            {"channels", org.channels}, {"pseudo_channels", org.pseudo_channels},
            {"sids", org.sids}, {"ranks", org.ranks}, {"bank_groups", org.bank_groups},

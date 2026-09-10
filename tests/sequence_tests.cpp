@@ -10,6 +10,7 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <map>
 #include <memory>
 #include <set>
 #include <sstream>
@@ -3216,6 +3217,113 @@ void test_passive_multistack_memory_model_isolation() {
           "passive multi-stack model accepted an invalid stack_id");
 }
 
+void test_thermal_neighbor_state_and_coordinates() {
+  char directory[] = "/tmp/hbm_thermal_contract_XXXXXX";
+  require(mkdtemp(directory) != nullptr, "cannot create thermal test directory");
+  const std::string path = std::string(directory) + "/map.txt";
+  using Row = std::map<std::string, std::string>;
+  auto read_map = [&]() {
+    std::ifstream input(path);
+    std::vector<std::string> header;
+    std::vector<Row> rows;
+    for (std::string line; std::getline(input, line);) {
+      if (line.rfind("# stack layer", 0) == 0) {
+        std::istringstream fields(line.substr(2));
+        for (std::string key; fields >> key;) header.push_back(key);
+      } else if (!line.empty() && line[0] != '#') {
+        std::istringstream fields(line);
+        Row row;
+        for (const auto& key : header) {
+          require(static_cast<bool>(fields >> row[key]), "short thermal row");
+        }
+        rows.push_back(std::move(row));
+      }
+    }
+    require(!rows.empty(), "empty thermal map");
+    return rows;
+  };
+  auto total_excess = [&]() {
+    double total = 0;
+    for (const auto& row : read_map()) total += std::stod(row.at("temperature_c")) - 40;
+    return total;
+  };
+  for (bool vertical : {false, true}) {
+    for (double cooling : {0.0, 0.01}) {
+      hbm_sim::StorageModelOptions options;
+      options.thermal_cooling_per_cycle = cooling;
+      options.thermal_rise_c_per_pj = 0.01;
+      options.floorplan_enabled = !vertical;
+      options.thermal_lateral_coupling = vertical ? 0 : 0.1;
+      options.thermal_vertical_coupling = vertical ? 0.1 : 0;
+      options.thermal_tsv_coupling_scale = 0;
+      options.act_energy_pj = 1000;
+      hbm_sim::MemoryImage image(hbm_sim::make_spec(vertical ? "hbm4" : "lpddr5"), 0, options);
+      DecodedAddress source{};
+      image.record_command_event(Command::ACT, source, 10);
+      // With all nodes relaxed to the same time, pairwise coupling must only
+      // redistribute temperature; first direct access must retain preheating.
+      image.advance_thermal(20);
+      image.dump_thermal_text(path);
+      const double before = total_excess();
+      const auto nodes = read_map();
+      require(std::any_of(nodes.begin(), nodes.end(), [&](const Row& node) {
+        return std::stoi(node.at("layer")) == (vertical ? 1 : 0) &&
+               std::stoi(node.at("thermal_x")) == (vertical ? 0 : 1) &&
+               std::stoi(node.at("thermal_y")) == 0 &&
+               std::stoi(node.at("events")) == 0 &&
+               std::stod(node.at("temperature_c")) > 40;
+      }), "first-access test must target a preheated coupling-only node");
+      source.bank = 1;
+      image.record_command_event(Command::ACT, source, 20);
+      image.dump_thermal_text(path);
+      require(std::abs(total_excess() - before - 10) < 0.001,
+              "first direct event discarded an existing neighbor's temperature");
+    }
+  }
+  for (const char* standard : {"hbm3", "hbm4", "lpddr5", "lpddr6"}) {
+    for (bool floorplan : {false, true}) {
+      auto spec = hbm_sim::make_spec(standard);
+      hbm_sim::StorageModelOptions options;
+      options.stack_id = 2;
+      options.floorplan_enabled = floorplan;
+      options.thermal_grid_cols_per_tile = 2;
+      options.thermal_grid_rows_per_tile = 3;
+      hbm_sim::MemoryImage image(spec, 0, options);
+      DecodedAddress source{};
+      source.row = spec.org.rows - 1;
+      source.column = spec.org.columns - 1;
+      image.record_command_event(Command::ACT, source, 10);
+      image.dump_thermal_text(path);
+      bool neighbor_seen = false, vertical_seen = false, cross_tile_seen = false;
+      for (const auto& row : read_map()) {
+        auto n = [&](const char* key) { return std::stoi(row.at(key)); };
+        require(n("stack") == 2 && n("thermal_z") == n("layer"), "thermal stack/layer mismatch");
+        require(n("thermal_x") == n("tile_x") * 2 + n("grid_x") &&
+                    n("thermal_y") == n("tile_y") * 3 + n("grid_y"), "neighbor tile/grid mismatch");
+        require(n("grid_x") >= 0 && n("grid_x") < 2 && n("grid_y") >= 0 && n("grid_y") < 3,
+                "invalid local thermal grid");
+        require(n("tile_id") == (n("layer") * (n("thermal_rows") / 3) + n("tile_y")) *
+                    (n("thermal_cols") / 2) + n("tile_x"), "neighbor tile ID mismatch");
+        if (n("events") == 0) {
+          neighbor_seen = true;
+          vertical_seen |= n("layer") != 0;
+          cross_tile_seen |= n("tile_x") != 0 || n("tile_y") != 0;
+          require(row.at("address_kind") == "coupling_only" && n("ch") == -1 && n("bank") == -1,
+                  "coupling-only node must not impersonate a source DRAM address");
+        } else {
+          require(row.at("address_kind") == "direct_event" && n("ch") == 0,
+                  "direct node lost its representative address");
+        }
+      }
+      require(neighbor_seen, "coupling test did not create a neighbor");
+      require(spec.lpddr_family || vertical_seen, "HBM test missed vertical coupling");
+      require(!floorplan || cross_tile_seen, "test missed cross-tile coupling");
+    }
+  }
+  std::remove(path.c_str());
+  std::remove(directory);
+}
+
 void test_floorplan_power_and_thermal_model() {
   const std::string thermal_path = "/tmp/hbm_sim_thermal_map.txt";
   DramSpec spec = hbm_sim::make_spec("hbm4");
@@ -3443,6 +3551,8 @@ void test_tsv_thermal_coupling_and_ecc_shadow() {
   hbm_sim::ByteVector payload = hbm_sim::parse_hex_bytes("0011223344556677");
 
   image.write(address, payload, nullptr, &decoded, 1700, 5);
+  const auto ecc_before = image.ecc_status_counters();
+  static_assert(noexcept(image.ecc_status_counters()));
   bool initialized = false;
   hbm_sim::ByteVector actual =
       image.read(address, payload.size(), &initialized, &decoded);
@@ -3453,6 +3563,13 @@ void test_tsv_thermal_coupling_and_ecc_shadow() {
   image.record_command_event(Command::RD, decoded, 20, 64);
   hbm_sim::PhysicalStorageStats stats = image.storage_stats();
   hbm_sim::PhysicalAddress physical = image.physical_address(address, &decoded);
+
+  const auto ecc_after = image.ecc_status_counters();
+  require(ecc_before.ecc_corrected_errors == 0 &&
+              ecc_after.ecc_corrected_errors == 1 &&
+              ecc_after.ecc_corrected_errors == stats.ecc_corrected_errors &&
+              ecc_after.ecc_uncorrectable_errors == stats.ecc_uncorrectable_errors,
+          "lightweight ECC snapshot differs from full storage statistics");
 
   require(stats.ecc_injected_errors == 1 && stats.ecc_checked_reads >= 1 &&
               stats.ecc_corrected_errors == 1 &&
@@ -4137,6 +4254,7 @@ int main() {
   test_all_bank_refresh_covers_every_pc_and_sid();
   test_passive_multistack_memory_model_isolation();
   test_floorplan_power_and_thermal_model();
+  test_thermal_neighbor_state_and_coordinates();
   test_dramsim3_idd_power_and_grid_thermal();
   test_tsv_thermal_coupling_and_ecc_shadow();
   test_memory_image_row_buffer_writeback();

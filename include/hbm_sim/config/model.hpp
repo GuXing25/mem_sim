@@ -20,6 +20,8 @@ struct ResolvedModelInputs {
 // The shared resolver derives redundant inputs, but never synthesizes a vendor RL/WL table.
 // The caller supplies a protocol baseline; explicit dependent values are checked
 // against their determinants. Omission and 'auto' request derivation, not zero.
+// HBM SID follows supported heights when height is supplied or SID is 'auto';
+// explicit SID remains independent. Unrelated partial updates preserve baseline SID.
 ResolvedModelInputs resolve_coupled_inputs(const DramSpec& baseline,
                                          const ModelOverrides& inputs);
 

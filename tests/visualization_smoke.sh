@@ -30,6 +30,19 @@ python3 "$vis_source/tools/visualize.py" \
   --out "$vis_tmp_dir/dashboard.html"
 
 test -s "$vis_tmp_dir/dashboard.html"
+python3 - "$vis_source" "$vis_tmp_dir/thermal.txt" <<'PY'
+from pathlib import Path
+import sys
+sys.path.insert(0, str(Path(sys.argv[1]).resolve() / 'tools'))
+from visualize import read_thermal
+nodes = read_thermal([Path(sys.argv[2])])
+assert nodes and any(n['address_kind'] == 'direct_event' for n in nodes)
+assert any(n['address_kind'] == 'coupling_only' for n in nodes)
+for node in nodes:
+    if node['address_kind'] == 'coupling_only':
+        assert node['channel'] == -1 and node['bank'] == -1
+        assert node['events'] == 0
+PY
 grep -q "Offline validation dashboard" "$vis_tmp_dir/dashboard.html"
 grep -q "Trace explorer" "$vis_tmp_dir/dashboard.html"
 grep -q "Request swimlanes" "$vis_tmp_dir/dashboard.html"

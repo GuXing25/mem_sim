@@ -6,6 +6,11 @@
 两者纳入 CTest，`make result-test` 也同时运行。专项 smoke 使用 diagnostic，不要求
 普通结果保留所有内部键；可视化和 Demo 使用分区 JSON。
 
+`result_contract` 逐行核对 `profile_index.csv` 与解析后的速率/密度/层数，区分外部型号
+和实际执行参数；另验证默认 HBM4 1024/2048 Host 请求的行复用，以及 LPDDR 的几何密度
+与中性 SID 隐藏。`sequence_tests` 覆盖热节点预热保留、四标准邻居坐标和未知地址标记，
+并核对常数时间 ECC 计数快照与最终完整存储统计一致。
+
 当前测试覆盖不只检查程序能否运行，也守住真实存储区语义：payload 写读、read-forward、masked write、row buffer writeback、多 controller storage placement、txt/bin checkpoint、file-backed backend、burst trace、golden initialized-mask 验证和 command/DFI validation 都应在测试中有入口。
 
 `sequence_tests` 还覆盖异步 frontend 响应：request-ready 反压重试、Controller
@@ -23,6 +28,8 @@ transaction completion、64 B host request 的多子事务重组、多 Stack 路
 - `sequence_tests.cpp`：C++ 命令序列测试，检查关键命令展开、timing 和 validator 行为。
 - `timing_boundary_tests.cpp`：枚举 active TimingConstraint，生成 `t-1/t` 和 scope 边界矩阵。
 - `config_tests.cpp` / `model_config_tests.cpp`：配置分层、所有 schema 共用最新联动、矛盾/溢出拒绝、来源与刷新表回归；覆盖库级密度/时钟/nRC 校验及内部单 Channel 视图。
+  SID 回归覆盖 HBM 4/8/12/16Hi 自动/省略/显式选择、容量和密度、非法层数/数值拒绝、
+  LPDDR 中性 SID，以及库部分覆盖不改变现有研究 SID；Timing 继续使用原有选择逻辑。
 - `scheduler_contract_tests.cpp`：普通 FRFCFS 的 ready/arrival 共同契约，5,000 组候选集与独立参考选择器比较。
 - `refactor_tests.cpp`：严格数值解析、普通字段和全部 Timing 别名的类型/单位回环、
   来源顺序无关性、队列容量和 active 所有权；四标准 × 三种响应视图 × 两种 PHY
@@ -44,7 +51,7 @@ transaction completion、64 B host request 的多子事务重组、多 Stack 路
 
 ## 测试分层
 
-默认 CTest 当前有 18 个入口（可用 `ctest --test-dir build-clang-debug -N` 查看实际清单），包括：
+默认 CTest 当前有 19 个入口（可用 `ctest --test-dir build-clang-debug -N` 查看实际清单），包括：
 
 - `smoke.sh`：黑盒测试，运行真实 CLI，检查主要配置、输出字段、trace dump、validator 和工具脚本。
 - `sequence_tests.cpp`：白盒/半白盒测试，直接构造请求或命令序列，检查具体命令展开和状态规则。

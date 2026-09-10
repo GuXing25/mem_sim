@@ -24,6 +24,10 @@ Timing 来源按文档/section 绑定到字段，不能随扫描顺序跨段传�
 
 所有版本共用 `resolve_coupled_inputs()`，在 profile 展开前核对几何、密度、速率和
 时钟；`apply_spec_overrides()` 对失败覆盖保持调用方原对象不变。
+HBM 的 `sids=auto` 按支持的 4/8/12/16Hi 组织选择 1/2/3/4，在容量和密度推导之前完成；
+指定层数但省略 SID 时采用同一规则。其他层数需显式正整数 SID，不做截断猜测。
+LPDDR auto 使用中性 SID=1。显式 SID 保留为研究几何，不能据此宣称标准器件一致。
+库对现有模型的部分覆盖若没有层数/SID 输入，会保留现有 SID；显式 auto 可重新选择。
 `model_config_tests` 检查小容量、部分 channel、分数密度、溢出、nRC 边界及旧版输入的同一契约。
 
 普通字段的配置导出和结果记录使用同一 typed getter；Timing 字段使用同一

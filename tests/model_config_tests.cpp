@@ -1,6 +1,7 @@
 #include "hbm_sim/config/model.hpp"
 #include "hbm_sim/dram/jedec.hpp"
 #include "hbm_sim/core/system.hpp"
+#include "hbm_sim/core/data.hpp"
 #include <cmath>
 #include <iostream>
 #include <limits>
@@ -50,9 +51,59 @@ int main() {
     auto one_channel = build_model("hbm4", {{"channels", "1"}}, 3);
     require(one_channel.data_bus_bits == 64, "HBM interface width must follow channels");
     const auto taller = build_model("hbm4", {{"stack_height", "16"}}, 3);
-    require(taller.org.sids == 2 && taller.density_gb == 16 &&
-            taller.addressable_capacity_bytes() == build_model("hbm4", {}, 3).addressable_capacity_bytes(),
-            "changing physical height must not silently change the chosen logical SID dimension");
+    require(taller.org.sids == 4 && taller.density_gb == 32 &&
+            taller.addressable_capacity_bytes() == 2 * build_model("hbm4", {}, 3).addressable_capacity_bytes(),
+            "omitted SID must resolve before capacity and density");
+    for (const char* standard : {"hbm3", "hbm4"}) {
+      for (int schema : {1, 2, 3}) {
+        const auto base = build_model(standard, {}, schema);
+        for (int height : {4, 8, 12, 16}) {
+          const auto text = std::to_string(height);
+          const auto automatic = build_model(standard, {{"stack_height", text}, {"sids", "auto"}}, schema);
+          const auto omitted = build_model(standard, {{"stack_height", text}}, schema);
+          const auto explicit_sid = build_model(standard, {{"stack_height", text},
+              {"sids", std::to_string(height / 4)}}, schema);
+          require(automatic.org.sids == height / 4 && omitted.org.sids == automatic.org.sids,
+                  "HBM auto/omitted SID height mapping failed");
+          require(automatic.addressable_capacity_bytes() * 8 == base.addressable_capacity_bytes() * height &&
+                      automatic.density_gb == base.density_gb,
+                  "SID capacity/density coupling failed");
+          require(automatic.timing.nRFC == explicit_sid.timing.nRFC &&
+                      automatic.timing.nCL == base.timing.nCL,
+                  "SID resolution must reuse existing timing selection unchanged");
+          AddressMapper mapper(automatic);
+          const Address last = automatic.addressable_capacity_bytes() - automatic.transaction_bytes();
+          const auto first_decoded = mapper.decode(0);
+          const auto last_decoded = mapper.decode(last);
+          require(last_decoded.sid == automatic.org.sids - 1,
+                  "last SID must be reachable through the resolved address space");
+          MemoryImage image(automatic);
+          image.write(0, ByteVector{0x12}, nullptr, &first_decoded);
+          image.write(last, ByteVector{0x34}, nullptr, &last_decoded);
+          require(image.read(0, 1, nullptr, &first_decoded) == ByteVector{0x12} &&
+                      image.read(last, 1, nullptr, &last_decoded) == ByteVector{0x34},
+                  "resolved SID storage addresses must not alias");
+        }
+        const auto fixed = build_model(standard, {{"stack_height", "16"}, {"sids", "2"}}, schema);
+        require(fixed.org.sids == 2 && fixed.density_gb == base.density_gb / 2,
+                "explicit research SID must be retained");
+        auto partial = fixed;
+        apply_spec_overrides(partial, {{"ncl", "80"}});
+        require(partial.org.sids == 2, "unrelated partial override changed existing research SID");
+        apply_spec_overrides(partial, {{"sids", "auto"}});
+        require(partial.org.sids == 4 && partial.density_gb == base.density_gb,
+                "explicit auto must reselect SID on a configured model");
+        for (const char* invalid : {"0", "-1", "1.5", "unknown"})
+          rejects([&] { build_model(standard, {{"sids", invalid}}, schema); });
+        rejects([&] { build_model(standard, {{"stack_height", "10"}}, schema); });
+        rejects([&] { build_model(standard, {{"stack_height", "10"}, {"sids", "auto"}}, schema); });
+        require(build_model(standard, {{"stack_height", "10"}, {"sids", "2"}}, schema).org.sids == 2,
+                "nonstandard height must allow explicit research geometry");
+      }
+    }
+    for (const char* standard : {"lpddr5", "lpddr6"})
+      require(build_model(standard, {{"sids", "auto"}, {"stack_height", "8"}}).org.sids == 1,
+              "LPDDR auto SID must stay neutral, not use HBM height mapping");
     auto lp5 = build_model("lpddr5", {{"lpddr_wck_ratio", "2"}}, 3);
     require(std::abs(lp5.timing.tCK_ps - 625.0) < 1e-9, "LPDDR5 ratio clock coupling failed");
     require(fast.timing.nRFC == jedec::ns_to_nck(450.0, fast.timing.tCK_ps),
