@@ -20,17 +20,18 @@ mkdir -p experiments/local outputs/cfg_example
 cp configs/hbm.cfg experiments/local/my_model.cfg
 # 编辑副本，选择 [model] base_standard 和下面需要的输入项
 ./build-clang-debug/hbm_sim --config experiments/local/my_model.cfg \
-  --check-config --dump-resolved-config outputs/cfg_example/resolved.cfg \
-  --dump-timing-table outputs/cfg_example/timing.csv
+  --check-config --dump-resolved-config outputs/cfg_example/resolved.cfg
 ./build-clang-debug/hbm_sim --config experiments/local/my_model.cfg \
-  --requests 128 --stats-json outputs/cfg_example/result.json
+  --requests 128 --stats-json outputs/cfg_example/result.json \
+  --dump-timing-table outputs/cfg_example/timing.csv
 ```
 
 只有确实要新建副本时才执行 cp；不要覆盖已有实验。LPDDR 同理，替换复制源即可。
 `--check-config` 检查实际选中的参数组合，不运行请求；通过后仍需小规模数据和时序回归。
 最终默认值来自“内置标准 profile + 当前配置 + 选择的 section”，不要把模板中省略的字段当成零。
 `resolved.cfg` 是可重载的生效快照，不是适合继续改少量主参数的简洁模板：
-它展开了派生值，再改几何或速率时也需要省略相应派生字段或设为 auto。
+它展开了派生值，再改几何或速率时也需要省略相应派生字段；只有 2.2 列出的字段支持 auto，
+普通 Timing 不支持 auto。
 
 ### 1.1 分节、选择和优先级
 
@@ -322,6 +323,7 @@ density_gb = auto
 
 以下 canonical key 均可由 profile 或配置覆盖。这里的解释同时给出 JEDEC 风格含义和
 项目当前真正使用它的方式；两者不完全相同时，以“项目实现”列为准。
+首次修改请先看 [3.6.12：Timing 修改操作清单](#timing-editing)，再查下面的参数字典。
 
 #### 3.6.1 参考依据与声明边界
 
@@ -439,8 +441,9 @@ LPDDR ACT1 → ACT2     = [nAADMin, nAADMax]
 LPDDR ACT1 → RD/WR    = nRCDRD / nRCDWR（绝对 gate）
 ```
 
-因此做参数敏感性时一次只改变一个字段，也要说明它参与了哪些组合约束。`nRC`、`nRPab` 等
-派生项应与基础项保持物理一致，不能分别填入互相矛盾的值。
+以上主要是运行时等待/完成条件，不是配置字段的自动赋值表。例如改 nCWL 会改变
+`nCWL+nBL+nWR` 的结果，但不会因此自动改写 nWR。配置阶段的补推规则见 3.6.12；
+不能把 nRPab 当成必然跟随 nRP 的派生项。参数敏感性实验需同时记录发生变化的组合约束。
 
 #### 3.6.11 单位别名和逐项替换方法
 
@@ -463,6 +466,104 @@ LPDDR ACT1 → RD/WR    = nRCDRD / nRCDWR（绝对 gate）
 6. 对每个被 Controller 使用的核心约束执行 `t-1` 禁止、`t` 允许；
 7. 运行 same/different BG、读写换向、tFAW、refresh/RFM 和低功耗序列；
 8. 最后才用 `--strict-timing-table` 作为器件数值配置门槛。
+
+<a id="timing-editing"></a>
+
+#### 3.6.12 Timing 修改操作清单
+
+本节描述当前实现的使用契约，不是尚未实现的自动推导方案。普通用户不需要填写整张
+Timing 表：复制主模板，先选协议、组织、速率和模式，再覆盖本次实验确实要改变的项。
+HX 等研究用例已有大量显式 Timing，不能把它们当作“只改速率、其余均自动匹配”的模板。
+
+**先分清四件事**
+
+- 基准展开：未指定的 Timing 来自所选协议及其工作点；可能是表值、公式值或研究默认值，
+  不保证每个速率/组织组合都有对应器件资料。
+- 单位换算：`nCL=36` 固定 CK 数，`tRCD_RD_ns=15` 固定时间；改变 CK 后，前者实际时间改变，
+  后者重新换算周期。二者不是相同含义的“锁定”。
+- 配置补推：仅对实现明确支持、且没有显式输入的目标字段执行，例如修改 nRAS/nRP 后补推 nRC。
+- 运行时组合：控制器使用最终参数计算等待，例如 `nCWL+nBL+nWR`；不是自动改写三个输入。
+
+`[dram.timing] source=research_default` 只声明本段自定义 Timing 的来源，不开启自动推导，
+也不会把所有未填写的基准项统一改成该来源。派生值若依赖研究值，仍可能标为
+research_default，而不是仅凭 source 是否为 derived 判断有没有经过计算。
+
+**按修改目标选择输入**
+
+下表的“显式”包含所选基准段、preset、覆盖段和 CLI 的有效输入，不限于正在编辑的这一段。
+
+| 要修改的内容 | 建议填写 | 当前自动处理 | 不会自动替你完成的事 |
+|---|---|---|---|
+| 速率、组织、SID、模式 | 修改相应主输入，省略不需要固定的 Timing | 重选/展开未覆盖的基准 Timing，换算时间项；容量和密度按最终组织计算 | 不生成缺失的厂商 RL/WL；已有显式 nCK 不会自动保持原 ns |
+| 读写延迟与 burst 占用 | nCL、nCWL、nBL 中需要研究的项 | 运行时读完成、写恢复、换向组合使用最终值 | 不据此自动重填 nWR、nWTRS、nRTW；nBL 也不是任意的 Host burst 字节数 |
+| 行激活/保持/预充 | nRCDRD、nRCDWR、nRAS、nRP，或对应时间别名 | 显式修改 nRAS 或 nRP，且 nRC 未显式指定时，补推 nRC=nRAS+nRP | 改 RCD 不会自动推导 RAS；nRPab 不会因覆盖 nRP 而自动同步 |
+| 独立 row-cycle / all-bank PRE | nRC、nRPab 或各自时间别名 | 保留显式值；当前校验要求 nRC≥nRAS+nRP | 不会把较大的合法 nRC 强改成等式，也不推断 nRPab 的器件值 |
+| 列间隔、换向、激活窗口 | nCCDS/nCCDL/nCCDR、nWTRS/nWTRL/nRTW、nRRDS/nRRDL/nFAW | 各命令 scope 和组合约束使用最终值 | 改短间隔不会自动改长间隔；不根据 nRRD 自动构造 nFAW |
+| 刷新恢复 | nRFC/nRFCpb 或 tRFCab_ns/tRFCpb_ns | 非 LPDDR6：显式改 RFC 且对应 RFM 未显式指定时，按项目默认跟随；LPDDR6 RFM 保持独立 | 改 RFC 不会自动重算刷新间隔 REFI；RFC=RFM 不是通用标准定律 |
+| 刷新周期、轮转间隔 | nREFI/nREFIpb 或相应时间别名 | 使用最终输入进行维护调度 | 显式改 REFI 后不会自动按比例改 REFIpb；需结合实际刷新策略核对 |
+| ACT 两阶段窗口 | nAADMin、nAADMax | split-ACT 模式检查最早/最晚窗口，拒绝倒置窗口 | 不会将最晚 deadline 当成最小等待；不会据此自动修改 RCD |
+| WCK、DVFS、低功耗、MR、RAS 等 | 字典中对应的独立 Timing 项 | 对已实现并启用的命令/模式使用这些延迟 | 不推导真实训练结果，也不保证仅修改数值就启用了该功能 |
+
+DFI 延迟和 PHY pipeline 属于 3.4 的另一组配置。它们的默认/0 值语义不能套到普通
+Timing：`nRC=auto`、`nCL=auto` 当前均不支持。要让未指定的 Timing 使用基准或补推，
+应删除/注释其所有有效显式输入，而不是填 0。支持 auto 的字段清单见 2.2。
+
+**修改位置与冲突处理**
+
+1. 普通模型在已有 `[dram.timing]` 内修改；集中实验差异也可写在已有 `[override]`。
+   不要重复新建同名 section。前者的 source 不代替后者的来源声明；后者用
+   `timing_override_source=research_default` 说明其 Timing 来源。
+2. 检查后面的覆盖段、所选 preset 和命令行是否又给了同一项。相同字段的优先级覆盖，
+   与“同一 Timing 同时用 nCK 和 ns 输入”不同：后者会因单位歧义被拒绝，不能靠书写顺序解决。
+3. nRC 等目标字段只要仍有显式值，就不触发省略式补推。尤其不要从 resolved 快照开始
+   猜哪些值会自动变化：快照已经写出了具体值，适合重放，不适合保持精简联动输入。
+4. 校验失败时先看是哪条输入或约束冲突，不要通过修改 source 标签绕过。
+   校验通过也不等于所有物理关系均已覆盖，更不等于器件校准通过。
+
+**两个可操作的修改例子**
+
+例一：复制 HBM 主模板后，在已有 `[dram.timing]` 中设置以下研究值，确认其他激活段
+没有 nRC/tRC_ns 覆盖：
+
+```ini
+[dram.timing]
+source = research_default
+nRAS = 80
+nRP = 40
+# 省略 nRC：当前实现得到 120 nCK。
+# 若另有显式 nRC=125，则保留 125；若为 100，则校验失败。
+```
+
+这不是建议真实器件采用 80/40，而是演示输入契约。nRPab 不会因为这个例子自动变成 40；
+实验涉及 all-bank PRE 时应单独检查它。
+
+例二：固定 ACT 到 RD 的时间，在同一段使用下面的时间输入，不再写 nRCDRD：
+
+```ini
+tRCD_RD_ns = 15
+```
+
+以 HBM4 主输入为例，8000 Mb/s 时 CK=500 ps，得到 nRCDRD=30；9000 Mb/s 时
+CK≈444.444 ps，得到 nRCDRD=34。这里仅说明时间换算，不证明 15 ns 对两种器件都适用。
+
+**修改后怎么确认**
+
+假定副本已保存为 `experiments/local/my_model.cfg`，在仓库根目录执行：
+
+```bash
+mkdir -p outputs/timing_check
+./build-clang-debug/hbm_sim --config experiments/local/my_model.cfg \
+  --check-config --dump-resolved-config outputs/timing_check/resolved.cfg
+./build-clang-debug/hbm_sim --config experiments/local/my_model.cfg \
+  --requests 128 --validate-cmd-trace --validate-dfi-trace \
+  --dump-timing-table outputs/timing_check/timing.csv \
+  --stats-json outputs/timing_check/result.json
+```
+
+第一条只做参数检查和快照导出；当前 `--check-config` 会提前返回，不能靠给它附加
+`--dump-timing-table` 生成 Timing CSV。第二条小规模运行才生成该表及检查结果。
+查看 resolved 中最终值/派生说明、timing.csv 中的 nCK/来源/依据，再检查完成状态与
+命令/DFI 结果。小规模通过后再做目标场景；它不替代数据期望值验证或全部 Timing 边界测试。
 
 <a id="appendix-a-7"></a>
 
