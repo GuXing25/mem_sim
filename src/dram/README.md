@@ -60,9 +60,11 @@ REFdb 到 REFdb。这样数值偏保守，但不会比标准短。后续如果�
 
 ## `profiles.cpp`
 
-`profiles.cpp` 用于把 `speed_bin_mbps + density_gb + stack_height + mode_profile + vendor_profile`
-展开成一组具体参数。它适合放通用规则或经常复用的 profile。单个实验临时表格更适合放在
-`configs/hbm.cfg` 或 `configs/lpddr.cfg` 的命名 preset；仓库不再维护独立 profile `.cfg`。
+`profiles.cpp` 将速率、几何折算密度、堆叠高度和实际功能参数展开成具体时序。
+mode_profile/vendor_profile 是名称标签，不会自动生成对应功能或厂商校准证据。
+实验复制 `configs/hbm.cfg` 或 `configs/lpddr.cfg` 后在配置内覆盖时序。
+`spec.cpp` 共用密度公式并兜底校验几何/时钟/nRC 一致性，
+内部单 Channel 视图通过父 Channel 数保留完整器件密度，而不重查刷新表。
 
 ## `state.cpp`
 

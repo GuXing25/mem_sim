@@ -54,7 +54,7 @@ run_and_check() {
   grep -Eq "^power_write_pJ[[:space:]]*:" <<<"$out"
   grep -Eq "^timing_source_jedec[[:space:]]*:" <<<"$out"
   grep -Eq "^timing_profile[[:space:]]*:" <<<"$out"
-  grep -Eq "^timing_profile_file[[:space:]]*:" <<<"$out"
+  ! grep -Eq "^timing_profile_file[[:space:]]*:" <<<"$out"
   grep -Eq "^init_sequence[[:space:]]*:" <<<"$out"
   grep -Eq "^init_sequence_interval[[:space:]]*:" <<<"$out"
   grep -Eq "^speed_bin_mbps[[:space:]]*:" <<<"$out"

@@ -1,5 +1,6 @@
 #include "hbm_sim/config/model.hpp"
 #include "hbm_sim/dram/jedec.hpp"
+#include "hbm_sim/core/system.hpp"
 #include <cmath>
 #include <iostream>
 #include <limits>
@@ -62,14 +63,17 @@ int main() {
       const int rfc32[] = {400, 450, 490, 530};
       for (int density : {24, 32}) {
         const auto table = build_model("hbm4", {{"density_gb", std::to_string(density)},
-            {"stack_height", std::to_string(height)}}, 2);
+            {"stack_height", std::to_string(height)},
+            {"sids", std::to_string(height / 4)},
+            {"rows", density == 24 ? "12288" : "16384"}}, 2);
         require(table.timing.nRFC == jedec::ns_to_nck(density == 24 ? rfc24[index] : rfc32[index],
                                                      table.timing.tCK_ps),
                 "HBM4 Table 108 density/height RFC lookup failed");
       }
     }
     for (const char* family : {"hbm3", "hbm4"}) {
-      const auto unsupported = build_model(family, {{"density_gb", "7.5"}}, 2);
+      const auto unsupported = build_model(family, {{"density_gb", "7.5"},
+          {"rows", std::string(family) == "hbm3" ? "7680" : "3840"}}, 2);
       for (const auto& entry : unsupported.timing_table.entries)
         if (entry.name == "nRFC" || entry.name == "nRFCpb")
           require(entry.source == TimingValueSource::ResearchDefault,
@@ -98,10 +102,10 @@ int main() {
             "LPDDR6 RFM must not be re-derived from an explicit RFC override");
     require(build_model("lpddr6", {{"nrfmab", "1500"}}, 3).timing.nRFMab == 1500,
             "LPDDR6 independent RFM research override was lost");
-    const auto six_gb_pair = build_model("lpddr6", {{"density_gb", "3"}});
+    const auto six_gb_pair = build_model("lpddr6", {{"density_gb", "3"}, {"rows", "12288"}});
     require(six_gb_pair.timing.nRFC == jedec::ns_to_nck(210, six_gb_pair.timing.tCK_ps),
             "3Gb/subchannel must select the defined 6Gb pair row");
-    const auto missing_density = build_model("lpddr6", {{"density_gb", "12.5"}});
+    const auto missing_density = build_model("lpddr6", {{"density_gb", "12.5"}, {"rows", "51200"}});
     for (const auto& entry : missing_density.timing_table.entries)
       if (entry.name == "nRFC" || entry.name == "nRFCpb")
         require(entry.source == TimingValueSource::ResearchDefault,
@@ -112,8 +116,53 @@ int main() {
     rejects([] { build_model("hbm4", {{"data_rate_mbps", "0"}}, 3); });
     require(build_model("hbm4", {{"density_gb", "auto"}}, 3).density_gb == 32,
             "explicit auto density failed");
-    require(build_model("hbm4", {{"density_gb", "16"}}, 2).density_gb == 16,
-            "legacy schema must retain independently specified density");
+    for (int schema : {1, 2, 3}) {
+      rejects([&] { build_model("hbm4", {{"density_gb", "16"}}, schema); });
+      require(build_model("hbm4", {{"density_gb", "16"}, {"rows", "8192"}}, schema).density_gb == 16,
+              "all schemas must accept consistent geometry/density");
+      const auto clock = build_model("hbm4", {{"data_rate_mbps", "9000"}}, schema);
+      require(clock.speed_bin_mbps == 9000 &&
+              std::abs(clock.timing.tCK_ps - 4000000.0 / 9000) < 1e-9,
+              "legacy syntax must use the current clock resolver");
+      rejects([&] { build_model("hbm4", {{"nrc", "2"}}, schema); });
+      rejects([&] { build_model("hbm4", {{"nras", "80"}, {"nrp", "40"}, {"nrc", "119"}}, schema); });
+      require(build_model("hbm4", {{"nras", "80"}, {"nrp", "40"}, {"nrc", "120"}}, schema)
+                  .timing.nRC == 120, "nRC equality boundary must be accepted");
+    }
+    auto library_model = make_spec("hbm4");
+    apply_spec_overrides(library_model, {{"data_rate_mbps", "9000"}});
+    require(std::abs(library_model.timing.tCK_ps - fast.timing.tCK_ps) < 1e-9,
+            "library override path must use current clock coupling");
+    rejects([&] { apply_spec_overrides(library_model, {{"nrc", "2"}}); });
+    require(library_model.timing.nRC == fast.timing.nRC,
+            "failed overrides must not mutate the caller's spec");
+    auto invalid_row = make_spec("hbm4");
+    invalid_row.timing.nRC = 2;
+    rejects([&] { validate_spec(invalid_row); });
+    for (const char* standard : {"hbm3", "hbm4", "lpddr5", "lpddr6"}) {
+      const auto original = make_spec(standard);
+      auto invalid = original;
+      invalid.org.columns /= 2;
+      rejects([&] { validate_spec(invalid); });
+      invalid = original;
+      invalid.timing.tCK_ps += 1;
+      rejects([&] { validate_spec(invalid); });
+      invalid = original;
+      invalid.speed_bin_mbps += 1;
+      rejects([&] { validate_spec(invalid); });
+    }
+    for (const char* standard : {"hbm4", "lpddr6"}) {
+      const auto full = build_model(standard, {{"channels", "2"}});
+      const MemorySystem system(full);
+      require(system.controllers().size() == 2, "expected two internal Channel views");
+      for (const auto& controller : system.controllers()) {
+        const auto& local = controller.spec();
+        require(local.org.channels == 1 && local.density_reference_channels == 2 &&
+                local.density_gb == full.density_gb && local.timing.nRFC == full.timing.nRFC,
+                "local Channel view must preserve full-device density and refresh timing");
+        validate_spec(local);
+      }
+    }
     const auto derived_timing = build_model("hbm4", {{"nras", "80"}, {"nrp", "40"},
         {"trfcab_ns", "500"}}, 3);
     require(derived_timing.timing.nRC == 120 &&

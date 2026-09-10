@@ -402,6 +402,19 @@ DramSpec make_spec(const std::string &name) {
   return spec;
 }
 
+double density_gbit_from_geometry(double capacity_bytes, bool lpddr_family,
+                                 int stack_height, int channels,
+                                 int subchannels, int ranks) {
+  if (!std::isfinite(capacity_bytes) || capacity_bytes <= 0 ||
+      (lpddr_family ? (channels <= 0 || subchannels <= 0 || ranks <= 0)
+                    : stack_height <= 0)) {
+    throw std::invalid_argument("invalid geometry for density calculation");
+  }
+  const double count = lpddr_family
+      ? static_cast<double>(channels) * subchannels * ranks : stack_height;
+  return capacity_bytes / 134217728.0 / count;
+}
+
 void validate_spec(const DramSpec &spec) {
   // 这些检查不能只留在 CLI：DramSpec 也是公开库接口，SystemC/UCIe
   // 适配器可以绕过命令行直接构造规格。未实现的模式若在这里静默通过，
@@ -432,6 +445,30 @@ void validate_spec(const DramSpec &spec) {
     throw std::invalid_argument(
         "HBM stack_height must be > 0; LPDDR stack_height must be >= 0");
   }
+  const auto capacity = spec.addressable_capacity_bytes();
+  if (capacity == 0)
+    throw std::invalid_argument("DRAM geometry capacity overflow");
+  if (spec.density_reference_channels < 0 ||
+      (spec.density_reference_channels > 0 && spec.org.channels != 1))
+    throw std::invalid_argument("invalid channel-local density reference");
+  const int reference_channels = spec.density_reference_channels > 0
+      ? spec.density_reference_channels : spec.org.channels;
+  const double reference_capacity = static_cast<double>(capacity) *
+      reference_channels / spec.org.channels;
+  const double density = density_gbit_from_geometry(
+      reference_capacity, spec.lpddr_family, spec.stack_height,
+      reference_channels, spec.org.pseudo_channels, spec.org.ranks);
+  if (std::abs(spec.density_gb - density) > 1e-9 * std::max(1.0, density))
+    throw std::invalid_argument("density_gb conflicts with geometry-derived density; use the config model resolver after changing organization");
+  if (spec.speed_bin_mbps != spec.data_rate_mbps)
+    throw std::invalid_argument("speed_bin_mbps must equal data_rate_mbps");
+  const int ratio = spec.standard == DramStandard::Lpddr5 ? spec.lpddr_wck_ratio : 2;
+  if ((spec.standard == DramStandard::Lpddr5 && ratio != 2 && ratio != 4) ||
+      (spec.standard == DramStandard::Lpddr6 && spec.lpddr_wck_ratio != 2))
+    throw std::invalid_argument("unsupported LPDDR WCK:CK ratio");
+  const double expected_tck = 2000000.0 * ratio / spec.data_rate_mbps;
+  if (std::abs(spec.timing.tCK_ps - expected_tck) > 0.5 + 1e-9)
+    throw std::invalid_argument("tCK_ps conflicts with data_rate_mbps and protocol clock ratio (maximum rounding error 0.5 ps)");
   const std::initializer_list<std::pair<const char *, int>> non_negative = {
       {"metadata_bits_per_request", spec.metadata_bits_per_request},
       {"ecc_bits_per_request", spec.ecc_bits_per_request},
@@ -486,6 +523,10 @@ void validate_spec(const DramSpec &spec) {
     throw std::invalid_argument(
         "LPDDR REFdb adjacent-BG pair table requires an even bank_groups >= "
         "2");
+  }
+  const auto row_cycle = static_cast<std::int64_t>(spec.timing.nRAS) + spec.timing.nRP;
+  if (spec.timing.nRAS < 0 || spec.timing.nRP < 0 || spec.timing.nRC < row_cycle) {
+    throw std::invalid_argument("nRC must be >= nRAS + nRP (non-negative model row timings)");
   }
 }
 

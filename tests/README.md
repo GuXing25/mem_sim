@@ -2,7 +2,7 @@
 
 结果精简回归：`result_value_tests` 检查 C++ 整数精度、JSON 转义、null、非有限值拒绝及
 迟到错误覆盖成功状态；`result_contract` 检查四标准、三后端/两 PHY、直接修改标准段、
-容量联动、ns 单位、summary/full 一致性、诊断显式选择与历史结果读取。
+容量联动、ns 单位、默认/summary 一致性、诊断显式选择与历史结果读取。
 两者纳入 CTest，`make result-test` 也同时运行。专项 smoke 使用 diagnostic，不要求
 普通结果保留所有内部键；可视化和 Demo 使用分区 JSON。
 
@@ -22,9 +22,13 @@ transaction completion、64 B host request 的多子事务重组、多 Stack 路
 - `smoke.sh`：端到端 CLI smoke regression。
 - `sequence_tests.cpp`：C++ 命令序列测试，检查关键命令展开、timing 和 validator 行为。
 - `timing_boundary_tests.cpp`：枚举 active TimingConstraint，生成 `t-1/t` 和 scope 边界矩阵。
-- `config_tests.cpp` / `model_config_tests.cpp`：配置分层、schema 3 联动、矛盾/溢出拒绝、来源与刷新表回归。
+- `config_tests.cpp` / `model_config_tests.cpp`：配置分层、所有 schema 共用最新联动、矛盾/溢出拒绝、来源与刷新表回归；覆盖库级密度/时钟/nRC 校验及内部单 Channel 视图。
 - `scheduler_contract_tests.cpp`：普通 FRFCFS 的 ready/arrival 共同契约，5,000 组候选集与独立参考选择器比较。
-- `result_tests.py`：摘要/完整 JSON 一致性、错误与截断、配置快照重放、四标准×三后端×两 PHY 的小几何数据回归，以及单 Stack 文件名展开。
+- `refactor_tests.cpp`：严格数值解析、普通字段和全部 Timing 别名的类型/单位回环、
+  来源顺序无关性、队列容量和 active 所有权；四标准 × 三种响应视图 × 两种 PHY
+  下公共流式驱动与手动事件循环的命令/周期/反压一致性，以及空输入和 cycle-limit。
+  CTest 和 `make refactor-test` / `make test` 均包含此契约测试。
+- `result_tests.py`：英文精简报告及旧/新人读文本误用拒绝、摘要/完整 JSON 一致性、错误与截断、配置快照重放、四标准×三后端×两 PHY 的小几何数据回归，以及单 Stack 文件名展开。
 - `../tools/model_validation.py`：项目级分析验收，检查公式、硬性阈值、DFI 数据路径和来源 manifest。
 - `phy_tests.cpp`：Behavioral PHY 生命周期、FIFO/负例、DVFS/WCK、四标准数据回环和 DFI completion。
 - `phy_smoke.sh`：四个主配置的在线 PHY/DFI 验证及六 Stack、192 Controller 路径。
@@ -40,14 +44,19 @@ transaction completion、64 B host request 的多子事务重组、多 Stack 路
 
 ## 测试分层
 
-默认 CTest 当前有 17 个入口（可用 `ctest --test-dir build-clang-debug -N` 查看实际清单），包括：
+默认 CTest 当前有 18 个入口（可用 `ctest --test-dir build-clang-debug -N` 查看实际清单），包括：
 
 - `smoke.sh`：黑盒测试，运行真实 CLI，检查主要配置、输出字段、trace dump、validator 和工具脚本。
 - `sequence_tests.cpp`：白盒/半白盒测试，直接构造请求或命令序列，检查具体命令展开和状态规则。
 - `model_validation.py`：固定 HBM4 单 channel 配置执行 28 项项目验收，检查理论峰值、回归带宽门槛、精确延迟、同地址顺序、DFI expected payload、后端重开、timing 来源和 manifest 证据绑定。
 - `timing_boundary_tests` 与 `timing_boundary_validation.py`：C++ 边界执行和独立 CSV 审计。
 - `performance_curve.py`：CI 规模负载曲线形状检查。
-- `sensitivity_uncertainty.py`：CI 规模敏感性和输入区间检查。
+- `sensitivity_uncertainty.py`：CI 规模敏感性和输入区间检查；nRP 变化联动 nRC 并保留基准余量，产物记录有效 nRC 和假设。
+
+`spec_fixture.hpp` 只为手动缩减几何的控制器/PHY 测试重算密度，不重选时序表，
+不吞掉校验错误；真实参数联动由独立模型配置测试覆盖。
+`result_contract` 还检查 Timing source 前后顺序、跨 section/继承覆盖、无来源覆盖降回
+research_default、非法来源和裸键重复，以及四标准正常输出没有密度误告警。
 - `phy_tests.cpp` / `phy_smoke.sh`：在线 Behavioral PHY 的生命周期、FIFO、DFI completion
   与四标准、多 stack 回归。
 - `visualization_smoke.sh`：验证后处理仪表盘兼容当前 trace 和 thermal map 格式；它不

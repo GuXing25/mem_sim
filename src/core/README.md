@@ -68,18 +68,27 @@ core 层当前包含真实存储区热路径：`data.cpp` 实现 `MemoryImage`�
 - 合并 per-stack/全局统计和带 `stack_id` 的 command trace。
 - 收集 Controller `TransactionResponse`，按 host id/index 重组读数据、初始化掩码和状态。
 
-同一 stack 的多个 Controller 共享一个 `MemoryImage`。因此单个
-`controllers()[i].stats()` 中命令、队列和 PHY 字段是 channel-local，storage、ECC、
+同一 stack 的多个 Controller 共享一个 `MemoryImage`。
+Controller 的单 Channel spec 只是局部调度视图；`density_reference_channels` 保存父模型
+Channel 数，以便校验时保留完整器件密度/刷新时序。该字段不是用户配置项。
+单个 `controllers()[i].stats()` 中命令、队列和 PHY 字段是 channel-local，storage、ECC、
 power、thermal 字段则是该共享 Stack 的快照，不能把后者跨 Channel 再求和。需要物理
 统计时应使用 `MemorySystem::stats()` 或 `per_stack_stats()`；系统收尾会按 MemoryImage
 重新聚合并去除 Controller 中间快照的重复。
 
 异步模式使用 `try_submit/step/has_response/pop_response`，Maintenance 走独立的
 `try_submit_maintenance`；`HostOnly/TransactionOnly/Both` 控制保留哪种响应视图，
-`idle/quiescent` 分别表示执行完成和响应也已取空。旧 `run()` 默认仍是低开销批处理；
-CLI 的 `--response-trace` 则实际逐拍驱动并在线消费 HostResponse。这里提供协议中立的
+`idle/quiescent` 分别表示执行完成和响应也已取空。`run(RequestSource&, ...)`
+各重载使用同一流式驱动；CLI 通过 `RunOptions` 提供 Host/transaction 消费回调，
+不另写注入循环。默认调用按批处理选项运行。这里提供协议中立的
 运行时语义，不实现 UCIe flit、NoC credit 或 RTL CDC，具体映射见
 `堆叠存储模型交付手册.md` 的 2.7 节。
+
+`RunOptions::drain_responses` 表示驱动每拍消费所选响应视图，没有回调的
+已启用视图会取出并丢弃。回调要求对应 delivery mode 已启用；Disabled 不能
+请求 drain。统一驱动负责注入时间检查、拒收重试、step、进度和 finish，
+在 cycle limit 处仍消费已经完成的响应，不额外执行尚未完成的事务。
+回调是 always-ready 消费者；需要模拟外部 host 停顿时使用逐拍接口。
 
 它不负责决定单个 controller 内本周期发什么 DRAM 命令，这个职责仍在
 `src/controller/`；也不宣称模拟完整 UCIe flit/credit/link 仲裁。

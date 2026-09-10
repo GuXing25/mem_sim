@@ -1,3 +1,4 @@
+#include "spec_fixture.hpp"
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
@@ -118,6 +119,7 @@ void expand_scope_dimensions(DramSpec &spec) {
   spec.org.ranks = std::max(2, spec.org.ranks);
   spec.org.bank_groups = std::max(2, spec.org.bank_groups);
   spec.org.banks_per_group = std::max(2, spec.org.banks_per_group);
+  set_fixture_density_from_geometry(spec);
 }
 
 Evidence check_pair(const DramSpec &original,

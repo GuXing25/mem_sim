@@ -219,7 +219,4 @@ ResultFields collect_stats(const Stats& stats) {
   return fields;
 }
 
-void print_stats(std::ostream& out, const Stats& stats) {
-  print_diagnostics(out, collect_stats(stats));
-}
 }  // namespace hbm_sim

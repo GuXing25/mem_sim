@@ -8,7 +8,7 @@ mkdir -p "$vis_out"
 
 "$vis_bin" \
   --config "$vis_source/configs/hbm.cfg" --standard hbm4 \
-  --stats-view full --stats-json "$vis_out/result.json" \
+  --stats-view summary --stats-json "$vis_out/result.json" \
   --requests 128 \
   --read-ratio 50 \
   --cmd-trace "$vis_out/commands.csv" \

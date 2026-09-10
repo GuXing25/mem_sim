@@ -1,4 +1,5 @@
 #include "hbm_sim/stats/result.hpp"
+#include "hbm_sim/dram/spec.hpp"
 
 #include <cmath>
 #include <filesystem>
@@ -206,45 +207,45 @@ void print_result(std::ostream& out, const ResultReport& r) {
   auto s = [&](const char* k) { return value(r.metrics, k); };
   auto v = [&](const char* k) { return value(r.validation, k); };
   const bool lp = enabled(r.model, "lpddr_family");
-  out << "# ===== 模型 / MODEL =====\n"
-      << "名称 / 标准       : " << m("model_name") << " / " << m("standard") << '\n'
-      << "组织              : " << m("stack_count") << (lp ? " 器件 × " : " Stack × ")
-      << m("channels") << " Channel × " << m("pseudo_channels")
-      << (lp ? " Subchannel × " : " PC × ") << (lp ? m("ranks") : m("sids"))
+  out << "# ===== MODEL =====\n"
+      << "Model / Standard         : " << m("model_name") << " / " << m("standard") << '\n'
+      << "Organization             : " << m("stack_count") << (lp ? " Device x " : " Stack x ")
+      << m("channels") << " Channel x " << m("pseudo_channels")
+      << (lp ? " Subchannel x " : " PC x ") << (lp ? m("ranks") : m("sids"))
       << (lp ? " Rank\n" : " SID\n");
-  if (!lp && r.model.contains("ranks")) out << "实验 Rank 维度    : " << m("ranks") << '\n';
-  if (lp && r.model.contains("sids")) out << "实验 SID 维度     : " << m("sids") << "（非 LPDDR 标准层级）\n";
-  out << "Bank / 行列       : 每" << (lp ? " SC/Rank" : " PC/SID")
-      << " " << m("bank_groups") << " BG × " << m("banks_per_group")
-      << " Bank；每 Bank " << m("rows") << " Row × " << m("columns") << " 事务列\n";
+  if (!lp && r.model.contains("ranks")) out << "Experimental Ranks       : " << m("ranks") << '\n';
+  if (lp && r.model.contains("sids")) out << "Experimental SIDs        : " << m("sids") << " (nonstandard LPDDR dimension)\n";
+  out << "Bank / Row / Column      : " << m("bank_groups") << " BG x " << m("banks_per_group")
+      << " Bank per " << (lp ? "SC/Rank" : "PC/SID")
+      << "; " << m("rows") << " Row x " << m("columns") << " transaction columns per Bank\n";
   auto gib = [&](const char* key) {
     std::ostringstream os;
     os << std::setprecision(6) << number(r.model, key) / 1073741824.0;
     return os.str();
   };
-  out << "计算容量          : 单实例 " << gib("capacity_per_instance_bytes")
-      << " GiB，总计 " << gib("aggregate_capacity_bytes") << " GiB\n"
-      << "请求 / 事务粒度   : " << m("line_size") << " / " << m("dram_transaction_bytes") << " B\n"
-      << "控制策略          : " << m("scheduler") << " / " << m("row_policy")
-      << " / " << m("address_mapping") << "，Channel=" << m("channel_mapper")
-      << "，Stack=" << m("stack_mapping") << '\n'
-      << "功能              : PHY=" << m("mem_phy_mode") << "，后端=" << m("memory_backend")
-      << "，refresh=" << m("supports_refresh") << "，RFM=" << m("supports_rfm")
-      << "，payload ECC=" << m("ecc_shadow") << '\n'
-      << "# ===== 参数 / PARAMETERS =====\n"
-      << "接口 / 时钟       : " << p("data_rate_mbps") << " Mb/s/pin，"
-      << p("data_bus_bits") << " bit/实例；CK=" << p("tCK_ps")
-      << " ps，tick=" << p("tick_duration_ps") << " ps";
-  if (lp) out << "，WCK:CK=" << p("lpddr_wck_ratio");
+  out << "Capacity                 : " << gib("capacity_per_instance_bytes")
+      << " GiB/instance; total=" << gib("aggregate_capacity_bytes") << " GiB\n"
+      << "Host / Transaction Bytes : " << m("line_size") << " / " << m("dram_transaction_bytes") << " B\n"
+      << "Policies                 : " << m("scheduler") << " / " << m("row_policy")
+      << " / " << m("address_mapping") << "; Channel=" << m("channel_mapper")
+      << "; Stack=" << m("stack_mapping") << '\n'
+      << "Features                 : PHY=" << m("mem_phy_mode") << "; Backend=" << m("memory_backend")
+      << "; Refresh=" << m("supports_refresh") << "; RFM=" << m("supports_rfm")
+      << "; Payload ECC=" << m("ecc_shadow") << '\n'
+      << "# ===== PARAMETERS =====\n"
+      << "Interface / Clock        : " << p("data_rate_mbps") << " Mb/s/pin; "
+      << p("data_bus_bits") << " bit/instance; CK=" << p("tCK_ps")
+      << " ps; tick=" << p("tick_duration_ps") << " ps";
+  if (lp) out << "; WCK:CK=" << p("lpddr_wck_ratio");
   out << '\n';
-  if (p("input_kind") == "trace") out << "负载              : Trace，注入间隔=" << p("inject_interval") << " tick\n";
-  else out << "负载              : " << p("pattern") << "，" << p("requests")
-           << " 请求，读 " << p("read_ratio") << "%，注入间隔=" << p("inject_interval") << " tick\n"
-           << "随机地址域 / 种子 : " << p("effective_random_address_space_bytes") << " B / " << p("seed")
-           << "（顺序负载使用 stride=" << p("addr_stride") << " B）\n";
-  out << "读 / 写队列容量   : " << p("read_buffer_size") << " / " << p("write_buffer_size") << '\n'
-      << "参数比较基准      : " << r.baseline << "，变化 " << r.changes.size()
-      << " 项（含联动；非厂商认证，完整清单见 --stats-json）\n";
+  if (p("input_kind") == "trace") out << "Workload                 : Trace; inject_interval=" << p("inject_interval") << " tick\n";
+  else out << "Workload                 : " << p("pattern") << "; " << p("requests")
+           << " requests; reads=" << p("read_ratio") << "%; inject_interval=" << p("inject_interval") << " tick\n"
+           << "Address Space / Seed     : " << p("effective_random_address_space_bytes") << " B / " << p("seed")
+           << " (stream uses stride=" << p("addr_stride") << " B)\n";
+  out << "Read / Write Queues      : " << p("read_buffer_size") << " / " << p("write_buffer_size") << '\n'
+      << "Comparison Baseline      : " << r.baseline << "; " << r.changes.size()
+      << " changes (including derived values; not vendor-certified; full list: --stats-json)\n";
   // Printed identity already states these final values. The JSON change list
   // remains complete, including derived effects, with no truncation.
   std::size_t extra = 0;
@@ -252,38 +253,41 @@ void print_result(std::ostream& out, const ResultReport& r) {
   for (bool timing : {true, false}) {
     for (const auto& c : r.changes) {
       if (c.key.starts_with("timing.") != timing || std::regex_match(c.key, visible)) continue;
-      if (extra++ < 2) out << "参数变化          : " << c.key << " " << c.baseline << " → " << c.value << '\n';
+      if (extra++ < 2) out << "Parameter Change         : " << c.key << " " << c.baseline << " -> " << c.value << '\n';
     }
   }
-  out << "# ===== 结果 / RESULTS =====\n"
-      << "运行状态          : " << v("run_status") << '\n'
-      << "接收 / 完成量     : " << s("host_requests") << " Host；完成 "
-      << s("completed_reads") << " 读 / " << s("completed_writes")
-      << " 写事务；提交 " << s("dram_transactions") << " 事务\n"
-      << "剩余工作量        : 排队/未注入=" << s("remaining_requests")
-      << "，pending=" << s("remaining_pending") << "（前者为现有混合计数，非纯 Host 数）\n"
-      << "仿真时间          : " << s("simulation_time_ns") << " ns\n"
-      << "吞吐量 / 利用率   : " << s("achieved_bw_GBps") << " GB/s / " << s("bandwidth_util_pct") << "%\n"
-      << "平均读事务延迟    : " << s("avg_read_latency_ns") << " ns\n"
-      << "行命中率          : " << s("row_hit_pct") << "%（首次调度分类）\n"
-      << "检查结果          : 命令=" << v("cmd_validation") << "，DFI=" << v("dfi_validation")
-      << "，数据检查=" << v("data_checked_reads") << "，错误=" << v("data_mismatches");
-  if (v("data_checked_reads") == "0") out << "（无独立数据检查证据）";
+  out << "# ===== RESULTS =====\n"
+      << "Run Status               : " << v("run_status") << '\n'
+      << "Requests / Transactions  : " << s("host_requests") << " Host; completed="
+      << s("completed_reads") << " reads / " << s("completed_writes")
+      << " writes; submitted=" << s("dram_transactions") << " transactions\n"
+      << "Remaining Work           : queued/uninjected=" << s("remaining_requests")
+      << "; pending=" << s("remaining_pending") << " (mixed work count, not Host-only)\n"
+      << "Simulation Time          : " << s("simulation_time_ns") << " ns\n"
+      << "Bandwidth / Utilization  : " << s("achieved_bw_GBps") << " GB/s / " << s("bandwidth_util_pct") << "%\n"
+      << "Read Transaction Latency : " << s("avg_read_latency_ns") << " ns\n"
+      << "Row Hit Rate             : " << s("row_hit_pct") << "% (first-scheduling classification)\n"
+      << "Validation               : Command=" << v("cmd_validation") << "; DFI=" << v("dfi_validation")
+      << "; checked_reads=" << v("data_checked_reads") << "; data_errors=" << v("data_mismatches");
+  if (v("data_checked_reads") == "0") out << " (no independent data-check evidence)";
   out << '\n';
-  if (r.metrics.contains("power_energy_pJ")) out << "能量              : " << s("power_energy_pJ") << " pJ\n";
-  if (r.metrics.contains("thermal_peak_temp_C")) out << "平均 / 峰值温度   : " << s("thermal_avg_temp_C") << " / " << s("thermal_peak_temp_C") << " °C\n";
-  if (r.metrics.contains("storage_lines_allocated")) out << "后端分配          : " << s("storage_lines_allocated") << " 行，" << s("storage_bytes_allocated") << " B（数据字节记账）\n";
-  if (r.validation.contains("golden_mismatches")) out << "Golden 检查       : " << v("golden_verified") << " 行，错误=" << v("golden_mismatches") << '\n';
+  if (r.metrics.contains("power_energy_pJ")) out << "Energy                   : " << s("power_energy_pJ") << " pJ\n";
+  if (r.metrics.contains("thermal_peak_temp_C")) out << "Mean / Peak Temperature  : " << s("thermal_avg_temp_C") << " / " << s("thermal_peak_temp_C") << " degC\n";
+  if (r.metrics.contains("storage_lines_allocated")) out << "Backend Allocation       : " << s("storage_lines_allocated") << " lines; " << s("storage_bytes_allocated") << " B (data-byte accounting)\n";
+  if (r.validation.contains("golden_mismatches")) out << "Golden Check             : " << v("golden_verified") << " lines; errors=" << v("golden_mismatches") << '\n';
   if (v("ecc_uncorrectable_errors") != "0" && v("ecc_uncorrectable_errors") != "N/A")
-    out << "WARNING: ECC 不可纠正错误=" << v("ecc_uncorrectable_errors") << '\n';
-  const double die_count = lp ? 1 : number(r.model, "stack_height");
-  const double derived = number(r.model, "capacity_per_instance_bytes") * 8 /
-                         1073741824.0 / die_count;
-  if (std::abs(derived - number(r.model, "density_gb")) > 1e-8)
-    out << "WARNING: 标称 density_gb 与几何折算密度不一致；仿真容量使用几何值\n";
-  if (m("memory_system") == "single_controller") out << "WARNING: 单控制器验证模式，以上组织容量不代表已模拟所有 Channel\n";
+    out << "WARNING: Uncorrectable ECC errors=" << v("ecc_uncorrectable_errors") << '\n';
+  const double derived = density_gbit_from_geometry(
+      number(r.model, "capacity_per_instance_bytes"), lp,
+      static_cast<int>(number(r.model, "stack_height")),
+      static_cast<int>(number(r.model, "channels")),
+      static_cast<int>(number(r.model, "pseudo_channels")),
+      lp ? static_cast<int>(number(r.model, "ranks")) : 1);
+  if (std::abs(derived - number(r.model, "density_gb")) > 1e-9 * std::max(1.0, derived))
+    out << "WARNING: Nominal density_gb differs from geometry-derived density; simulation capacity uses geometry\n";
+  if (m("memory_system") == "single_controller") out << "WARNING: Single-controller validation; organization capacity does not imply all Channels are simulated\n";
   if (r.stacks.size() > 1) {
-    out << "Stack  完成读  完成写  带宽(GB/s)  平均读延迟(ns)\n";
+    out << "Stack  Completed_Reads  Completed_Writes  Bandwidth(GB/s)  Read_Latency(ns)\n";
     for (const auto& st : r.stacks) out << value(st, "stack") << "  "
         << value(st, "completed_reads") << "  " << value(st, "completed_writes") << "  "
         << value(st, "achieved_bw_GBps") << "  " << value(st, "avg_read_latency_ns") << '\n';

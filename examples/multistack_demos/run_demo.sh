@@ -40,7 +40,7 @@ mkdir -p "$demo_out"
   --dump-timing-table "$demo_out/timing.csv" \
   --dump-thermal-map "$demo_out/thermal_{stack}.txt" \
   --validate-cmd-trace --validate-dfi-trace \
-  --stats-view full --stats-json "$demo_out/result.json" \
+  --stats-view summary --stats-json "$demo_out/result.json" \
   | tee "$demo_out/stats.txt"
 
 # Dashboard 同时合并所有 Stack 的热网格；命令轨迹本身已经带 stack_id。

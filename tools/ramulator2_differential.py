@@ -341,14 +341,6 @@ def address_for(event: dict[str, object], dimensions: dict[str, int]) -> int:
     return value * dimensions["transaction_bytes"]
 
 
-def parse_stats(text: str) -> dict[str, str]:
-    stats = {}
-    for line in text.splitlines():
-        if ":" in line:
-            key, value = line.split(":", 1)
-            stats[key.strip()] = value.strip()
-    return stats
-
 
 def normalize_command(standard: str, command: str) -> str:
     normalized = {"CASRD": "CAS_RD", "CASWR": "CAS_WR"}.get(command, command)

@@ -46,11 +46,22 @@ def timing_table(binary: Path, standard: str, temp: Path) -> dict[str, int]:
         return {row["name"]: int(row["value_nck"]) for row in csv.DictReader(stream)}
 
 
-def derived_config(overrides: dict[str, object], path: Path) -> None:
+def derived_config(overrides: dict[str, int], path: Path,
+                   nominal: dict[str, int]) -> dict[str, int]:
     # 只生成小型 override，不复制权威 master，避免临时实验形成第三份参数源。
+    overrides = dict(overrides)
+    # Reference presets explicitly pin nRC. Preserve their extra row-cycle margin
+    # when varying nRP/nRAS, rather than keeping an impossible inherited nRC.
+    if "nRP" in overrides or "nRAS" in overrides:
+        margin = nominal["nRC"] - nominal["nRAS"] - nominal["nRP"]
+        if margin < 0:
+            raise ValueError("nominal nRC must be >= nRAS + nRP")
+        overrides["nRC"] = (overrides.get("nRAS", nominal["nRAS"]) +
+                            overrides.get("nRP", nominal["nRP"]) + margin)
     lines = ["[override]", "timing_override_source = research_default"]
     lines += [f"{key} = {value}" for key, value in overrides.items()]
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return overrides
 
 
 def simulate(binary: Path, standard: str, requests: int, seed: int,
@@ -122,12 +133,13 @@ def main() -> int:
                 case_results = {}
                 for level, value in values.items():
                     config = temp / f"{standard}_{parameter}_{level}.cfg"
-                    derived_config({parameter: value}, config)
+                    effective = derived_config({parameter: value}, config, nominal)
                     case_results[level] = simulate(
                         binary, standard, args.requests, args.seed, overlay=config)
                     sensitivity.append({
                         "standard": standard.upper(), "parameter": parameter,
                         "level": level, "value_nck": value,
+                        "effective_nRC_nck": effective.get("nRC", nominal["nRC"]),
                         **case_results[level],
                     })
                 low, high = case_results["low"], case_results["high"]
@@ -157,7 +169,7 @@ def main() -> int:
                     factor = 1.0 + rng.uniform(-args.fraction, args.fraction)
                     overrides[parameter] = max(1, round(nominal[parameter] * factor))
                 config = temp / f"{standard}_uncertainty_{sample_index}.cfg"
-                derived_config(overrides, config)
+                derived_config(overrides, config, nominal)
                 samples.append(simulate(
                     binary, standard, args.requests, args.seed, overlay=config))
             entry = {"standard": standard.upper(), "samples": args.samples,
@@ -208,6 +220,7 @@ def main() -> int:
         "schema_version": 2,
         "scope": "oat_timing_sensitivity_and_bounded_input_uncertainty",
         "parameters": list(PARAMETERS), "fraction": args.fraction,
+        "row_cycle_policy": "nRC = nRAS + nRP + nominal row-cycle margin; nRC is not sampled independently",
         "requests": args.requests, "seed": args.seed,
         "sensitivity": sensitivity, "uncertainty_intervals": uncertainty,
         "power_thermal_sensitivity": power_results, "checks": checks,

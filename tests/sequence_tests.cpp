@@ -1,3 +1,5 @@
+#include "spec_fixture.hpp"
+#include "hbm_sim/config/model.hpp"
 // 轻量序列测试入口。项目保持零外部测试依赖，因此这里用 require()
 // 直接断言关键命令序列、timing 间隔、维护路径和 validator 行为。
 // 测试目标不是覆盖性能，而是守住协议状态机和 Ramulator 风格模块边界。
@@ -942,6 +944,7 @@ void test_control_command_state_and_validator() {
 void test_initialization_control_sequence_execution() {
   DramSpec hbm4 = hbm_sim::make_spec("hbm4");
   hbm4.org.channels = 2;
+  set_fixture_density_from_geometry(hbm4);
   hbm4.supports_refresh = false;
   hbm4.supports_rfm = false;
   hbm4.hbm_edge_pairing = false;
@@ -1089,6 +1092,7 @@ void test_hbm4_refresh_manager() {
   spec.org.sids = 1;
   spec.org.bank_groups = 1;
   spec.org.banks_per_group = 2;
+  set_fixture_density_from_geometry(spec);
   spec.timing.nREFIpb = 16;
   spec.timing.nRFCpb = 2;
   hbm_sim::refresh_timing_constraints(spec);
@@ -1115,6 +1119,7 @@ void test_hbm4_all_bank_refresh_policy() {
   spec.org.sids = 1;
   spec.org.bank_groups = 1;
   spec.org.banks_per_group = 2;
+  set_fixture_density_from_geometry(spec);
   spec.hbm_edge_pairing = false;
   spec.refresh_policy = hbm_sim::MaintenancePolicyKind::AllBank;
   spec.supports_rfm = false;
@@ -1163,6 +1168,7 @@ void test_hbm4_all_bank_rfm_policy() {
   spec.org.sids = 1;
   spec.org.bank_groups = 1;
   spec.org.banks_per_group = 2;
+  set_fixture_density_from_geometry(spec);
   spec.supports_refresh = false;
   spec.supports_rfm = true;
   spec.rfm_policy = hbm_sim::MaintenancePolicyKind::AllBank;
@@ -1217,6 +1223,7 @@ void test_timing_profile_dimensions() {
   spec.density_gb = 48;
   spec.stack_height = 16;
   hbm_sim::apply_standard_timing_profile(spec);
+  spec.org.rows = 24576;  // 48 Gibit/die with this 16Hi/4-SID geometry.
   hbm_sim::finalize_spec(spec);
 
   require(spec.data_rate_mbps == 9000,
@@ -1231,6 +1238,7 @@ void test_timing_profile_dimensions() {
   DramSpec generic_again = spec;
   generic_again.vendor_profile = "generic";
   hbm_sim::apply_standard_timing_profile(generic_again);
+  generic_again.org.rows = 24576;
   hbm_sim::finalize_spec(generic_again);
   require(!hbm_sim::validate_timing_table(generic_again, true).empty(),
           "reapplying a generic profile retained stale vendor timing sources");
@@ -1254,6 +1262,7 @@ void test_timing_profile_dimensions() {
   DramSpec hbm3_16hi = hbm3;
   hbm3_16hi.stack_height = 16;
   hbm_sim::apply_standard_timing_profile(hbm3_16hi);
+  hbm3_16hi.org.sids = 4;
   hbm_sim::finalize_spec(hbm3_16hi);
   require(hbm3_16hi.timing.nREFIpb < hbm3.timing.nREFIpb,
           "HBM3 profile did not scale tREFIpb with stack height");
@@ -1297,51 +1306,28 @@ void test_timing_profile_dimensions() {
   DramSpec lpddr8 = hbm_sim::make_spec("lpddr6");
   lpddr8.density_gb = 8;
   hbm_sim::apply_standard_timing_profile(lpddr8);
+  lpddr8.org.rows = 32768;
   hbm_sim::finalize_spec(lpddr8);
   require(lpddr8.timing.nRFC ==
               hbm_sim::jedec::ns_to_nck(280.0, lpddr8.timing.tCK_ps),
           "LPDDR6 8Gb/subchannel must use Table 302's 16Gb pair density");
 
-  const std::string profile_path = "/tmp/hbm_sim_timing_profile_unit.cfg";
-  {
-    std::ofstream profile(profile_path);
-    profile << "source = vendor\n";
-    profile << "note = unit-test external timing profile\n";
-    profile << "timing_profile = external_hbm3_unit\n";
-    profile << "speed_bin_mbps = 6400\n";
-    profile << "density_gb = 24\n";
-    profile << "stack_height = 12\n";
-    profile << "tCK_ps = 625\n";
-    profile << "tRRD_S_ns = 5\n";
-    profile << "tRRD_L_ns = 7.5\n";
-    profile << "tRFCab_ns = 450\n";
-    profile << "tRFCpb_ns = 240\n";
-    profile << "nCL = 28\n";
-  }
-  DramSpec external = hbm_sim::make_spec("hbm3");
-  external.timing_profile_file = profile_path;
-  hbm_sim::apply_standard_timing_profile(external);
-  hbm_sim::finalize_spec(external);
-  require(external.timing_profile == "external_hbm3_unit",
-          "external timing profile file did not update profile name");
-  require(external.timing.nRFC ==
-              hbm_sim::jedec::ns_to_nck(450.0, external.timing.tCK_ps),
-          "external timing profile file did not override tRFCab");
-  require(external.timing.nRFCpb ==
-              hbm_sim::jedec::ns_to_nck(240.0, external.timing.tCK_ps),
-          "external timing profile file did not override tRFCpb");
-  require(external.timing.nRRDS == 8 && external.timing.nRRDL == 12,
-          "external timing profile file did not accept tRRD_S/tRRD_L aliases");
-  bool external_ncl_vendor = false;
-  for (const auto &entry : external.timing_table.entries) {
-    if (entry.name == "nCL") {
-      external_ncl_vendor =
-          entry.source == hbm_sim::TimingValueSource::Vendor &&
-          !entry.vendor_required_for_numeric;
-    }
-  }
-  require(external_ncl_vendor,
-          "external timing profile file did not mark timing source");
+  const auto configured = hbm_sim::config::build_model("hbm3", {
+      {"speed_bin_mbps", "6400"}, {"density_gb", "24"}, {"stack_height", "12"},
+      {"sids", "3"}, {"rows", "24576"}, {"tck_ps", "625"},
+      {"trrd_s_ns", "5"}, {"trrd_l_ns", "7.5"}, {"trfcab_ns", "450"},
+      {"trfcpb_ns", "240"}, {"ncl", "28"}, {"timing_override_source", "vendor"}});
+  require(configured.timing.nRFC == hbm_sim::jedec::ns_to_nck(450, 625) &&
+              configured.timing.nRFCpb == hbm_sim::jedec::ns_to_nck(240, 625),
+          "inline timing config did not override refresh durations");
+  require(configured.timing.nRRDS == 8 && configured.timing.nRRDL == 12,
+          "inline timing config did not accept time-unit aliases");
+  bool ncl_vendor = false;
+  for (const auto& entry : configured.timing_table.entries)
+    if (entry.name == "nCL")
+      ncl_vendor = entry.source == hbm_sim::TimingValueSource::Vendor &&
+                   !entry.vendor_required_for_numeric;
+  require(ncl_vendor, "inline config lost explicit timing source");
 }
 
 void test_multi_controller_parallel_channels() {
@@ -1351,6 +1337,7 @@ void test_multi_controller_parallel_channels() {
   spec.org.sids = 1;
   spec.org.bank_groups = 1;
   spec.org.banks_per_group = 1;
+  set_fixture_density_from_geometry(spec);
   spec.supports_refresh = false;
   spec.supports_rfm = false;
   spec.hbm_edge_pairing = false;
@@ -1459,6 +1446,7 @@ void test_active_six_stack_memory_system_routing_qos_and_stats() {
   spec.org.banks_per_group = 2;
   spec.org.rows = 64;
   spec.org.columns = 16;
+  set_fixture_density_from_geometry(spec);
   spec.supports_refresh = false;
   spec.supports_rfm = false;
   hbm_sim::refresh_timing_constraints(spec);
@@ -1636,6 +1624,7 @@ void test_write_forward_and_coalesce() {
   spec.org.sids = 1;
   spec.org.bank_groups = 1;
   spec.org.banks_per_group = 1;
+  set_fixture_density_from_geometry(spec);
   spec.supports_refresh = false;
   spec.supports_rfm = false;
   hbm_sim::refresh_timing_constraints(spec);
@@ -1697,6 +1686,7 @@ void test_closed_page_row_policy() {
   spec.org.sids = 1;
   spec.org.bank_groups = 1;
   spec.org.banks_per_group = 1;
+  set_fixture_density_from_geometry(spec);
   spec.supports_refresh = false;
   spec.supports_rfm = false;
   spec.hbm_edge_pairing = false;
@@ -1727,6 +1717,7 @@ void test_closed_cap_row_policy() {
   spec.org.sids = 1;
   spec.org.bank_groups = 1;
   spec.org.banks_per_group = 1;
+  set_fixture_density_from_geometry(spec);
   spec.supports_refresh = false;
   spec.supports_rfm = false;
   spec.hbm_edge_pairing = false;
@@ -1754,6 +1745,7 @@ void test_maintenance_progress_dependencies() {
   DramSpec spec = hbm_sim::make_spec("hbm4");
   spec.org.channels = spec.org.pseudo_channels = spec.org.sids = 1;
   spec.org.bank_groups = spec.org.banks_per_group = 1;
+  set_fixture_density_from_geometry(spec);
   spec.supports_refresh = false;
   spec.supports_rfm = false;  // explicit maintenance below, no automatic stream
   spec.hbm_edge_pairing = false;
@@ -1805,6 +1797,7 @@ void test_lpddr6_refresh_manager() {
   spec.org.sids = 1;
   spec.org.bank_groups = 2;
   spec.org.banks_per_group = 2;
+  set_fixture_density_from_geometry(spec);
   spec.timing.nREFIpb = 32;
   spec.timing.nRFCpb = 2;
   spec.timing.nRREFD = 1;
@@ -1834,6 +1827,7 @@ void test_lpddr6_dual_bank_refresh_pair() {
   spec.org.sids = 1;
   spec.org.bank_groups = 2;
   spec.org.banks_per_group = 2;
+  set_fixture_density_from_geometry(spec);
   spec.supports_rfm = false;
   spec.timing.nREFIpb = 32;
   spec.timing.nRFCpb = 8;
@@ -1881,6 +1875,7 @@ void test_refdb_does_not_precharge_other_pseudo_channel() {
   spec.org.ranks = 1;
   spec.org.bank_groups = 2;
   spec.org.banks_per_group = 2;
+  set_fixture_density_from_geometry(spec);
   spec.supports_refresh = false;
   spec.supports_rfm = false;
   spec.timing.nREFDB2ACT = 1;
@@ -2036,6 +2031,7 @@ void test_refresh_credit_and_low_power() {
   refresh_spec.org.sids = 1;
   refresh_spec.org.bank_groups = 1;
   refresh_spec.org.banks_per_group = 1;
+  set_fixture_density_from_geometry(refresh_spec);
   refresh_spec.supports_rfm = false;
   refresh_spec.hbm_edge_pairing = false;
   refresh_spec.tick_multiplier = 1;
@@ -2063,6 +2059,7 @@ void test_refresh_credit_and_low_power() {
   low_power_spec.org.sids = 1;
   low_power_spec.org.bank_groups = 1;
   low_power_spec.org.banks_per_group = 1;
+  set_fixture_density_from_geometry(low_power_spec);
   low_power_spec.supports_refresh = false;
   low_power_spec.supports_rfm = false;
   low_power_spec.hbm_edge_pairing = false;
@@ -2093,6 +2090,7 @@ void test_refresh_credit_conservation_and_rank_rotation() {
   spec.org.ranks = 1;
   spec.org.bank_groups = 1;
   spec.org.banks_per_group = 2;
+  set_fixture_density_from_geometry(spec);
   spec.tick_multiplier = 1;
   spec.timing.nREFIpb = 10;
   spec.refresh_postpone_limit = 2;
@@ -2125,6 +2123,7 @@ void test_refresh_credit_conservation_and_rank_rotation() {
 
   DramSpec ranked = spec;
   ranked.org.ranks = 2;
+  set_fixture_density_from_geometry(ranked);
   ranked.refresh_postpone_limit = 0;
   ranked.refresh_pullin_limit = 0;
   hbm_sim::RefreshManager ranks;
@@ -2620,6 +2619,7 @@ void test_async_ecc_response_status() {
     spec.org.sids = 1;
     spec.org.bank_groups = 1;
     spec.org.banks_per_group = 1;
+    set_fixture_density_from_geometry(spec);
     spec.supports_refresh = false;
     spec.supports_rfm = false;
     hbm_sim::refresh_timing_constraints(spec);
@@ -2694,6 +2694,7 @@ void test_address_mapping_templates() {
   spec.org.rows = 64;
   spec.org.line_size = 64;
   spec.org.dram_transaction_bytes = 64;
+  set_fixture_density_from_geometry(spec);
 
   spec.address_mapping = hbm_sim::AddressMappingKind::Default;
   hbm_sim::AddressMapper mapper_default(spec);
@@ -2965,6 +2966,7 @@ void test_physical_storage_coordinates_and_stats() {
   spec.org.rows = 64;
   spec.org.columns = 4;
   spec.org.line_size = 64;
+  set_fixture_density_from_geometry(spec);
   spec.stack_height = 8;
   spec.address_mapping = hbm_sim::AddressMappingKind::RoBaRaCoCh;
 
@@ -3025,6 +3027,7 @@ void test_memory_image_cross_line_read_uses_each_line_address() {
   DramSpec spec = hbm_sim::make_spec("hbm4");
   spec.org.line_size = 16;
   spec.org.dram_transaction_bytes = 16;
+  set_fixture_density_from_geometry(spec);
   hbm_sim::MemoryImage image(spec);
   hbm_sim::AddressMapper mapper(spec);
   const DecodedAddress first = mapper.decode(0);
@@ -3057,6 +3060,7 @@ void test_all_bank_refresh_covers_every_pc_and_sid() {
   spec.org.ranks = 1;
   spec.org.bank_groups = 1;
   spec.org.banks_per_group = 1;
+  set_fixture_density_from_geometry(spec);
   spec.refresh_policy = hbm_sim::MaintenancePolicyKind::AllBank;
   spec.timing.nREFI = 1;
 
@@ -3086,7 +3090,9 @@ void test_passive_multistack_memory_model_isolation() {
   spec.org.rows = 128;
   spec.org.columns = 16;
   spec.org.line_size = 64;
+  set_fixture_density_from_geometry(spec);
   spec.stack_height = 4;
+  set_fixture_density_from_geometry(spec);
 
   hbm_sim::StorageModelOptions options;
   options.thermal_grid_cols_per_tile = 2;
@@ -3218,6 +3224,7 @@ void test_floorplan_power_and_thermal_model() {
   spec.org.sids = 2;
   spec.org.bank_groups = 2;
   spec.org.banks_per_group = 2;
+  set_fixture_density_from_geometry(spec);
   spec.stack_height = 8;
 
   hbm_sim::Address address = 0x7000;
@@ -3334,6 +3341,7 @@ void test_dramsim3_idd_power_and_grid_thermal() {
   spec.org.banks_per_group = 2;
   spec.org.rows = 64;
   spec.org.columns = 16;
+  set_fixture_density_from_geometry(spec);
   spec.timing.tCK_ps = 500.0;
   spec.timing.nBL = 2;
   spec.timing.nRAS = 42;
@@ -3406,8 +3414,10 @@ void test_tsv_thermal_coupling_and_ecc_shadow() {
   spec.org.rows = 64;
   spec.org.columns = 16;
   spec.org.line_size = 64;
+  set_fixture_density_from_geometry(spec);
   spec.stack_height = 4;
 
+  set_fixture_density_from_geometry(spec);
   hbm_sim::StorageModelOptions options;
   options.thermal_grid_cols_per_tile = 2;
   options.thermal_grid_rows_per_tile = 2;
@@ -3464,6 +3474,7 @@ void test_tsv_thermal_coupling_and_ecc_shadow() {
 void test_memory_image_row_buffer_writeback() {
   DramSpec spec = hbm_sim::make_spec("hbm4");
   spec.org.line_size = 64;
+  set_fixture_density_from_geometry(spec);
 
   hbm_sim::Address address = 0x4800;
   hbm_sim::AddressMapper mapper(spec);
@@ -3579,6 +3590,7 @@ void test_auto_precharge_storage_timing_matches_phy_modes() {
     spec.org.ranks = 1;
     spec.org.bank_groups = 1;
     spec.org.banks_per_group = 1;
+    set_fixture_density_from_geometry(spec);
     spec.supports_refresh = false;
     spec.supports_rfm = false;
     spec.hbm_edge_pairing = false;
@@ -3656,6 +3668,7 @@ void test_physical_storage_multichannel_memory_system() {
   spec.org.rows = 64;
   spec.org.columns = 4;
   spec.org.line_size = 64;
+  set_fixture_density_from_geometry(spec);
   spec.address_mapping = hbm_sim::AddressMappingKind::RoBaRaCoCh;
   spec.supports_refresh = false;
   spec.supports_rfm = false;
@@ -3710,6 +3723,7 @@ void test_memory_image_text_checkpoint_and_mismatch_report() {
 
   DramSpec spec = hbm_sim::make_spec("hbm4");
   spec.org.line_size = 64;
+  set_fixture_density_from_geometry(spec);
   hbm_sim::MemoryImage image(spec);
   image.load_text(image_path);
 

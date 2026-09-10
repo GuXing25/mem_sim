@@ -12,7 +12,7 @@ import sys
 import tempfile
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from result_io import run_simulator
+from result_io import parse_stats, run_simulator
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -56,15 +56,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--bandwidth-regression-margin-pct", type=float, default=4.5)
     return parser.parse_args()
 
-
-def parse_stats(text: str) -> dict[str, str]:
-    result: dict[str, str] = {}
-    for line in text.splitlines():
-        if ":" not in line:
-            continue
-        key, value = line.split(":", 1)
-        result[key.strip()] = value.strip()
-    return result
 
 
 def run(binary: Path, config_args: list[str], extra: list[str]) -> tuple[dict[str, str], str]:

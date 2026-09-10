@@ -14,6 +14,7 @@ CONFIG_TEST := $(BUILD_DIR)/config_tests
 MODEL_CONFIG_TEST := $(BUILD_DIR)/model_config_tests
 SCHEDULER_CONTRACT_TEST := $(BUILD_DIR)/scheduler_contract_tests
 RESULT_VALUE_TEST := $(BUILD_DIR)/result_value_tests
+REFACTOR_TEST := $(BUILD_DIR)/refactor_tests
 # 主程序需要 src/cli/main.cpp；测试程序需要复用库代码但不能链接 CLI main。
 SRCS := $(shell find src -name '*.cpp' | sort)
 LIB_SRCS := $(filter-out src/cli/main.cpp,$(SRCS))
@@ -51,13 +52,13 @@ $(BUILD_DIR)/%.o: src/%.cpp $(BUILD_CONFIG) | $(BUILD_DIR)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -c $< -o $@
 
 # sequence_tests 直接链接控制器库对象，用 C++ assert-style 测试检查协议序列。
-$(SEQUENCE_TEST): $(LIB_OBJS) tests/sequence_tests.cpp $(BUILD_CONFIG) | $(BUILD_DIR)
+$(SEQUENCE_TEST): $(LIB_OBJS) tests/sequence_tests.cpp tests/spec_fixture.hpp $(BUILD_CONFIG) | $(BUILD_DIR)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $(LIB_OBJS) tests/sequence_tests.cpp $(LDLIBS) -o $@
 
-$(TIMING_BOUNDARY_TEST): $(LIB_OBJS) tests/timing_boundary_tests.cpp $(BUILD_CONFIG) | $(BUILD_DIR)
+$(TIMING_BOUNDARY_TEST): $(LIB_OBJS) tests/timing_boundary_tests.cpp tests/spec_fixture.hpp $(BUILD_CONFIG) | $(BUILD_DIR)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $(LIB_OBJS) tests/timing_boundary_tests.cpp $(LDLIBS) -o $@
 
-$(PHY_TEST): $(LIB_OBJS) tests/phy_tests.cpp $(BUILD_CONFIG) | $(BUILD_DIR)
+$(PHY_TEST): $(LIB_OBJS) tests/phy_tests.cpp tests/spec_fixture.hpp $(BUILD_CONFIG) | $(BUILD_DIR)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $(LIB_OBJS) tests/phy_tests.cpp $(LDLIBS) -o $@
 
 $(CONFIG_TEST): $(LIB_OBJS) tests/config_tests.cpp $(BUILD_CONFIG) | $(BUILD_DIR)
@@ -68,6 +69,13 @@ $(MODEL_CONFIG_TEST): $(LIB_OBJS) tests/model_config_tests.cpp $(BUILD_CONFIG) |
 
 $(SCHEDULER_CONTRACT_TEST): $(LIB_OBJS) tests/scheduler_contract_tests.cpp $(BUILD_CONFIG) | $(BUILD_DIR)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $(LIB_OBJS) tests/scheduler_contract_tests.cpp $(LDLIBS) -o $@
+
+$(REFACTOR_TEST): $(LIB_OBJS) tests/refactor_tests.cpp include/hbm_sim/config/fields.hpp include/hbm_sim/config/parse.hpp include/hbm_sim/controller/request_queues.hpp $(BUILD_CONFIG) | $(BUILD_DIR)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $(LIB_OBJS) tests/refactor_tests.cpp $(LDLIBS) -o $@
+
+.PHONY: refactor-test
+refactor-test: $(REFACTOR_TEST)
+	./$(REFACTOR_TEST)
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
@@ -169,7 +177,7 @@ ramulator-validation: reference-validation
 
 # Make 兼容验收覆盖核心单元、CLI、配置、可视化、多 Stack/后端和架构实验。
 # 性能/敏感性 sweep 与外部 Ramulator 参考仍是显式目标，避免默认验收意外拉长。
-test: smoke sequence-test phy-test config-test scheduler-contract-test result-test phy-smoke visualization-smoke \
+test: smoke sequence-test phy-test config-test scheduler-contract-test result-test refactor-test phy-smoke visualization-smoke \
 	multistack-backend-smoke multistack-demos-smoke architecture-sweep-smoke \
 	timing-boundary-validation model-validation
 

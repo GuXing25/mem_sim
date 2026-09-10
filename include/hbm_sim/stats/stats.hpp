@@ -274,6 +274,5 @@ struct Stats {
   }
 };
 
-void print_stats(std::ostream& os, const Stats& stats);
 
 }  // namespace hbm_sim

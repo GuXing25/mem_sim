@@ -15,6 +15,10 @@ frontend、stats、validation 多层共同依赖。
 - `stack_model.hpp`：被动多 stack 器件数组接口。当前默认规模为 6 个 stack。`StackModel` 接受 transaction-level 读写或 command-level `ACT/PRE/RD/WR/REF` 事件，`MultiStackMemoryModel` 只按 `stack_id` 分发并汇总 per-stack 统计；它不实现 UCIe、Bridge 或 MC frontend 调度。
 - `system.hpp`：主动多 stack / 多 channel controller system 顶层接口；负责 stack ingress、反压、QoS、并行 tick、异步响应重组和聚合统计。
 
+`MemorySystem::RunOptions` 为流式 `run()` 提供 Host/transaction 消费回调、
+进度回调和 `drain_responses`。CLI 与库共用注入、重试、step 和收尾驱动。
+回调模式假设消费者 always-ready；需要响应反压时调用逐拍接口，并自行控制 pop。
+
 修改建议：
 
 - 只有被多层共享的类型才放入 `core/`。

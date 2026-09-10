@@ -2,11 +2,11 @@
 
 // 标准/供应商 timing profile 数据库入口。
 // 配置流程是：
-// 1. make_spec_draft() 只应用标准 traits；
-// 2. 配置库接收主输入；schema 3 先解算几何密度、速率和最终 CK；
+// 1. make_spec() 提供协议基准；
+// 2. 配置库接收主输入，解算几何密度、速率和最终 CK；
 // 3. apply_standard_timing_profile() 展开完整 organization/timing；
 // 4. 用户逐项 override 覆盖 profile；
-// 5. finalize_spec() 只执行一次，生成 constraints/table。
+// 5. finalize_spec() 校验并生成 constraints/table。
 
 #include "hbm_sim/dram/spec.hpp"
 

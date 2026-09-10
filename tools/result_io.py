@@ -27,7 +27,7 @@ def parse_stats(text: str) -> dict[str, str]:
 def read_result(path: Path, *, require_completed: bool = False) -> dict[str, str]:
     text = path.read_text(encoding="utf-8")
     if not text.lstrip().startswith("{"):
-        if "模型 / MODEL" in text:
+        if "模型 / MODEL" in text or "# ===== MODEL =====" in text:
             raise ValueError("compact report is for humans; supply --stats-json result.json "
                              "or a --stats-view diagnostic text file")
         metrics = parse_stats(text)

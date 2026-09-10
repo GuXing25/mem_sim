@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Result contract: terminal view cannot change simulation/tool input data."""
+import csv
 import json
 import os
 import re
@@ -11,12 +12,142 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
-from result_io import count, number, read_result, require_valid_run, run_simulator
+from result_io import count, number, parse_stats, read_result, require_valid_run, run_simulator
 
 BINARY = Path(sys.argv.pop(1)).resolve()
 
 
 class ResultContract(unittest.TestCase):
+    def test_shared_text_parser(self):
+        import model_validation
+        import ramulator2_differential
+        self.assertIs(model_validation.parse_stats, parse_stats)
+        self.assertNotIn('parse_stats', vars(ramulator2_differential))
+        self.assertEqual(parse_stats(' # ignored: 9\nx : 1\nx: 1\n'), {'x': '1'})
+        with self.assertRaisesRegex(ValueError, 'conflicting metric'):
+            model_validation.parse_stats('x: 1\nx: 2\n')
+
+    def test_current_cli_surface(self):
+        help_run = subprocess.run([str(BINARY), '--help'], cwd=ROOT,
+                                  text=True, capture_output=True, timeout=20)
+        self.assertEqual(help_run.returncode, 0, help_run.stderr)
+        self.assertIn('summary|diagnostic', help_run.stdout)
+        self.assertNotIn('--timing-profile-file', help_run.stdout)
+        for arguments in (['--stats-view', 'full'],
+                          ['--timing-profile-file', 'unused.cfg']):
+            with self.subTest(arguments=arguments):
+                run = subprocess.run([str(BINARY), *arguments], cwd=ROOT,
+                                     text=True, capture_output=True, timeout=20)
+                self.assertNotEqual(run.returncode, 0, run.stdout)
+                self.assertIn('error:', run.stderr)
+        with tempfile.TemporaryDirectory(prefix='hbm_option_contract_') as directory:
+            cfg = Path(directory) / 'invalid.cfg'
+            for assignment in ('stats_view=full', 'timing_profile_file=unused.cfg'):
+                cfg.write_text('[meta]\nschema_version=3\n[override]\n' + assignment + '\n')
+                run = subprocess.run([str(BINARY), '--config', str(cfg), '--requests', '0'],
+                                     cwd=ROOT, text=True, capture_output=True, timeout=20)
+                self.assertNotEqual(run.returncode, 0, run.stdout)
+                self.assertIn('error:', run.stderr)
+
+    def test_lpddr_density_report_with_multiple_channels_and_ranks(self):
+        with tempfile.TemporaryDirectory(prefix='lpddr_density_contract_') as directory:
+            cfg = Path(directory) / 'case.cfg'
+            result = Path(directory) / 'result.json'
+            cfg.write_text('[meta]\nschema_version=3\n[override]\nchannels=2\nranks=2\n')
+            for standard, expected_gib in (('lpddr5', 8), ('lpddr6', 16)):
+                run = subprocess.run([str(BINARY), '--standard', standard, '--config', str(cfg),
+                                      '--requests', '8', '--stats-json', str(result)], cwd=ROOT,
+                                     text=True, capture_output=True, timeout=20)
+                self.assertEqual(run.returncode, 0, run.stderr)
+                model = json.loads(result.read_text())['model']
+                self.assertEqual(model['density_gb'], 16)
+                self.assertEqual(model['capacity_per_instance_bytes'], expected_gib * 2**30)
+                self.assertNotIn('Nominal density_gb differs', run.stdout)
+
+    def test_timing_provenance_is_section_local_and_order_independent(self):
+        with tempfile.TemporaryDirectory(prefix='hbm_source_contract_') as directory:
+            temp = Path(directory)
+            cfg, table = temp / 'case.cfg', temp / 'timing.csv'
+
+            def run_table(text, extra=()):
+                if '[meta]' in text:
+                    text = text.replace('[meta]', '[meta]\nschema_version=3', 1)
+                elif '[' in text:
+                    text = '[meta]\nschema_version=3\n' + text
+                cfg.write_text(text)
+                run = subprocess.run([str(BINARY), '--config', str(cfg),
+                                      '--standard', 'hbm4', '--requests', '0',
+                                      '--dump-timing-table', str(table), *extra],
+                                     cwd=ROOT, text=True, capture_output=True, timeout=20)
+                self.assertEqual(run.returncode, 0, run.stderr)
+                with table.open(newline='') as stream:
+                    return {row['name']: row for row in csv.DictReader(stream)}
+
+            for section in ('[dram.timing]', '[override]', ''):
+                source_key = 'source' if section == '[dram.timing]' else 'timing_override_source'
+                before = run_table(f'{section}\n{source_key}=vendor\nnCL=30\n')
+                after = run_table(f'{section}\nnCL=30\n{source_key}=vendor\n')
+                self.assertEqual(before['nCL']['source'], 'vendor')
+                self.assertEqual(before['nCL'], after['nCL'])
+
+            rows = run_table('[dram.timing]\nnCL=30\nsource=vendor\n'
+                             '[override]\nnCWL=10\n')
+            self.assertEqual(rows['nCL']['source'], 'vendor')
+            self.assertEqual(rows['nCWL']['source'], 'research_default')
+            rows = run_table('[dram.timing]\nnCL=30\nsource=vendor\n'
+                             '[override]\nnCL=31\n')
+            self.assertEqual(rows['nCL']['source'], 'research_default')
+            # A child config cannot inherit the parent's vendor claim.
+            parent = temp / 'parent.cfg'
+            parent.write_text('[dram.timing]\nnCL=30\nsource=vendor\n')
+            rows = run_table('[meta]\nextends=parent.cfg\n[override]\nnCL=31\n')
+            self.assertEqual(rows['nCL']['source'], 'research_default')
+
+    def test_reject_duplicate_bare_keys_and_inconsistent_inputs(self):
+        with tempfile.TemporaryDirectory(prefix='hbm_reject_contract_') as directory:
+            cfg = Path(directory) / 'case.cfg'
+            for text, error in (
+                    ('requests=1\nrequests=2\n[override]\nseed=1\n', 'duplicate key'),
+                    ('[meta]\nschema_version=3\n[dram.timing]\nnCL=30\nsource=unknown_source\n',
+                     'invalid timing source')):
+                cfg.write_text(text)
+                run = subprocess.run([str(BINARY), '--config', str(cfg), '--check-config'],
+                                     cwd=ROOT, text=True, capture_output=True, timeout=20)
+                self.assertNotEqual(run.returncode, 0, run.stdout)
+                self.assertIn(error, run.stderr)
+            for schema in (1, 2, 3):
+                for values in ('nRC=2', 'density_gb=999', 'data_rate_mbps=9000\ntCK_ps=500'):
+                    prefix = '' if schema == 1 else f'[meta]\nschema_version={schema}\n[override]\n'
+                    cfg.write_text(prefix + values + '\n')
+                    run = subprocess.run([str(BINARY), '--config', str(cfg), '--standard', 'hbm4',
+                                          '--check-config'], cwd=ROOT, text=True,
+                                         capture_output=True, timeout=20)
+                    self.assertNotEqual(run.returncode, 0, run.stdout)
+                    self.assertNotIn('sectioned config documents require', run.stderr)
+
+    def test_english_compact_report_across_standards(self):
+        for standard in ('hbm3', 'hbm4', 'lpddr5', 'lpddr6'):
+            family = 'lpddr' if standard.startswith('lpddr') else 'hbm'
+            for view in ([], ['--stats-view', 'summary']):
+                with self.subTest(standard=standard, view=view):
+                    run = subprocess.run(
+                        [str(BINARY), '--config', f'configs/{family}.cfg',
+                         '--standard', standard, '--requests', '8', '--stack-count', '2', *view],
+                        cwd=ROOT, capture_output=True, text=True, timeout=20)
+                    self.assertEqual(run.returncode, 0, run.stderr)
+                    self.assertNotIn('Nominal density_gb differs', run.stdout)
+                    self.assertTrue(run.stdout.isascii(), run.stdout)
+                    self.assertLessEqual(len(run.stdout.splitlines()), 38)
+                    for label in ('Model / Standard', 'Organization', 'Capacity',
+                                  'Run Status', 'Simulation Time', 'Bandwidth / Utilization',
+                                  'Read Transaction Latency', 'Validation', 'Completed_Reads'):
+                        self.assertIn(label, run.stdout)
+                    with tempfile.TemporaryDirectory(prefix='hbm_english_report_') as temp:
+                        report = Path(temp) / 'summary.txt'
+                        report.write_text(run.stdout)
+                        with self.assertRaisesRegex(ValueError, 'stats-json'):
+                            read_result(report)
+
     def test_tool_helpers_do_not_collect_diagnostics_by_default(self):
         command = [str(BINARY), '--standard', 'hbm4', '--requests', '8']
         public, _ = run_simulator(command, cwd=ROOT, timeout=20)
@@ -85,6 +216,7 @@ class ResultContract(unittest.TestCase):
                 self.assertEqual(sum(s['completed_reads'] for s in raw['stacks']), m['completed_reads'])
                 self.assertNotIn('read_bytes_per_cycle', d)
                 self.assertNotIn('read_queue_len_avg', d)
+                self.assertNotIn('timing_profile_file', d)
                 if standard.startswith('lpddr'):
                     self.assertNotIn('sids', raw['model'])
                     self.assertIn('lpddr_wck_ratio', raw['parameters'])
@@ -100,9 +232,10 @@ class ResultContract(unittest.TestCase):
             path.write_text(json.dumps({'schema_version': 1, 'run_status': 'completed',
                                        'metrics': {'completed_reads': 9007199254740993}}))
             self.assertEqual(count(read_result(path), 'completed_reads'), 9007199254740993)
-            path.write_text('# ===== 模型 / MODEL =====\n')
-            with self.assertRaisesRegex(ValueError, 'stats-json'):
-                read_result(path)
+            for marker in ('# ===== 模型 / MODEL =====', '# ===== MODEL ====='):
+                path.write_text(marker + '\n')
+                with self.assertRaisesRegex(ValueError, 'stats-json'):
+                    read_result(path)
 
     def test_visualization_example_keeps_complete_results(self):
         with tempfile.TemporaryDirectory(prefix="hbm_visual_example_") as temp:
@@ -115,7 +248,7 @@ class ResultContract(unittest.TestCase):
             self.assertEqual(result["cmd_validation"], "pass")
             self.assertEqual(result["dfi_validation"], "pass")
             self.assertIn("tick_multiplier", result)
-            self.assertIn("模型 / MODEL", (Path(temp) / "stats.txt").read_text())
+            self.assertIn("# ===== MODEL =====", (Path(temp) / "stats.txt").read_text())
             self.assertTrue((Path(temp) / "dashboard.html").is_file())
 
     def test_single_stack_output_marker(self):
@@ -220,8 +353,8 @@ class ResultContract(unittest.TestCase):
             base = [str(BINARY), "--config", "configs/hbm.cfg", "--requests", "16",
                     "--stats-json", str(result)]
             reports = []
-            for view in ("summary", "full"):
-                run = subprocess.run([*base, "--stats-view", view], cwd=ROOT,
+            for view in ([], ["--stats-view", "summary"]):
+                run = subprocess.run([*base, *view], cwd=ROOT,
                                      capture_output=True, text=True, timeout=20)
                 self.assertEqual(run.returncode, 0, run.stderr)
                 report = read_result(result, require_completed=True)
@@ -234,7 +367,7 @@ class ResultContract(unittest.TestCase):
                 self.assertNotIn("diagnostics", raw)
                 self.assertLessEqual(len(raw["metrics"]), 24)
                 self.assertLessEqual(len(run.stdout.splitlines()), 34)
-                for section in ("模型 / MODEL", "参数 / PARAMETERS", "结果 / RESULTS"):
+                for section in ("# ===== MODEL =====", "# ===== PARAMETERS =====", "# ===== RESULTS ====="):
                     self.assertIn(section, run.stdout)
                 self.assertNotIn("row_hits", run.stdout)
                 reports.append(report)

@@ -49,7 +49,7 @@ int main(int argc, char **argv) {
     const auto lpddr =
         hbm_sim::config::load_document(root + "/configs/lpddr.cfg");
     require(hbm.sectioned && lpddr.sectioned,
-            "master configs must use schema-v2 sections");
+            "master configs must use sectioned schema syntax");
 
     // 配置库存是公开接口：两份可复制的标准主配置和四份内部验证集。
     // 用户模型放在 experiments/local，不再依赖 developer/usecase 配置层。

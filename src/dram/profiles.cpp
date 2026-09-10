@@ -7,9 +7,7 @@
 #include "hbm_sim/dram/profiles.hpp"
 
 #include <algorithm>
-#include <cctype>
 #include <cmath>
-#include <fstream>
 #include <initializer_list>
 #include <stdexcept>
 #include <string>
@@ -38,315 +36,6 @@ void mark_many(DramSpec& spec,
                const std::string& note) {
   for (const char* name : names) {
     mark(spec, name, source, note);
-  }
-}
-
-std::string trim_profile_value(std::string value) {
-  auto not_space = [](unsigned char c) { return !std::isspace(c); };
-  value.erase(value.begin(), std::find_if(value.begin(), value.end(), not_space));
-  value.erase(std::find_if(value.rbegin(), value.rend(), not_space).base(), value.end());
-  return value;
-}
-
-std::string normalize_profile_key(std::string key) {
-  std::transform(key.begin(), key.end(), key.begin(), [](unsigned char c) {
-    if (c == '-') return '_';
-    return static_cast<char>(std::tolower(c));
-  });
-  return key;
-}
-
-bool parse_profile_bool(std::string value) {
-  value = normalize_profile_key(std::move(value));
-  if (value == "1" || value == "true" || value == "yes" || value == "on") {
-    return true;
-  }
-  if (value == "0" || value == "false" || value == "no" || value == "off") {
-    return false;
-  }
-  throw std::invalid_argument("invalid bool in timing profile file: " + value);
-}
-
-int parse_profile_int(const std::string& value) {
-  std::size_t parsed = 0;
-  const int result = std::stoi(value, &parsed, 10);
-  if (parsed != value.size()) {
-    throw std::invalid_argument("invalid integer in timing profile file: " +
-                                value);
-  }
-  return result;
-}
-
-double parse_profile_double(const std::string& value) {
-  std::size_t parsed = 0;
-  const double result = std::stod(value, &parsed);
-  if (parsed != value.size() || !std::isfinite(result)) {
-    throw std::invalid_argument("invalid finite number in timing profile file: " +
-                                value);
-  }
-  return result;
-}
-
-TimingValueSource parse_profile_source(std::string value) {
-  value = normalize_profile_key(std::move(value));
-  if (value == "jedec" || value == "standard") return TimingValueSource::JEDEC;
-  if (value == "vendor" || value == "datasheet") return TimingValueSource::Vendor;
-  if (value == "derived") return TimingValueSource::Derived;
-  if (value == "external_reference" || value == "reference" || value == "ramulator2" ||
-      value == "dramsim3") return TimingValueSource::ExternalReference;
-  if (value == "research" || value == "research_default") return TimingValueSource::ResearchDefault;
-  throw std::invalid_argument("invalid timing source in profile file: " + value);
-}
-
-std::string profile_timing_name_for_key(const std::string& key) {
-  if (key == "nbl") return "nBL";
-  if (key == "ncl") return "nCL";
-  if (key == "ncwl") return "nCWL";
-  if (key == "nrcdrd" || key == "trcdrd_ns" || key == "trcd_rd_ns") return "nRCDRD";
-  if (key == "nrcdwr" || key == "trcdwr_ns" || key == "trcd_wr_ns") return "nRCDWR";
-  if (key == "nrp" || key == "trp_ns" || key == "trppb_ns") return "nRP";
-  if (key == "nrpab" || key == "trpab_ns") return "nRPab";
-  if (key == "nras" || key == "tras_ns") return "nRAS";
-  if (key == "nrc" || key == "trc_ns") return "nRC";
-  if (key == "nrtp" || key == "trtp_ns") return "nRTP";
-  if (key == "nwr" || key == "twr_ns" || key == "twtp_ns") return "nWR";
-  if (key == "nccds" || key == "tccds_ns") return "nCCDS";
-  if (key == "nccdl" || key == "tccdl_ns") return "nCCDL";
-  if (key == "nrrds" || key == "trrds_ns" || key == "trrd_s_ns" ||
-      key == "trrd_ns") return "nRRDS";
-  if (key == "nrrdl" || key == "trrdl_ns" || key == "trrd_l_ns") return "nRRDL";
-  if (key == "nfaw" || key == "tfaw_ns") return "nFAW";
-  if (key == "naadmin" || key == "taad_min_ns") return "nAADMin";
-  if (key == "naad" || key == "naadmax" || key == "taad_ns" ||
-      key == "taad_max_ns") return "nAADMax";
-  if (key == "nwck2ck" || key == "twck2ck_ns") return "nWCK2CK";
-  if (key == "nwckpst" || key == "twckpst_ns") return "nWCKPST";
-  if (key == "ncas" || key == "tcas_ns") return "nCAS";
-  if (key == "ncs" || key == "tcs_ns") return "nCS";
-  if (key == "nppd" || key == "tppd_ns") return "nPPD";
-  if (key == "nwtrs" || key == "twtrs_ns" || key == "twtr_s_ns") return "nWTRS";
-  if (key == "nwtrl" || key == "twtrl_ns" || key == "twtr_l_ns") return "nWTRL";
-  if (key == "nrtw" || key == "trtw_ns") return "nRTW";
-  if (key == "nccdr" || key == "tccdr_ns") return "nCCDR";
-  if (key == "nrfc" || key == "trfc_ns" || key == "trfcab_ns") return "nRFC";
-  if (key == "nrfcpb" || key == "trfcpb_ns" || key == "trfcdb_ns") return "nRFCpb";
-  if (key == "nrfmab" || key == "trfmab_ns" || key == "trrfab_ns") return "nRFMab";
-  if (key == "nrfmpb" || key == "trfmpb_ns" || key == "trrfpb_ns") return "nRFMpb";
-  if (key == "nrrefd" || key == "trrefd_ns") return "nRREFD";
-  if (key == "nrefdb2act" || key == "tdbr2act_ns" || key == "trefdb2act_ns") return "nREFDB2ACT";
-  if (key == "nrefdb2refdbs" || key == "tdbr2dbr_s_ns" || key == "trefdb2refdb_s_ns") return "nREFDB2REFDBS";
-  if (key == "nrefdb2refdbl" || key == "tdbr2dbr_l_ns" || key == "trefdb2refdb_l_ns") return "nREFDB2REFDBL";
-  if (key == "nrefi" || key == "trefi_us") return "nREFI";
-  if (key == "nrefipb" || key == "trefipb_us" || key == "trefipb_ns" || key == "trefidb_ns") return "nREFIpb";
-  if (key == "nmrw" || key == "tmrw_ns") return "nMRW";
-  if (key == "nmrr" || key == "tmrr_ns") return "nMRR";
-  if (key == "nwcksync" || key == "twcksync_ns") return "nWCKSYNC";
-  if (key == "nwcktrain" || key == "twcktrain_ns") return "nWCKTRAIN";
-  if (key == "ndvfs" || key == "tdvfs_ns") return "nDVFS";
-  if (key == "npdex" || key == "tpdex_ns" || key == "txp_ns") return "nPDEX";
-  if (key == "nsrefex" || key == "tsrefex_ns" || key == "txs_ns") return "nSREFEX";
-  if (key == "neccscrub" || key == "teccscrub_ns") return "nECCSCRUB";
-  if (key == "nraserr" || key == "traserr_ns") return "nRASERR";
-  if (key == "nlinkretry" || key == "tlinkretry_ns") return "nLINKRETRY";
-  return {};
-}
-
-void set_profile_timing(DramSpec& spec,
-                        const std::string& name,
-                        int value,
-                        TimingValueSource source,
-                        const std::string& note) {
-  if (name == "nBL") spec.timing.nBL = value;
-  else if (name == "nCL") spec.timing.nCL = value;
-  else if (name == "nCWL") spec.timing.nCWL = value;
-  else if (name == "nRCDRD") spec.timing.nRCDRD = value;
-  else if (name == "nRCDWR") spec.timing.nRCDWR = value;
-  else if (name == "nRP") spec.timing.nRP = value;
-  else if (name == "nRPab") spec.timing.nRPab = value;
-  else if (name == "nRAS") spec.timing.nRAS = value;
-  else if (name == "nRC") spec.timing.nRC = value;
-  else if (name == "nRTP") spec.timing.nRTP = value;
-  else if (name == "nWR") spec.timing.nWR = value;
-  else if (name == "nCCDS") spec.timing.nCCDS = value;
-  else if (name == "nCCDL") spec.timing.nCCDL = value;
-  else if (name == "nRRDS") spec.timing.nRRDS = value;
-  else if (name == "nRRDL") spec.timing.nRRDL = value;
-  else if (name == "nFAW") spec.timing.nFAW = value;
-  else if (name == "nAADMin") spec.timing.nAADMin = value;
-  else if (name == "nAADMax") spec.timing.nAADMax = value;
-  else if (name == "nWCK2CK") spec.timing.nWCK2CK = value;
-  else if (name == "nWCKPST") spec.timing.nWCKPST = value;
-  else if (name == "nCAS") spec.timing.nCAS = value;
-  else if (name == "nCS") spec.timing.nCS = value;
-  else if (name == "nPPD") spec.timing.nPPD = value;
-  else if (name == "nWTRS") spec.timing.nWTRS = value;
-  else if (name == "nWTRL") spec.timing.nWTRL = value;
-  else if (name == "nRTW") spec.timing.nRTW = value;
-  else if (name == "nCCDR") spec.timing.nCCDR = value;
-  else if (name == "nRFC") spec.timing.nRFC = value;
-  else if (name == "nRFCpb") spec.timing.nRFCpb = value;
-  else if (name == "nRFMab") spec.timing.nRFMab = value;
-  else if (name == "nRFMpb") spec.timing.nRFMpb = value;
-  else if (name == "nRREFD") spec.timing.nRREFD = value;
-  else if (name == "nREFDB2ACT") spec.timing.nREFDB2ACT = value;
-  else if (name == "nREFDB2REFDBS") spec.timing.nREFDB2REFDBS = value;
-  else if (name == "nREFDB2REFDBL") spec.timing.nREFDB2REFDBL = value;
-  else if (name == "nREFI") spec.timing.nREFI = value;
-  else if (name == "nREFIpb") spec.timing.nREFIpb = value;
-  else if (name == "nMRW") spec.timing.nMRW = value;
-  else if (name == "nMRR") spec.timing.nMRR = value;
-  else if (name == "nWCKSYNC") spec.timing.nWCKSYNC = value;
-  else if (name == "nWCKTRAIN") spec.timing.nWCKTRAIN = value;
-  else if (name == "nDVFS") spec.timing.nDVFS = value;
-  else if (name == "nPDEX") spec.timing.nPDEX = value;
-  else if (name == "nSREFEX") spec.timing.nSREFEX = value;
-  else if (name == "nECCSCRUB") spec.timing.nECCSCRUB = value;
-  else if (name == "nRASERR") spec.timing.nRASERR = value;
-  else if (name == "nLINKRETRY") spec.timing.nLINKRETRY = value;
-  else throw std::invalid_argument("unsupported timing profile field: " + name);
-  set_timing_source(spec, name, source, note);
-}
-
-int profile_nck_from_key(const DramSpec& spec, const std::string& key, const std::string& value) {
-  if (key.size() >= 3 && key.rfind("_ns") == key.size() - 3) {
-    return jedec::ns_to_nck(parse_profile_double(value), spec.timing.tCK_ps);
-  }
-  if (key.size() >= 3 && key.rfind("_us") == key.size() - 3) {
-    return jedec::us_to_nck(parse_profile_double(value), spec.timing.tCK_ps);
-  }
-  return parse_profile_int(value);
-}
-
-void apply_profile_file_value(DramSpec& spec,
-                              const std::string& key,
-                              const std::string& value,
-                              TimingValueSource source,
-                              const std::string& note) {
-  const std::string timing_name = profile_timing_name_for_key(key);
-  if (!timing_name.empty()) {
-    set_profile_timing(spec, timing_name, profile_nck_from_key(spec, key, value), source, note);
-    return;
-  }
-
-  if (key == "timing_profile") spec.timing_profile = value;
-  else if (key == "vendor_profile") spec.vendor_profile = value;
-  else if (key == "mode_profile") spec.mode_profile = value;
-  else if (key == "speed_bin_mbps") {
-    spec.speed_bin_mbps = parse_profile_int(value);
-    // speed-bin 通常描述外部可见数据速率。除非文件后续显式覆盖
-    // data_rate_mbps/tCK_ps，否则保持推导数据速率与 tCK 一致。
-    spec.data_rate_mbps = spec.speed_bin_mbps;
-    spec.timing.tCK_ps = static_cast<double>(tck_ps_for_speed(spec.data_rate_mbps));
-  }
-  else if (key == "density_gb") spec.density_gb = parse_profile_double(value);
-  else if (key == "stack_height") spec.stack_height = parse_profile_int(value);
-  else if (key == "data_rate_mbps") {
-    spec.data_rate_mbps = parse_profile_int(value);
-    // 提供有效数据速率时重新计算标称时钟周期；后续显式 tCK_ps 仍优先。
-    spec.timing.tCK_ps = static_cast<double>(tck_ps_for_speed(spec.data_rate_mbps));
-  }
-  else if (key == "data_bus_bits") spec.data_bus_bits = parse_profile_int(value);
-  else if (key == "prefetch_size" || key == "internal_prefetch_size") spec.internal_prefetch_size = parse_profile_int(value);
-  else if (key == "dfi_phase_count") spec.dfi_phase_count = parse_profile_int(value);
-  else if (key == "dfi_data_lane_bytes") spec.dfi_data_lane_bytes = parse_profile_int(value);
-  else if (key == "dfi_read_latency_nck") spec.dfi_read_latency_nck = parse_profile_int(value);
-  else if (key == "dfi_write_latency_nck") spec.dfi_write_latency_nck = parse_profile_int(value);
-  else if (key == "dfi_read_latency_ns") spec.dfi_read_latency_nck = jedec::ns_to_nck(parse_profile_double(value), spec.timing.tCK_ps);
-  else if (key == "dfi_write_latency_ns") spec.dfi_write_latency_nck = jedec::ns_to_nck(parse_profile_double(value), spec.timing.tCK_ps);
-  else if (key == "tick_multiplier") spec.tick_multiplier = parse_profile_int(value);
-  else if (key == "tck_ps") spec.timing.tCK_ps = parse_profile_double(value);
-  else if (key == "channels") spec.org.channels = parse_profile_int(value);
-  else if (key == "pseudo_channels") spec.org.pseudo_channels = parse_profile_int(value);
-  else if (key == "sids") spec.org.sids = parse_profile_int(value);
-  else if (key == "ranks") spec.org.ranks = parse_profile_int(value);
-  else if (key == "bank_groups") spec.org.bank_groups = parse_profile_int(value);
-  else if (key == "banks_per_group") spec.org.banks_per_group = parse_profile_int(value);
-  else if (key == "rows") spec.org.rows = parse_profile_int(value);
-  else if (key == "columns") spec.org.columns = parse_profile_int(value);
-  else if (key == "line_size") spec.org.line_size = parse_profile_int(value);
-  else if (key == "dram_transaction_bytes" || key == "transaction_size") {
-    spec.org.dram_transaction_bytes = parse_profile_int(value);
-  }
-  else if (key == "supports_refresh") spec.supports_refresh = parse_profile_bool(value);
-  else if (key == "supports_rfm") spec.supports_rfm = parse_profile_bool(value);
-  else if (key == "supports_ecc") spec.supports_ecc = parse_profile_bool(value);
-  else if (key == "hbm_full_32_channel_stack") spec.hbm_full_32_channel_stack = parse_profile_bool(value);
-  else if (key == "hbm_sid_interleave") {
-    spec.hbm_sid_interleave = parse_profile_bool(value);
-    spec.column_bus_scope = spec.hbm_sid_interleave ? TimingScope::Sid : TimingScope::PseudoChannel;
-  } else if (key == "hbm_pc_interleave") spec.hbm_pc_interleave = parse_profile_bool(value);
-  else if (key == "hbm_edge_pairing") spec.hbm_edge_pairing = parse_profile_bool(value);
-  else if (key == "hbm_strict_edge_pairing") spec.hbm_strict_edge_pairing = parse_profile_bool(value);
-  else if (key == "hbm_edge_pairing_matrix") spec.hbm_edge_pairing_matrix = value;
-  else if (key == "hbm_sid_mapping") spec.hbm_sid_mapping = value;
-  else if (key == "hbm_ecc_scheme") spec.hbm_ecc_scheme = value;
-  else if (key == "hbm_ras_policy") spec.hbm_ras_policy = value;
-  else if (key == "hbm_link_crc_mode") spec.hbm_link_crc_mode = value;
-  else if (key == "hbm_link_retry_enabled") spec.hbm_link_retry_enabled = parse_profile_bool(value);
-  else if (key == "hbm_link_crc_bits_per_request") spec.hbm_link_crc_bits_per_request = parse_profile_int(value);
-  else if (key == "hbm_ras_metadata_bits_per_request") spec.hbm_ras_metadata_bits_per_request = parse_profile_int(value);
-  else if (key == "hbm_ecc_bits_per_request") spec.hbm_ecc_bits_per_request = parse_profile_int(value);
-  else if (key == "lpddr_link_protection") spec.lpddr_link_protection = parse_profile_bool(value);
-  else if (key == "lpddr_mode_register_profile") spec.lpddr_mode_register_profile = value;
-  else if (key == "lpddr_wck_training_mode") spec.lpddr_wck_training_mode = value;
-  else if (key == "lpddr_dvfs_transition_policy") spec.lpddr_dvfs_transition_policy = value;
-  else if (key == "lpddr_link_protection_mode") spec.lpddr_link_protection_mode = value;
-  else if (key == "lpddr_low_power_state_policy") spec.lpddr_low_power_state_policy = value;
-  else if (key == "lpddr_wck_training_required") spec.lpddr_wck_training_required = parse_profile_bool(value);
-  else if (key == "lpddr_dbi_enabled") spec.lpddr_dbi_enabled = parse_profile_bool(value);
-  else if (key == "lpddr_link_ecc_enabled") spec.lpddr_link_ecc_enabled = parse_profile_bool(value);
-  else if (key == "lpddr_ca_parity_enabled") spec.lpddr_ca_parity_enabled = parse_profile_bool(value);
-  else if (key == "lpddr_dbi_bits_per_request") spec.lpddr_dbi_bits_per_request = parse_profile_int(value);
-  else if (key == "lpddr_link_ecc_bits_per_request") spec.lpddr_link_ecc_bits_per_request = parse_profile_int(value);
-  else if (key == "lpddr_ca_parity_bits_per_command") spec.lpddr_ca_parity_bits_per_command = parse_profile_int(value);
-  else if (key == "refresh_postpone_limit") spec.refresh_postpone_limit = parse_profile_int(value);
-  else if (key == "refresh_pullin_limit") spec.refresh_pullin_limit = parse_profile_int(value);
-  else if (key == "refresh_credit_limit") spec.refresh_credit_limit = parse_profile_int(value);
-  else if (key == "refresh_high_temp_multiplier") spec.refresh_high_temp_multiplier = parse_profile_int(value);
-  else throw std::invalid_argument("unsupported key in timing profile file: " + key);
-}
-
-void apply_external_timing_profile_file(DramSpec& spec) {
-  if (spec.timing_profile_file.empty()) {
-    return;
-  }
-  std::ifstream in(spec.timing_profile_file);
-  if (!in) {
-    throw std::runtime_error("failed to open timing profile file: " + spec.timing_profile_file);
-  }
-
-  TimingValueSource source = TimingValueSource::JEDEC;
-  std::string note = "Loaded from timing profile file " + spec.timing_profile_file + ".";
-  std::string line;
-  int lineno = 0;
-  while (std::getline(in, line)) {
-    lineno++;
-    const std::size_t comment = line.find('#');
-    if (comment != std::string::npos) {
-      line.resize(comment);
-    }
-    line = trim_profile_value(line);
-    if (line.empty()) {
-      continue;
-    }
-    const std::size_t eq = line.find('=');
-    if (eq == std::string::npos) {
-      throw std::runtime_error("timing profile file line " + std::to_string(lineno) + " missing '='");
-    }
-    std::string key = normalize_profile_key(trim_profile_value(line.substr(0, eq)));
-    std::string value = trim_profile_value(line.substr(eq + 1));
-    if (key == "source" || key == "timing_source") {
-      source = parse_profile_source(value);
-      continue;
-    }
-    if (key == "note" || key == "timing_note") {
-      note = value;
-      continue;
-    }
-    if (key == "profile_file_format") {
-      continue;
-    }
-    apply_profile_file_value(spec, key, value, source, note);
   }
 }
 
@@ -763,6 +452,9 @@ void apply_lpddr6_profile(DramSpec& spec, double resolved_tck_ps) {
   } else {
     spec.data_rate_mbps = spec.speed_bin_mbps;
   }
+  // The exported speed selector describes the selected operating point, including
+  // low/disabled DVFS, just as it does on the shared config construction path.
+  spec.speed_bin_mbps = spec.data_rate_mbps;
 
   spec.org = Organization{};
   spec.timing = Timing{};
@@ -1012,7 +704,7 @@ void apply_lpddr5_profile(DramSpec& spec, double resolved_tck_ps) {
 }  // namespace
 
 void apply_standard_timing_profile(DramSpec& spec, double resolved_tck_ps) {
-  // 重新应用 profile 时丢弃上一轮 profile/external-file 的来源标记，避免
+  // 重新应用 profile 时丢弃上一轮 profile 的来源标记，避免
   // vendor -> generic 切换后遗留 Vendor 标签。配置的逐项 source override
   // 总是在本函数之后应用。
   spec.timing_source_overrides.clear();
@@ -1034,7 +726,6 @@ void apply_standard_timing_profile(DramSpec& spec, double resolved_tck_ps) {
       throw std::invalid_argument("cannot apply timing profile without standard traits");
   }
 
-  apply_external_timing_profile_file(spec);
 }
 
 }  // namespace hbm_sim

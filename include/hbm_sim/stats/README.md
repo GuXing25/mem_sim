@@ -8,7 +8,7 @@
 单位与范围必须明确，尤其是 Host/事务、system tick/Controller 累计 tick、
 控制器行命中/后端行缓冲命中、有效数据/接口记账带宽。
 
-summary/full 共用精简人读报告；机器接口使用分区 JSON schema 2。
+summary 使用英文精简人读报告；机器接口使用分区 JSON schema 2，键名不随终端标签变化。
 无完成读时延迟为 null；未启用的功耗/热结果不生成。不要用数值零冒充未收集数据。
 整数不能先转 double；JSON 不沿用终端舍入精度。
 
