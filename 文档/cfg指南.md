@@ -145,7 +145,7 @@ HBM4 8Hi 的每 SID 2 BG × 2 SID = 每 PC 4 BG，与 Table 5 的 PC 口径一�
 | data_rate_mbps | speed_bin、tCK、profile 中时间项展开 | 用户显式 nCK 不会自动保持原 ns；RL/WL 需目标模式表 |
 | LPDDR5 lpddr_wck_ratio | CK 换算；允许 2 或 4 | 速率与模式有效性 |
 | LPDDR6 lpddr_wck_ratio | 当前仅实现 2:1 | 其他比例会拒绝，不能视为自由连续参数 |
-| LPDDR6 low DVFS | 选低速分支；data_rate 必须与 lpddr_low_data_rate_mbps 一致 | 模式恢复/训练约束 |
+| LPDDR6 低速运行点（项目枚举 low） | 选低速流程分支；data_rate 必须与 lpddr_low_data_rate_mbps 一致。不等同 JEDEC 的 DVFSL 档位定义；只有速率 <=3200 Mb/s 时才使用 JEDEC DVFSL timing/nACU 列，4267 等研究运行点回退 non-DVFSL 列 | 模式恢复/训练约束 |
 | nRAS 或 nRP | 未显式覆盖 nRC 时推导 nRC=nRAS+nRP | 显式 nRC 必须满足校验，不能小于和 |
 | nRFC/nRFCpb | 非 LPDDR6 且未显式覆盖时，nRFMab/nRFMpb 跟随 | LPDDR6 RFM 时长独立，不能套相同规则 |
 | memory_capacity_bytes | 设置后端地址上限；0 使用几何容量 | 不改 DRAM 几何；输入必须同时落在几何与后端范围内 |
@@ -277,12 +277,12 @@ density_gb = auto
 | `phy_command_fifo_depth` | 命令 FIFO 深度 | 可；与 command pipeline/吞吐联合解释 | 可调，behavioral 生效；联合 phy_command_pipeline_cycles 解释占用，FIFO 深度不等于 CA 服务率 |
 | `phy_write_fifo_depth` | 写数据 FIFO 深度 | 可 | 可调，behavioral 生效；联合写数据流水线、写时延与注入压力观察反压 |
 | `phy_read_fifo_depth` | 读返回 FIFO 深度 | 可 | 可调，behavioral 生效；联合读返回流水线、读时延与完成消费观察反压 |
-| `[phy] command_pipeline_cycles` | 命令流水延迟，nCK | 可；平面 canonical key 为 `phy_command_pipeline_cycles` | 一般保持基准；behavioral 研究时可调，与命令 FIFO、tick_multiplier 一起核对；不是独立 CA token-rate |
-| `[phy] write_data_pipeline_cycles` | 写数据流水延迟，nCK | 可；canonical key 为 `phy_write_data_pipeline_cycles` | 一般保持基准；behavioral 的附加延迟，配套 FIFO、DFI 和 nCL/nCWL，避免误当 DRAM 本体延迟 |
-| `[phy] read_return_pipeline_cycles` | 读返回流水延迟，nCK | 可；canonical key 为 `phy_read_return_pipeline_cycles` | 一般保持基准；behavioral 的附加延迟，配套 FIFO、DFI 和 nCL/nCWL，避免误当 DRAM 本体延迟 |
-| `[phy] reset_cycles` | reset 持续 nCK | 可，需校准；canonical key 为 `phy_reset_cycles` | 一般保持基准或按 PHY 资料校准；behavioral 生效，联动 auto_train、tick_multiplier |
-| `[phy] initialization_cycles` | init 持续 nCK | 可，需校准；canonical key 为 `phy_initialization_cycles` | 一般保持基准或按 PHY 资料校准；behavioral 生效，联动 auto_train、tick_multiplier |
-| `[phy] training_cycles` | training 持续 nCK | 可，需校准；canonical key 为 `phy_training_cycles` | 一般保持基准或按 PHY 资料校准；behavioral 生效，联动 auto_train、tick_multiplier |
+| `[phy] command_pipeline_cycles` | 命令流水延迟，nCK | 可；canonical key 为 `phy_command_pipeline_cycles`；DFI 侧对应 Command clock cycles，仅 matched ratio 下与 nCK 等值 | 一般保持基准；behavioral 研究时可调，与命令 FIFO、tick_multiplier 一起核对；不是独立 CA token-rate |
+| `[phy] write_data_pipeline_cycles` | 写数据流水延迟，nCK | 可；canonical key 为 `phy_write_data_pipeline_cycles`；对应 DFI tphy_wrdata/tphy_wrlat | 一般保持基准；behavioral 的附加延迟，配套 FIFO、DFI 和 nCL/nCWL，避免误当 DRAM 本体延迟 |
+| `[phy] read_return_pipeline_cycles` | 读返回流水延迟，nCK | 可；canonical key 为 `phy_read_return_pipeline_cycles`；对应 DFI tphy_rdlat（上限值） | 一般保持基准；behavioral 的附加延迟，配套 FIFO、DFI 和 nCL/nCWL，避免误当 DRAM 本体延迟 |
+| `[phy] reset_cycles` | reset 持续 nCK | 可，需校准；canonical key 为 `phy_reset_cycles`；DFI 只定义 `dfi_init_start/complete` 握手，不规定该时长 | 一般保持基准或按 PHY 资料校准；behavioral 生效，联动 auto_train、tick_multiplier |
+| `[phy] initialization_cycles` | init 持续 nCK | 可，需校准；canonical key 为 `phy_initialization_cycles`；同上，属项目行为级时长 | 一般保持基准或按 PHY 资料校准；behavioral 生效，联动 auto_train、tick_multiplier |
+| `[phy] training_cycles` | training 持续 nCK | 可，需校准；canonical key 为 `phy_training_cycles`；同上，DFI 4.0 起训练为 optional | 一般保持基准或按 PHY 资料校准；behavioral 生效，联动 auto_train、tick_multiplier |
 | `[phy] auto_train` | true 经过训练；false 跳过训练但仍经过复位和初始化 | 可；canonical key 为 `phy_auto_train` | 可选行为；仅 behavioral 的训练流程，false 不跳过复位/初始化；不替代 LPDDR WCK 训练开关 |
 | `dfi_phase_count` | DFI beat phase 数 | 0 表示派生 | 一般保持 0 自动派生；显式值与事务大小、协议和 DFI beat 组织配套；不使用 auto 字符串 |
 | `dfi_data_lane_bytes` | 每 beat byte | 0 表示派生 | 一般保持 0 自动派生；显式值与事务大小、协议和 DFI beat 组织配套；不使用 auto 字符串 |
@@ -290,7 +290,7 @@ density_gb = auto
 
 上表已经注明 canonical key；长短名称指向同一字段，配置中保持一种写法即可。
 
-配置与默认 PHY 统一记录 `dfi_version=6.0.1`；这是来源标签，不是版本功能开关。
+配置与默认 PHY 记录 `dfi_version=6.0.1`；HBM3 验证夹具例外，记为项目语义标签 `hbm3_project_behavioral`（DFI 6.x 已移除 HBM3 支持）。该字段是来源标签，不是版本功能开关。
 `dfi_phase_count` 仍用于事件 phase 的取模；已移除的适配器内部 `dfi_phases` 没有消费者，
 不能将它的删除理解为取消相位配置。signal-like CSV 保留项目历史名称，
 `dfi_cs_n/dfi_reset_n/dfi_wrdata_mask` 等不等同于规范的
@@ -302,7 +302,7 @@ density_gb = auto
 
 | 配置键 | 含义 | 说明 | 修改建议 / 联动项 |
 |---|---|---|---|
-| `refresh_policy` | per_bank/all_bank | 项目枚举；LPDDR6 的 per_bank 实际选择 REFdb 双 Bank 刷新，标准没有 REFpb 命令 | 可选已有刷新策略；与 supports_refresh、nRFC/nRFCpb、nREFI/nREFIpb 和 LPDDR6 REFdb 配套 |
+| `refresh_policy` | per_bank/all_bank | 项目枚举。HBM 侧 per_bank 即标准 REFpb（JESD270-4A 有该命令）；LPDDR6 侧标准只有 REFab/REFdb，无 REFpb，per_bank 实际选择 REFdb 双 Bank 刷新 | 可选已有刷新策略；与 supports_refresh、nRFC/nRFCpb、nREFI/nREFIpb 和 LPDDR6 REFdb 配套 |
 | `refresh_temperature_mode` / `--refresh-temperature` | normal/high/extended | 刷新温度模式 | 联动修改：温度档、倍率、nREFI/nREFIpb；不等于修改 thermal_ambient_c 后自动选择该档 |
 | `refresh_high_temp_multiplier` | 高温刷新频率倍率，正整数 | 越大则刷新间隔越短；与器件温度档核对 | 联动修改：温度档、倍率、nREFI/nREFIpb；不等于修改 thermal_ambient_c 后自动选择该档 |
 | `refresh_postpone_limit` | 最大延后 | 策略参数 | 可调刷新策略；三项共同约束维护调度，与 refresh_policy、刷新间隔一起验证 |
@@ -312,18 +312,18 @@ density_gb = auto
 | `rfm_act_threshold` | ACT 累计触发阈值 | 研究/器件参数，需校准 | 联动修改：supports_rfm、触发阈值、递减量、RFM 范围及 nRFMab/nRFMpb |
 | `rfm_decrement` | RFM 后计数下降量 | 研究/器件参数，需校准 | 联动修改：supports_rfm、触发阈值、递减量、RFM 范围及 nRFMab/nRFMpb |
 | `low_power_mode` / `--low-power` | off/power_down/self_refresh | 低功耗策略 | 联动修改：低功耗模式及进入/退出延迟；控制器空闲策略与 PHY 显式低功耗序列分别验证 |
-| `low_power_entry_cycles` | 空闲进入阈值，nCK | 控制器策略，不等于向 PHY 发 PDE/SREFEN | 联动修改：低功耗模式及进入/退出延迟；控制器空闲策略与 PHY 显式低功耗序列分别验证 |
+| `low_power_entry_cycles` | 空闲进入阈值，nCK | 控制器策略，不等于 DFI 侧的 `dfi_lp_ctrl_req`/`dfi_lp_data_req` 握手 | 联动修改：低功耗模式及进入/退出延迟；控制器空闲策略与 PHY 显式低功耗序列分别验证 |
 | `low_power_exit_cycles` | power-down 退出延迟，nCK | 需 profile 依据 | 联动修改：低功耗模式及进入/退出延迟；控制器空闲策略与 PHY 显式低功耗序列分别验证 |
 | `self_refresh_exit_cycles` | self-refresh 退出延迟，nCK | 需 profile 依据 | 联动修改：低功耗模式及进入/退出延迟；控制器空闲策略与 PHY 显式低功耗序列分别验证 |
 | `lpddr_efficiency_mode` | normal/static/dynamic | LPDDR 模式 | 可选已有模式；与 LPDDR 标准、速率和保护模式一起检查生效 Timing |
-| `lpddr_dvfs_mode` | nominal/low/disabled | LPDDR DVFS | 联动修改：low 档 data_rate_mbps 应匹配 lpddr_low_data_rate_mbps；核对 WCK 训练与 nDVFS |
+| `lpddr_dvfs_mode` | nominal/low/disabled | LPDDR DVFS/低速流程枚举；low 不自动等同 JEDEC DVFSL timing | 联动修改：low 档 data_rate_mbps 应匹配 lpddr_low_data_rate_mbps；<=3200 Mb/s 才使用 JEDEC DVFSL timing/nACU 列，超过范围回退 non-DVFSL 列；核对 WCK 训练与 nDVFS |
 | `lpddr_wck_mode` | `cas_sync`/`always_on` | LPDDR WCK；`burst_sync` 仅保留枚举占位，解析器会拒绝，不能作为实验配置 | 可选 cas_sync/always_on；联动 nCAS、nWCK2CK、nWCKPST 和训练；burst_sync 不支持 |
-| `hbm_link_crc_mode` / `--hbm-link-crc`、`hbm_link_crc_bits_per_request` / `--hbm-link-crc-bits` | HBM CRC 模式/开销 | HBM 专用 | 联动修改：CRC 模式及位数；当前 crc16 可在位数为 0 时补成 16；不得靠任意字符串创造 CRC 算法 |
+| `hbm_link_crc_mode` / `--hbm-link-crc`、`hbm_link_crc_bits_per_request` / `--hbm-link-crc-bits` | HBM CRC 模式/开销 | 项目合成研究项：JESD270-4A 无 CRC、无 retry，标准链路保护为 parity（APAR/AERR、DPAR/DERR）；不得作为 HBM 标准特性引用 | 联动修改：CRC 模式及位数；当前 crc16 可在位数为 0 时补成 16；不得靠任意字符串创造 CRC 算法 |
 | `hbm_ras_metadata_bits_per_request` / `--hbm-ras-metadata-bits`、`hbm_ecc_bits_per_request` / `--hbm-ecc-bits` | HBM 接口 metadata | HBM 专用 | 可研究接口开销；配套协议保护开关，检查通用与专用位数的最终记账；不等于 payload ECC |
-| `hbm_link_retry_enabled` / `--hbm-link-retry` | HBM retry 入口 | 行为级 | 一般按基准；研究重试需与 CRC、nLINKRETRY 和相关控制序列一起验证 |
-| `lpddr_link_protection` | LPDDR link protection | LPDDR 专用 | 联动修改：各保护/DBI 开关及对应 bits 字段、协议模式；不自动等同于 payload 纠错 |
-| `lpddr_dbi_enabled` / `--lpddr-dbi`、`lpddr_dbi_bits_per_request` / `--lpddr-dbi-bits` | DBI 及开销 | LPDDR 专用 | 联动修改：各保护/DBI 开关及对应 bits 字段、协议模式；不自动等同于 payload 纠错 |
-| `lpddr_link_ecc_enabled` / `--lpddr-link-ecc`、`lpddr_link_ecc_bits_per_request` / `--lpddr-link-ecc-bits` | link ECC | LPDDR 专用 | 联动修改：各保护/DBI 开关及对应 bits 字段、协议模式；不自动等同于 payload 纠错 |
+| `hbm_link_retry_enabled` / `--hbm-link-retry` | HBM retry 入口 | 项目合成研究项；标准无重试/重放机制 | 一般按基准；研究重试需与 CRC、nLINKRETRY 和相关控制序列一起验证 |
+| `lpddr_link_protection` | LPDDR link protection | LPDDR 专用 | 联动修改：各保护/DBI 开关及对应 bits 字段、协议模式；LPDDR6 标准/设备模式下不可与 DBI 同时启用；不自动等同于 payload 纠错 |
+| `lpddr_dbi_enabled` / `--lpddr-dbi`、`lpddr_dbi_bits_per_request` / `--lpddr-dbi-bits` | DBI 及开销 | LPDDR 专用 | 联动修改：各保护/DBI 开关及对应 bits 字段、协议模式；LPDDR6 标准/设备模式下不可与 link protection/link ECC 同时启用；不自动等同于 payload 纠错 |
+| `lpddr_link_ecc_enabled` / `--lpddr-link-ecc`、`lpddr_link_ecc_bits_per_request` / `--lpddr-link-ecc-bits` | link ECC | LPDDR 专用 | 联动修改：各保护/DBI 开关及对应 bits 字段、协议模式；LPDDR6 标准/设备模式下不可与 DBI 同时启用；不自动等同于 payload 纠错 |
 | `lpddr_ca_parity_enabled` / `--lpddr-ca-parity`、`lpddr_ca_parity_bits_per_command` / `--lpddr-ca-parity-bits` | CA parity | LPDDR 专用 | 联动修改：各保护/DBI 开关及对应 bits 字段、协议模式；不自动等同于 payload 纠错 |
 | `metadata_bits_per_request`、`ecc_bits_per_request` | 通用接口开销 | 影响 interface bandwidth | 可研究接口开销；配套协议保护开关，检查通用与专用位数的最终记账；不等于 payload ECC |
 
@@ -345,7 +345,7 @@ density_gb = auto
 | `lpddr_wck_training_mode` | startup/dvfs/cas-sync 等训练策略标签 | 一般保持基准；当前包含 dvfs/DVFS/retrain/Retrain 的字符串参与重训练判定，需配套 training_required 与 DVFS |
 | `lpddr_wck_training_required` | 启动或 DVFS 后是否要求 WCK training | 联动修改：训练模式、nWCKTRAIN、DVFS 和控制序列；不等同于 phy_auto_train |
 | `lpddr_dvfs_transition_policy` | DVFS 转换许可策略标签 | 一般保持基准标签；与对应实际能力/模式开关一致，不把名称当成可插入的新算法 |
-| `lpddr_low_data_rate_mbps` | 低速 DVFS 分支数据率 | 联动修改：low 档 data_rate_mbps 应匹配 lpddr_low_data_rate_mbps；核对 WCK 训练与 nDVFS |
+| `lpddr_low_data_rate_mbps` | 低速分支数据率 | 联动修改：low 档 data_rate_mbps 应匹配 lpddr_low_data_rate_mbps；<=3200 Mb/s 才进入 JEDEC DVFSL timing/nACU 表列，4267 等高于 DVFSL 范围的研究点使用 non-DVFSL 列；核对 WCK 训练与 nDVFS |
 | `lpddr_low_power_state_policy` | 低功耗状态策略标签 | 一般保持基准标签；与对应实际能力/模式开关一致，不把名称当成可插入的新算法 |
 | `lpddr_mode_register_profile` | mode register profile 标签 | 一般保持基准标签；与对应实际能力/模式开关一致，不把名称当成可插入的新算法 |
 | `lpddr_link_protection_mode` | link protection 模式长名称 | 一般保持基准标签；与对应实际能力/模式开关一致，不把名称当成可插入的新算法 |
