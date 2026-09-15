@@ -60,6 +60,39 @@ STANDARD_ORGS = {
 # LPDDR5（恒 4 BG × 4 = 16 banks）：
 #   12Gb x16 rows 49152（= 2^15 + 2^14）、16Gb x16 rows 65536
 #   16Gb x8  rows 131072 且 columns 32（同密度换宽度：页 1024 B、x8 DQ）
+# 组织扰动组：在标准组织基线上把**单个**组织键放大一倍，用于观察组织形状本身
+# （而不是密度档）带来的影响。三项各自的容量都是基线的 2 倍，因此彼此可直接比较，
+# 差别只在"这 2 倍容量是加在 banks_per_group、bank_groups 还是 columns 上"。
+#
+# 这三个键在真实器件里都是随密度档固定、不单独变化的（见 DENSITY_VARIANTS 的说明），
+# 所以本组是**有意偏离 JEDEC 的研究型扰动**，不是器件规格，读结果时不能当成
+# "某款 HBM4 器件"。
+#
+# 本组与 workload 解耦：请求数与基线对照组相同，只让组织变。因此 bank 数变大时
+# 覆盖率必然下降（固定请求数下新增 bank 到不了）。脚本因此只对本组做容量核算和
+# 单键漂移校验，**不给带宽趋势结论**——原因见 evaluate()。
+ORGANIZATION_VARIANTS = (
+    ("bpg_double", "banks_per_group"),
+    ("bg_double", "bank_groups"),
+    ("cols_double", "columns"),
+)
+
+# 混合偏移 case：一次性挪动 banks_per_group / bank_groups / rows / columns 四个键，
+# 有增有减，用来观察模型在"多个维度同时偏离且方向不一致"时是否仍然自洽。
+#
+# 取值由固定种子 20260915 的伪随机序列生成后**冻结成表**，不在运行时随机——
+# 否则实验不可复现，resolved.cfg 也无法作为审计依据。生成时施加三条约束：
+#   1) bank_groups 取偶数且 >= 2（LPDDR REFdb 相邻 BG 配对校验要求，对所有标准统一）；
+#   2) 至少一个键变小、至少一个键变大，保证确实是"有增有减"；
+#   3) 容量比落在 [0.4, 4]，避免退化成容量实验而不是组织实验。
+# 本组同样是**研究型扰动，不是器件规格**。
+MIXED_SHIFT = {
+    "hbm3": {"banks_per_group": 2, "bank_groups": 12, "rows": 32768, "columns": 24},
+    "hbm4": {"banks_per_group": 6, "bank_groups": 4, "rows": 8192, "columns": 64},
+    "lpddr5": {"banks_per_group": 2, "bank_groups": 12, "rows": 131072, "columns": 48},
+    "lpddr6": {"banks_per_group": 2, "bank_groups": 8, "rows": 196608, "columns": 48},
+}
+
 DENSITY_VARIANTS = {
     "hbm3": [
         ("8gb_8h", {"rows": 8192}),
@@ -112,7 +145,8 @@ CSV_FIELDS = (
     "capacity_ratio_vs_baseline", "channel_mapper", "avg_read_latency_ticks",
     "achieved_bw_GBps", "bw_per_engaged_bank_GBps", "row_hits", "row_misses",
     "row_conflicts", "row_hit_rate_pct", "row_conflict_rate_pct",
-    "refresh_pb_batches", "refresh_ab_batches", "data_mismatches",
+    "refresh_pb_batches", "refresh_ab_batches",
+    "cmd_validation", "dfi_validation", "data_mismatches",
     "hit_cycle_limit", "cycles", "wall_seconds",
 )
 
@@ -232,12 +266,16 @@ def baseline_org(args: argparse.Namespace, standard: str) -> dict[str, int]:
 def cases(standard: str, baseline: dict[str, int]) -> list[Case]:
     # 密度组三点按各标准的真实规格取点（见 DENSITY_VARIANTS）；其中覆盖为空的
     # 那点是基线对照组，用于 baseline stability 检查。refresh 组只改 refresh_policy。
-    # 没有覆盖空值的标准说明表写错了，直接报错而不是静默跳过对照。
+    # 组织扰动组每项只放大一个组织键。没有覆盖空值的标准说明表写错了，
+    # 直接报错而不是静默跳过对照。
     return (
         [Case("density", name, dict(overrides))
          for name, overrides in DENSITY_VARIANTS[standard]] +
         [Case("refresh", "per_bank", {"refresh_policy": "per_bank"}),
-         Case("refresh", "all_bank", {"refresh_policy": "all_bank"})]
+         Case("refresh", "all_bank", {"refresh_policy": "all_bank"})] +
+        [Case("organization", name, {key: baseline[key] * 2})
+         for name, key in ORGANIZATION_VARIANTS] +
+        [Case("organization", "mixed_shift", dict(MIXED_SHIFT[standard]))]
     )
 
 
@@ -361,6 +399,13 @@ def walk(index: int, org: dict[str, int]) -> dict[str, int]:
 
 def requests_for(args: argparse.Namespace, standard: str, case: Case,
                  baseline: dict[str, int]) -> int:
+    if case.group == "organization":
+        # 与基线对照组用同一份 workload：只有组织变、负载不变。这是本组唯一
+        # 干净的比较方式；若按各自的 bank 数放大请求数，每 lane 负载会跟着变，
+        # 就分不清差异来自组织还是来自负载。
+        if args.density_requests > 0:
+            return args.density_requests
+        return max(args.requests, total_banks(baseline))
     if case.group != "density":
         return args.requests
     if args.density_requests > 0:
@@ -378,10 +423,11 @@ def write_trace(path: Path, standard: str, case: Case, requests: int,
     lane_count = lanes_of(resolved)
     lines: list[str] = []
     for index in range(requests):
-        if case.group == "density":
+        if case.group in {"density", "organization"}:
             # 同时到达并轮转全部 (lane, bank)；同一 bank 每轮访问一个从未使用过的
             # row，避免 row wrap 产生的 FR-FCFS 命中把"可并行 bank 数"与
-            # "调度器重排行命中"混在一起。
+            # "调度器重排行命中"混在一起。组织扰动组复用同一走法，使组织是
+            # 两组之间唯一的差别。
             fields = walk(index, resolved)
             arrival = 0
         else:
@@ -423,11 +469,15 @@ def run_simulator(args: argparse.Namespace, standard: str, case: Case,
 
 def simulator_command(args: argparse.Namespace, standard: str, overlay: str,
                       trace_path: Path, case_dir: Path, extra: list[str]) -> list[str]:
+    # 每个 case 都启用命令与 DFI 验证器：容量核算只能证明"配置被正确接受"，
+    # 组织扰动组要成立还需要"发出的命令序列在该组织下仍然协议合法"。
+    # 实测开销约 +36%（单 case 0.39s → 0.53s）。
     return [
         str(args.binary), "--config", str(ROOT / f"configs/{family(standard)}.cfg"),
         "--standard", standard, "--config", overlay,
         "--trace", str(trace_path), "--requests", "0",
         "--inject-interval", str(args.inject_interval),
+        "--validate-cmd-trace", "--validate-dfi-trace",
         "--dump-resolved-config", str(case_dir / "resolved.cfg"),
         "--stats-view", "diagnostic", "--stats-json", str(case_dir / "result.json"),
     ] + extra
@@ -469,7 +519,8 @@ def run_case(args: argparse.Namespace, standard: str, case: Case,
     bandwidth = number(stats, "achieved_bw_GBps")
     row = {
         "standard": standard.upper(), "group": case.group, "case": case.name,
-        "workload": "density_rotation" if case.group == "density" else "refresh_pressure",
+        "workload": ("bank_rotation" if case.group in {"density", "organization"}
+                     else "refresh_pressure"),
         "perturbation": ";".join(f"{k}={v}" for k, v in case.overrides.items()) or "none",
         "overrides": ";".join(f"{k}={v}" for k, v in common_overrides(standard, case).items()),
         "requests": requests,
@@ -494,6 +545,8 @@ def run_case(args: argparse.Namespace, standard: str, case: Case,
         "row_conflict_rate_pct": 100.0 * conflicts / decisions if decisions else 0.0,
         "refresh_pb_batches": int(number(stats, "refresh_pb_batches")),
         "refresh_ab_batches": int(number(stats, "refresh_ab_batches")),
+        "cmd_validation": stats.get("cmd_validation", ""),
+        "dfi_validation": stats.get("dfi_validation", ""),
         "data_mismatches": int(number(stats, "data_mismatches")),
         "hit_cycle_limit": stats["hit_cycle_limit"].lower(),
         "cycles": int(number(stats, "cycles")),
@@ -584,6 +637,13 @@ def evaluate(observations: list[Observation]) -> list[Check]:
         checks.append(Check("PASS" if valid else "FAIL", f"completion: {label}",
                             f"cycles={row['cycles']}, cycle_limit={row['hit_cycle_limit']}, "
                             f"mismatches={row['data_mismatches']}"))
+        # 命令与 DFI 验证器逐 case 启用。组织扰动组（尤其 mixed_shift）的结果不能
+        # 当器件数据读，它要成立的是"模型在这些组织下仍然自洽"——容量算术只证明
+        # 配置被正确接受，还需要命令序列本身在该组织下协议合法。
+        protocol_ok = row["cmd_validation"] == "pass" and row["dfi_validation"] == "pass"
+        checks.append(Check("PASS" if protocol_ok else "FAIL",
+                            f"protocol validation: {label}",
+                            f"command={row['cmd_validation']}, dfi={row['dfi_validation']}"))
         # 验收标准：Python 按容量公式算出的组织容量必须等于引擎报告的容量。
         # 两者都是整数，不需要浮点容差。
         planned = observation.planned_capacity
@@ -774,6 +834,10 @@ def write_summary(path: Path, observations: list[Observation], checks: list[Chec
         refresh = {o.case: o.row for o in subset if o.group == "refresh"}
         per_bank, all_bank = refresh["per_bank"], refresh["all_bank"]
         bank_counts = {int(o.row["total_banks"]) for o in density}
+        organization = sorted((o for o in subset if o.group == "organization"),
+                              key=lambda o: o.case)
+        control = next(o for o in subset
+                       if o.case == control_case(standard.lower()))
         lines.extend([
             f"### {standard}", "",
             f"- 标准基线：{base['channels']}ch × {base['pseudo_channels']}pc × "
@@ -797,7 +861,19 @@ def write_summary(path: Path, observations: list[Observation], checks: list[Chec
             f"{all_bank['refresh_ab_batches']} 个 AB batch，延迟/带宽 "
             f"{float(all_bank['avg_read_latency_ticks']):.2f} tick / "
             f"{float(all_bank['achieved_bw_GBps']):.3f} GB/s。间隔是 research 型压力值，"
-            "取值以保证在短窗口内可观测，不是物理间隔。", "",
+            "取值以保证在短窗口内可观测，不是物理间隔。",
+            f"- 组织扰动：以基线对照（{control.case}，{control.row['total_banks']} banks、"
+            f"cov={float(control.row['coverage']):.2f}、"
+            f"{float(control.row['achieved_bw_GBps']):.3f} GB/s）为参照，"
+            + "；".join(
+                f"{o.case} 改 {'/'.join(sorted(declared_of(o))) or '—'} 后 "
+                f"{o.row['total_banks']} banks、cov={float(o.row['coverage']):.2f}、"
+                f"{float(o.row['achieved_bw_GBps']):.3f} GB/s"
+                for o in organization)
+            + "。本组只改组织、不改 workload，因此 bank 数翻倍时覆盖率必然降到约一半"
+              "（固定请求数下新增的 bank 到不了）。脚本因此只对本组做容量核算与单键"
+              "漂移校验，**不给出带宽趋势结论**：在未覆盖到的 bank 上，带宽差异既可能"
+              "来自并行度，也可能只是负载被摊薄。", "",
         ])
     lines.extend([
         "", "## Measurements", "",

@@ -1235,15 +1235,20 @@ void MemorySystem::collect_issued_commands() {
       issued_.push_back(command);
     }
   }
+  // 同一 (cycle, stack, channel) 内**不能**再按 request_id 排：维护命令的 id 来自
+  // 独立的 next_maintenance_id_，数值天然小于前端请求 id，按它排会把同一拍内的
+  // PREab/REFab 一律提到数据命令之前。而控制器真实的发出顺序是列命令先于行命令
+  // （tick() 里先 choose(Column) 再 choose(Row)），被这样重排后，command validator
+  // 会看到"先关行、后读行"的假序列并报 RD/WR require an opened target row。
+  // 上面的输入是按控制器顺序拼接的、每个控制器内部本身就是发出顺序，因此
+  // stable_sort 在 (cycle, stack, channel) 相等时保留该顺序即可。
   std::stable_sort(issued_.begin(), issued_.end(),
                    [](const IssuedCommand &a, const IssuedCommand &b) {
                      if (a.cycle != b.cycle)
                        return a.cycle < b.cycle;
                      if (a.stack_id != b.stack_id)
                        return a.stack_id < b.stack_id;
-                     if (a.decoded.channel != b.decoded.channel)
-                       return a.decoded.channel < b.decoded.channel;
-                     return a.request_id < b.request_id;
+                     return a.decoded.channel < b.decoded.channel;
                    });
 }
 

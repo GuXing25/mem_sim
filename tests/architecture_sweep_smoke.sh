@@ -16,12 +16,15 @@ test -s "$sweep_tmp/results.csv"
 test -s "$sweep_tmp/checks.csv"
 test -s "$sweep_tmp/summary.md"
 test -s "$sweep_tmp/trends.html"
-# 每标准 5 个 case（3 密度 + 2 刷新），加表头。
-test "$(wc -l < "$sweep_tmp/results.csv")" -eq 11
+# 每标准 9 个 case（3 密度 + 2 刷新 + 4 组织扰动），加表头。
+test "$(wc -l < "$sweep_tmp/results.csv")" -eq 19
 grep -q 'density,32gb_8h' "$sweep_tmp/results.csv"
 grep -q 'density,24gb_12h' "$sweep_tmp/results.csv"
 grep -q 'density,8gb_sc' "$sweep_tmp/results.csv"
 grep -q 'refresh,all_bank' "$sweep_tmp/results.csv"
+grep -q 'organization,bpg_double' "$sweep_tmp/results.csv"
+grep -q 'organization,cols_double' "$sweep_tmp/results.csv"
+grep -q 'organization,mixed_shift' "$sweep_tmp/results.csv"
 grep -q 'PASS,density scaling: HBM4' "$sweep_tmp/checks.csv"
 grep -q 'PASS,density scaling: LPDDR6' "$sweep_tmp/checks.csv"
 grep -q 'PASS,refresh scope: HBM4' "$sweep_tmp/checks.csv"
@@ -44,9 +47,13 @@ if grep -q '^FAIL,' "$sweep_tmp/checks.csv"; then
 fi
 test -s "$sweep_tmp/hbm4/refresh_all_bank/resolved.cfg"
 test -s "$sweep_tmp/hbm4/density_32gb_8h/workload.trace"
+test -s "$sweep_tmp/hbm4/organization_bpg_double/resolved.cfg"
+test -s "$sweep_tmp/hbm4/organization_mixed_shift/workload.trace"
 test -s "$sweep_tmp/hbm4/baseline.cfg"
 test -s "$sweep_tmp/lpddr6/refresh_all_bank/resolved.cfg"
 test -s "$sweep_tmp/lpddr6/density_8gb_sc/workload.trace"
+test -s "$sweep_tmp/lpddr6/organization_bpg_double/resolved.cfg"
+test -s "$sweep_tmp/lpddr6/organization_mixed_shift/workload.trace"
 test -s "$sweep_tmp/lpddr6/baseline.cfg"
 
 # 密度组的第二个请求应落在 bank=1：columns × 32 B。HBM 的 columns=32 -> 0x400，
