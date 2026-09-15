@@ -166,14 +166,17 @@ bash examples/multistack_demos/lpddr5_nstack.sh
 bash examples/multistack_demos/lpddr6_nstack.sh
 ```
 
-定制 bank/row-column/refresh 架构趋势实验：
+定制 bank/geometry/refresh 架构实验：
 
 ```bash
 python3 experiments/architecture_sweep/run.py
 ```
 
-脚本使用定向 trace 激发目标结构，输出 `results.csv`、`checks.csv`、`summary.md` 和
-离线 `trends.html`；检查不通过时返回非零。详细口径见
+每个 case 以该标准**自己的完整标准组织**为基线，只在一个维度上扰动（bank 组改
+`banks_per_group`、geometry 组改 `columns`、refresh 组改 `refresh_policy`）；
+每个用例的容量由容量公式自动核算，bank scaling 门禁按每 lane 可用的 bank 并行度归一。
+脚本输出 `results.csv`、`checks.csv`、`summary.md` 和离线 `trends.html`；
+检查不通过时返回非零。详细口径见
 [experiments/architecture_sweep/README.md](experiments/architecture_sweep/README.md)。
 
 ## Trace

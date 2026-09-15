@@ -254,7 +254,7 @@ density_gb = auto
 | `row_policy_cap` | closed_cap 列访问上限 | 可 | 条件项：仅研究 closed_cap 时调整，与 row_policy 配套 |
 | `addr_mapping` | default/RoBaRaCoCh/ChRaBaRoCo/RoCoRaBaCh | 可；改变局部性 | 可单独选已有映射策略；组织改变后核对地址落点，比较性能时固定映射 |
 | `channel_mapper` | decoded/round_robin/xor | 可；公平比较需固定 | 可单独选已有映射策略；组织改变后核对地址落点，比较性能时固定映射 |
-| `single_controller` | 单控制器独立实验 | 局部控制器对照实验 | 联动修改：局部验证口径；核对 channels、完整系统配置及响应接口限制 |
+| `single_controller` | 单控制器独立实验 | 局部控制器对照实验。**与 channels>1 组合语义不自洽**：该路径拿完整 spec 直接构造单个 Controller，跳过 `MemorySystem::make_channel_spec` 的 channel 本地化，`Controller::flat_bank()` 于是把全局 channel 维度也算进去——同一份报告容量下仿真的是另一台机器。引擎只给警告（`src/stats/result.cpp`）不拦截。 | 联动修改：局部验证口径；核对 channels、完整系统配置及响应接口限制。正式带宽实验用默认 MemorySystem；必须用单控制器时把 channels 设为 1 |
 | `stack_count` | 独立 stack 数 | 可；主动模型真正复制端点和 image | 可修改系统规模；联动总容量、总带宽、工作集及每实例后端/输出文件 |
 | `stack_mapping` | interleaved/blocked | 可 | 可选策略；interleaved 配套 stack_interleave_bytes，blocked 按容量分区；核对各实例地址范围 |
 | `stack_interleave_bytes` | stack 条带大小 | 可；必须为 line_size 整数倍 | 联动修改：stack_mapping=interleaved 时使用，须为 line_size 整数倍 |
