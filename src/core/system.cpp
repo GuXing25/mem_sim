@@ -314,6 +314,10 @@ MemorySystem::MemorySystem(DramSpec spec, MemorySystemOptions options)
                                  0);
   per_stack_qos_dispatches_.assign(
       static_cast<std::size_t>(options_.stack_count), 0);
+  per_stack_dispatch_budget_exhausted_.assign(
+      static_cast<std::size_t>(options_.stack_count), 0);
+  per_stack_controller_refused_.assign(
+      static_cast<std::size_t>(options_.stack_count), 0);
 }
 
 MemorySystem::MemorySystem(DramSpec spec, ControllerOptions controller_options)
@@ -847,7 +851,10 @@ void MemorySystem::publish_host_response(HostResponse response) {
 
 void MemorySystem::dispatch_stack_ingress() {
   for (int stack = 0; stack < options_.stack_count; stack++) {
-    auto &queue = stack_ingress_queues_[static_cast<std::size_t>(stack)];
+    const auto stack_index = static_cast<std::size_t>(stack);
+    auto &queue = stack_ingress_queues_[stack_index];
+    std::size_t dispatched = 0;
+    bool refused = false;
     for (std::size_t slot = 0;
          slot < options_.stack_dispatch_width && !queue.empty(); slot++) {
       auto selected = queue.begin();
@@ -865,14 +872,27 @@ void MemorySystem::dispatch_stack_ingress() {
       if (!controllers_[index].enqueue(*selected)) {
         // 最高优先级请求的目标 channel 已反压。其他 stack 仍可并行分发；
         // 本 stack 保留请求次序/优先级，下一拍重试。
+        refused = true;
         break;
       }
       if (selected->qos_class > 0) {
         qos_priority_dispatches_++;
-        per_stack_qos_dispatches_[static_cast<std::size_t>(stack)]++;
+        per_stack_qos_dispatches_[stack_index]++;
       }
       active_controller_seen_[index] = true;
       queue.erase(selected);
+      dispatched++;
+    }
+    // 每 tick、每 stack 最多各计一次：拒收使本 stack 当拍提前退出，与额度
+    // 耗尽互斥，不会同时计。全局值是各 stack 累加，因此可大于 system_cycles。
+    if (refused) {
+      controller_refused_dispatches_++;
+      per_stack_controller_refused_[stack_index]++;
+    } else if (dispatched >= options_.stack_dispatch_width && !queue.empty()) {
+      // 额度被触及只说明上限生效；增大该值是否改善最终吞吐还取决于
+      // 入口积压与下游接收能力，不能由本计数单独判定。
+      dispatch_budget_exhausted_++;
+      per_stack_dispatch_budget_exhausted_[stack_index]++;
     }
   }
 }
@@ -1061,6 +1081,8 @@ void MemorySystem::finalize_run_stats() {
   stats_.stack_ingress_stall_cycles = stack_ingress_stall_cycles_;
   stats_.stack_ingress_peak = stack_ingress_peak_;
   stats_.qos_priority_dispatches = qos_priority_dispatches_;
+  stats_.dispatch_budget_exhausted = dispatch_budget_exhausted_;
+  stats_.controller_refused_dispatches = controller_refused_dispatches_;
 
   const int channels_per_stack = std::max(1, spec_.org.channels);
   per_stack_stats_.assign(static_cast<std::size_t>(options_.stack_count),
@@ -1153,6 +1175,10 @@ void MemorySystem::finalize_run_stats() {
         per_stack_ingress_peak_[static_cast<std::size_t>(stack)];
     per.qos_priority_dispatches =
         per_stack_qos_dispatches_[static_cast<std::size_t>(stack)];
+    per.dispatch_budget_exhausted =
+        per_stack_dispatch_budget_exhausted_[static_cast<std::size_t>(stack)];
+    per.controller_refused_dispatches =
+        per_stack_controller_refused_[static_cast<std::size_t>(stack)];
     per.interface_transfer_rate_gbps = spec_.interface_transfer_rate_gbps();
     per.peak_bandwidth_GBps = spec_.peak_bandwidth_GBps();
     if (clk_ > 0 && spec_.cycles_per_second() > 0.0) {

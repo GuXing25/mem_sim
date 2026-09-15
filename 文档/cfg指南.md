@@ -238,7 +238,7 @@ density_gb = auto
 | `bank_groups` | 每 PC/SC、SID、rank 下的 BG 数 | 标准相关；REFdb 要求可配对 | 可修改组织主输入；核对容量、BG Timing、刷新/RFM；LPDDR6 REFdb 需合法配对 |
 | `banks_per_group` | 每 BG bank 数 | 标准相关 | 可修改组织主输入；核对容量、BG Timing、刷新/RFM；LPDDR6 REFdb 需合法配对 |
 | `rows`、`columns` | 每 Bank 行数、每行事务槽数 | columns × transaction_bytes 是行容量；外部原始 column 需先换算 | 可修改 rows/columns；容量和 density 自动变化；一起核对事务大小、地址范围、物理映射和刷新依据 |
-| `full_stack_model` | 使用完整 stack 组织口径 | 可；不等于 stack_count>1 | 一般保持所选基准；改变口径时一起核对 channels、pseudo_channels、总位宽及 single_controller |
+| `full_stack_model` | 使用完整 stack 组织口径 | 声明/审计标签；当前不参与容量计算、地址映射或调度，不会自动改变模型组织 | 一般保持所选基准；改它只影响 resolved config 中的记录值，不等于 stack_count>1，实际组织由 organization 决定 |
 
 <a id="appendix-a-3"></a>
 
@@ -333,8 +333,9 @@ density_gb = auto
 | 配置键 | 含义/允许口径 | 修改建议 / 联动项 |
 |---|---|---|
 | `supports_refresh`、`supports_rfm`、`supports_ecc` | refresh、RFM/PRAC、ECC 能力总开关 | 一般保留标准能力；分别配套刷新策略、RFM 策略、接口 ECC；研究关闭能力须记录，payload ECC 另配 |
-| `hbm_full_32_channel_stack` | 是否采用 HBM4 32-channel full-stack 组织 | 一般保持所选基准；改变口径时一起核对 channels、pseudo_channels、总位宽及 single_controller |
-| `hbm_sid_interleave`、`hbm_pc_interleave` | SID、pseudo-channel 是否参与地址 interleave | 可研究交错行为；配套 SID/PC 组织和地址映射，核对实际命令序列 |
+| `hbm_full_32_channel_stack` | 是否采用 HBM4 32-channel full-stack 组织 | 声明/审计标签；当前不参与容量计算、地址映射或调度，不会自动改变模型组织 | 一般保持所选基准；改它只影响 resolved config 中的记录值，不会自动设置 channels/SID/rows，实际组织由 organization 决定 |
+| `hbm_sid_interleave` | 列命令时序约束（nCCD）的作用范围：SID 域或 pseudo-channel；并决定 nCCDR 取 nCCDS+1 还是 nCCDS | LPDDR 不适用；HBM 可研究，改它会同时改变命令时序约束的作用域和 nCCDR 取值，需配套核对时序表与命令序列 |
+| `hbm_pc_interleave` | 声明标签，当前不控制地址映射或调度 | 声明/审计标签；当前不参与容量计算、地址映射或调度，不会自动改变模型组织。改它只影响 resolved config 中的记录值 |
 | `hbm_edge_pairing`、`hbm_strict_edge_pairing` | 是否启用普通/严格 HBM 边沿配对 | 一般保持基准；配套严格开关、tick_multiplier 和命令验证，不能只改标签获得新规则 |
 | `hbm_edge_pairing_matrix` | pairing 规则标签；真正约束由 Controller/validator 执行 | 一般保持基准标签；与对应实际能力/模式开关一致，不把名称当成可插入的新算法 |
 | `hbm_sid_mapping` | SID 映射策略标签 | 一般保持基准标签；与对应实际能力/模式开关一致，不把名称当成可插入的新算法 |
