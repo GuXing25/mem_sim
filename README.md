@@ -172,9 +172,10 @@ bash examples/multistack_demos/lpddr6_nstack.sh
 python3 experiments/architecture_sweep/run.py
 ```
 
-每个 case 以该标准**自己的完整标准组织**为基线，只在一个维度上扰动（bank 组改
-`banks_per_group`、geometry 组改 `columns`、refresh 组改 `refresh_policy`）；
-每个用例的容量由容量公式自动核算，bank scaling 门禁按每 lane 可用的 bank 并行度归一。
+密度组按各标准的真实 JEDEC 规格取点（HBM3 8/16/32Gb、HBM4 32Gb 8H / 24Gb 12H /
+32Gb 16H、LPDDR5 12/16Gb、LPDDR6 8/16/24Gb per SC），变密度时只改 `rows` 与
+（HBM4 的）`stack_height`/`sids`，`channels`、`banks_per_group`、`columns` 保持标准；
+每个用例的容量由容量公式自动核算。
 脚本输出 `results.csv`、`checks.csv`、`summary.md` 和离线 `trends.html`；
 检查不通过时返回非零。详细口径见
 [experiments/architecture_sweep/README.md](experiments/architecture_sweep/README.md)。

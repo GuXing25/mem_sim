@@ -23,6 +23,7 @@ from result_io import count, number, read_result
 ORG_KEYS = (
     "channels", "pseudo_channels", "sids", "ranks", "bank_groups",
     "banks_per_group", "rows", "columns", "line_size", "dram_transaction_bytes",
+    "stack_height",
 )
 
 # 只作为 smoke 的 fixture：smoke 的 heredoc 没有二进制可跑基线预扫。
@@ -31,31 +32,61 @@ ORG_KEYS = (
 STANDARD_ORGS = {
     "hbm3": {"channels": 16, "pseudo_channels": 2, "sids": 2, "ranks": 1,
              "bank_groups": 4, "banks_per_group": 4, "rows": 16384, "columns": 32,
-             "line_size": 64, "dram_transaction_bytes": 32},
+             "line_size": 64, "dram_transaction_bytes": 32, "stack_height": 8},
     "hbm4": {"channels": 32, "pseudo_channels": 2, "sids": 2, "ranks": 1,
              "bank_groups": 2, "banks_per_group": 8, "rows": 16384, "columns": 32,
-             "line_size": 64, "dram_transaction_bytes": 32},
+             "line_size": 64, "dram_transaction_bytes": 32, "stack_height": 8},
     "lpddr5": {"channels": 1, "pseudo_channels": 1, "sids": 1, "ranks": 1,
                "bank_groups": 4, "banks_per_group": 4, "rows": 65536, "columns": 64,
-               "line_size": 64, "dram_transaction_bytes": 32},
+               "line_size": 64, "dram_transaction_bytes": 32, "stack_height": 0},
     "lpddr6": {"channels": 1, "pseudo_channels": 2, "sids": 1, "ranks": 1,
                "bank_groups": 4, "banks_per_group": 4, "rows": 65536, "columns": 64,
-               "line_size": 64, "dram_transaction_bytes": 32},
+               "line_size": 64, "dram_transaction_bytes": 32, "stack_height": 0},
 }
 
-# geometry 组只改 columns。columns 是"每行能连续访问多少次"这个量本身，
-# 因而是唯一能驱动行命中/冲突的几何维度；rows 只决定何时回绕，在顺序 trace
-# 下不改变局部性（实测三个 rows 取值的行为指标逐位相同）。
-# 三个取值由目标容量反推，属于实验设计而非派生量：
-# HBM3 16/24/32 GiB、HBM4 24/32/64 GiB、LPDDR5 1/2/4 GiB、LPDDR6 2/4/8 GiB。
-# HBM3 与 HBM4 的基线在三点中的位置不同（1.0/1.5/2.0 与 0.75/1.0/2.0），
-# 没有统一的缩放规则，文档必须写明。HBM 侧 columns 偏离 CA[4:0] 对应的 32，
-# 属于 research 型偏离，不是器件值。
-GEOMETRY_COLUMNS = {
-    "hbm3": {"cols_low": 32, "cols_mid": 48, "cols_high": 64},
-    "hbm4": {"cols_low": 24, "cols_mid": 32, "cols_high": 64},
-    "lpddr5": {"cols_low": 32, "cols_mid": 64, "cols_high": 128},
-    "lpddr6": {"cols_low": 32, "cols_mid": 64, "cols_high": 128},
+# 密度组按各标准的真实规格取点。真实器件变密度时不变的是 channels、
+# banks_per_group、columns；变的是 rows，以及（HBM4 的堆叠配置）stack_height
+# 所带动的 SID 域数量。取值来自 JEDEC 参考规格，不是从基线推的倍率。
+#
+# HBM3（16ch × 2pc × SID+BA[3:0]=32 banks/PC，恒 4 banks/BG）：
+#   8Gb/8Hi RA[12:0]=8192、16Gb/8Hi RA[13:0]=16384、32Gb/8Hi RA[14:0]=32768。
+#   三档 bank 组织完全相同，只有 rows 变。
+# HBM4（32ch × 2pc × 8 banks/BG）：
+#   32Gb/8Hi  2 SID × 2 BG × 8 = 32 banks/PC，rows 16384
+#   24Gb/12Hi 3 SID × 2 BG × 8 = 48 banks/PC，rows 12288（RA[13:12]=11 非法）
+#   32Gb/16Hi 4 SID × 2 BG × 8 = 64 banks/PC，rows 16384
+# LPDDR6（每 SC 恒 4 BG × 4 = 16 banks、page 2 KB）：
+#   8Gb/SC rows 32768、16Gb/SC rows 65536、24Gb/SC rows 98304（= 2^16 + 2^15）
+# LPDDR5（恒 4 BG × 4 = 16 banks）：
+#   12Gb x16 rows 49152（= 2^15 + 2^14）、16Gb x16 rows 65536
+#   16Gb x8  rows 131072 且 columns 32（同密度换宽度：页 1024 B、x8 DQ）
+DENSITY_VARIANTS = {
+    "hbm3": [
+        ("8gb_8h", {"rows": 8192}),
+        ("16gb_8h", {}),
+        ("32gb_8h", {"rows": 32768}),
+    ],
+    # sids 显式写出而不是依赖引擎从 stack_height 自动推导（12→3、16→4）：
+    # 隐式推导会让 trace 生成器按旧 sids 编码地址、被新 sids 的引擎解码，
+    # 落点与预期不符；显式声明后容量公式与 organization drift 才能验收它。
+    "hbm4": [
+        ("32gb_8h", {}),
+        ("24gb_12h", {"stack_height": 12, "sids": 3, "rows": 12288}),
+        ("32gb_16h", {"stack_height": 16, "sids": 4}),
+    ],
+    # 只用 x16 档：x8 模式（128Mb × 8DQ）在同密度下把 data_bus_bits 减半，
+    # 但引擎的 achieved_bw_GBps 只按 payload/时间 计算、不随位宽变化
+    # （src/controller/controller.cpp），把位宽设成 8 会得到 achieved > peak
+    # 的物理不可能结果。在接口位宽与可达带宽的耦合明确之前，该档位不成立。
+    "lpddr5": [
+        ("12gb_x16", {"rows": 49152}),
+        ("16gb_x16", {}),
+    ],
+    "lpddr6": [
+        ("8gb_sc", {"rows": 32768}),
+        ("16gb_sc", {}),
+        ("24gb_sc", {"rows": 98304}),
+    ],
 }
 
 # 刷新组的研究型压力间隔。取值要能在较短窗口内触发维护，不是 JEDEC 物理间隔；
@@ -75,7 +106,8 @@ PROBE_LANES = 8
 CSV_FIELDS = (
     "standard", "group", "case", "workload", "perturbation", "overrides", "requests",
     "channels", "pseudo_channels", "sids", "ranks", "bank_groups", "banks_per_group",
-    "rows", "columns", "lanes", "banks_per_lane", "total_banks", "engaged_banks",
+    "rows", "columns", "stack_height", "lanes", "banks_per_lane",
+    "total_banks", "engaged_banks",
     "coverage", "aggregate_capacity_GiB", "capacity_formula_GiB",
     "capacity_ratio_vs_baseline", "channel_mapper", "avg_read_latency_ticks",
     "achieved_bw_GBps", "bw_per_engaged_bank_GBps", "row_hits", "row_misses",
@@ -120,9 +152,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--standards", default="hbm4,lpddr6",
                         help="comma-separated subset of hbm3,hbm4,lpddr5,lpddr6")
     parser.add_argument("--requests", type=int, default=512,
-                        help="requests generated for the geometry and refresh workloads")
-    parser.add_argument("--bank-requests", type=int, default=0,
-                        help="requests for the bank workload; 0 derives the standard bank count")
+                        help="requests generated for the refresh workload; also the floor "
+                             "for the density workload")
+    parser.add_argument("--density-requests", type=int, default=0,
+                        help="fixed request count for the density workload; 0 derives "
+                             "max(--requests, the case's bank count)")
     parser.add_argument("--inject-interval", type=int, default=2,
                         help="arrival spacing used by the refresh workload")
     parser.add_argument("--case-timeout", type=float, default=120.0,
@@ -196,21 +230,24 @@ def baseline_org(args: argparse.Namespace, standard: str) -> dict[str, int]:
 
 
 def cases(standard: str, baseline: dict[str, int]) -> list[Case]:
-    # 每个 case 只扰动一个维度：bank 组改 banks_per_group，geometry 组改 columns，
-    # refresh 组改 refresh_policy。channels/pseudo_channels/sids/ranks 保持标准，
-    # 因此 LPDDR6 的 bank_groups 始终是偶数，REFdb 能力约束一直成立。
-    bpg = baseline["banks_per_group"]
-    cols = GEOMETRY_COLUMNS[standard]
-    return [
-        Case("bank", "bpg_half", {"banks_per_group": max(1, bpg // 2)}),
-        Case("bank", "bpg_standard", {}),
-        Case("bank", "bpg_double", {"banks_per_group": bpg * 2}),
-        Case("geometry", "cols_low", {"columns": cols["cols_low"]}),
-        Case("geometry", "cols_mid", {"columns": cols["cols_mid"]}),
-        Case("geometry", "cols_high", {"columns": cols["cols_high"]}),
-        Case("refresh", "per_bank", {"refresh_policy": "per_bank"}),
-        Case("refresh", "all_bank", {"refresh_policy": "all_bank"}),
-    ]
+    # 密度组三点按各标准的真实规格取点（见 DENSITY_VARIANTS）；其中覆盖为空的
+    # 那点是基线对照组，用于 baseline stability 检查。refresh 组只改 refresh_policy。
+    # 没有覆盖空值的标准说明表写错了，直接报错而不是静默跳过对照。
+    return (
+        [Case("density", name, dict(overrides))
+         for name, overrides in DENSITY_VARIANTS[standard]] +
+        [Case("refresh", "per_bank", {"refresh_policy": "per_bank"}),
+         Case("refresh", "all_bank", {"refresh_policy": "all_bank"})]
+    )
+
+
+def control_case(standard: str) -> str:
+    # 覆盖为空的那点必须复现解析出的基线，用作 baseline stability 对照。
+    controls = [name for name, overrides in DENSITY_VARIANTS[standard] if not overrides]
+    if len(controls) != 1:
+        raise SystemExit(f"{standard}: DENSITY_VARIANTS must declare exactly one "
+                         f"baseline control case, found {controls}")
+    return controls[0]
 
 
 def declared_org_fields(case: Case) -> set[str]:
@@ -322,39 +359,30 @@ def walk(index: int, org: dict[str, int]) -> dict[str, int]:
             "sid": sid, "pseudo_channel": pseudo_channel}
 
 
-def requests_for(args: argparse.Namespace, case: Case, baseline: dict[str, int]) -> int:
-    if case.group != "bank":
+def requests_for(args: argparse.Namespace, standard: str, case: Case,
+                 baseline: dict[str, int]) -> int:
+    if case.group != "density":
         return args.requests
-    if args.bank_requests > 0:
-        return args.bank_requests
-    # 固定 512 请求时，HBM4 的 128 条 lane 每 lane 只有 4 个请求，bank 并行度
-    # 超过 4 就完全不可分辨。bank 组按标准 bank 总数取请求数，使每 lane 的请求数
-    # 等于标准 banks_per_lane，三点才有分辨力。
-    return total_banks(baseline)
+    if args.density_requests > 0:
+        return args.density_requests
+    # 密度档之间的 bank/lane 数会变（HBM4 的 SID 域数量随 stack_height 变）。
+    # 取 max(requests, 该档 total_banks) 使每 lane 请求数在各档之间相等，
+    # 带宽差异才归因于并行度而不是负载不均。
+    return max(args.requests, total_banks(effective_org(standard, case, baseline)))
 
 
 def write_trace(path: Path, standard: str, case: Case, requests: int,
                 inject_interval: int, *, org: dict[str, int] | None = None) -> None:
     resolved = effective_org(standard, case, org)
     tx_bytes = resolved["dram_transaction_bytes"]
-    columns = resolved["columns"]
-    rows = resolved["rows"]
     lane_count = lanes_of(resolved)
     lines: list[str] = []
     for index in range(requests):
-        if case.group == "bank":
+        if case.group == "density":
             # 同时到达并轮转全部 (lane, bank)；同一 bank 每轮访问一个从未使用过的
             # row，避免 row wrap 产生的 FR-FCFS 命中把"可并行 bank 数"与
             # "调度器重排行命中"混在一起。
             fields = walk(index, resolved)
-            arrival = 0
-        elif case.group == "geometry":
-            # 单 lane 顺序扫描，footprint 恰为 requests 条事务。每行能连续访问
-            # columns 次才换行，因此行命中率随 columns 变化；旧的 max(4096, requests)
-            # footprint 下界会让三点在小请求数下全部退化，已移除。
-            fields = {"row": (index // columns) % rows, "column": index % columns,
-                      "bank": 0, "bank_group": 0, "channel": 0, "rank": 0,
-                      "sid": 0, "pseudo_channel": 0}
             arrival = 0
         else:
             # 持续负载让自动 REFpb/REFdb 与 REFab 都能介入调度。
@@ -409,7 +437,7 @@ def run_case(args: argparse.Namespace, standard: str, case: Case,
              baseline: dict[str, int], ordinal: int, total: int) -> Observation:
     case_dir = args.out / standard / f"{case.group}_{case.name}"
     case_dir.mkdir(parents=True, exist_ok=True)
-    requests = requests_for(args, case, baseline)
+    requests = requests_for(args, standard, case, baseline)
     trace_path = case_dir / "workload.trace"
     write_trace(trace_path, standard, case, requests, args.inject_interval, org=baseline)
     print(f"[{ordinal}/{total}] {standard.upper()} {case.group}/{case.name} "
@@ -441,8 +469,7 @@ def run_case(args: argparse.Namespace, standard: str, case: Case,
     bandwidth = number(stats, "achieved_bw_GBps")
     row = {
         "standard": standard.upper(), "group": case.group, "case": case.name,
-        "workload": "bank_parallel" if case.group == "bank" else
-                    "single_lane_footprint" if case.group == "geometry" else "refresh_pressure",
+        "workload": "density_rotation" if case.group == "density" else "refresh_pressure",
         "perturbation": ";".join(f"{k}={v}" for k, v in case.overrides.items()) or "none",
         "overrides": ";".join(f"{k}={v}" for k, v in common_overrides(standard, case).items()),
         "requests": requests,
@@ -452,6 +479,7 @@ def run_case(args: argparse.Namespace, standard: str, case: Case,
         "bank_groups": observed_org["bank_groups"],
         "banks_per_group": observed_org["banks_per_group"],
         "rows": observed_org["rows"], "columns": observed_org["columns"],
+        "stack_height": observed_org["stack_height"],
         "lanes": lane_count, "banks_per_lane": per_lane, "total_banks": banks,
         "engaged_banks": engaged, "coverage": engaged / banks if banks else 0.0,
         "aggregate_capacity_GiB": reported_capacity / 2**30,
@@ -540,11 +568,10 @@ def probe_address_encoding(args: argparse.Namespace, standard: str,
                  f"covered {probe_count} of {lane_count} lanes")
 
 
-def engagement_of(observation: Observation) -> int:
-    # 每 lane 实际可用的 bank 并行度：banks_per_lane 超过每 lane 请求数时
-    # 多出来的 bank 在该请求数下根本到不了，不能支撑 scaling 结论。
-    requests_per_lane = int(observation.row["requests"]) // max(1, int(observation.row["lanes"]))
-    return min(int(observation.row["banks_per_lane"]), requests_per_lane)
+def declared_of(observation: Observation) -> set[str]:
+    # 该 case 在 perturbation 列里声明自己改了哪些组织键。
+    return {item.split("=")[0] for item in
+            str(observation.row["perturbation"]).split(";") if "=" in item}
 
 
 def evaluate(observations: list[Observation]) -> list[Check]:
@@ -585,8 +612,7 @@ def evaluate(observations: list[Observation]) -> list[Check]:
         # changes 口径（后者是相对内置 profile 的 diff）。
         drift: list[str] = []
         for observation in subset:
-            declared = {item.split("=")[0] for item in
-                        observation.row["perturbation"].split(";") if "=" in item}
+            declared = declared_of(observation)
             for key in ORG_KEYS:
                 if key in declared:
                     continue
@@ -599,18 +625,20 @@ def evaluate(observations: list[Observation]) -> list[Check]:
                             "every case differs from the baseline only in its "
                             "declared dimension"))
 
-        control = next(o for o in subset if o.case == "bpg_standard")
+        control_name = control_case(standard.lower())
+        control = next(o for o in subset if o.case == control_name)
         off_baseline = [f"{k}: control={control.org[k]} baseline={baseline[k]}"
                         for k in ORG_KEYS if control.org[k] != baseline[k]]
         checks.append(Check("PASS" if not off_baseline else "FAIL",
                             f"baseline stability: {standard}",
                             "; ".join(off_baseline) or
-                            "bpg_standard reproduces the parsed baseline field-for-field"))
+                            f"{control_name} reproduces the parsed baseline "
+                            f"field-for-field"))
 
         # density_gb 是 Gibit 口径（HBM 按每 die、LPDDR 按每通道子通道），
         # 不是容量；这里把它与容量口径的关系固定下来，防止被当容量读。
-        # 用基线对照 case 报告，避免把某个扰动用例的密度当成标准密度。
-        sample = next(o for o in subset if o.case == "bpg_standard")
+        # 用基线对照 case 报告，避免把某个密度档位的密度当成标准密度。
+        sample = control
         is_lpddr = standard.lower().startswith("lpddr")
         divisor = (sample.org["channels"] * sample.org["pseudo_channels"] * sample.org["ranks"]
                    if is_lpddr else sample.stack_height)
@@ -625,58 +653,65 @@ def evaluate(observations: list[Observation]) -> list[Check]:
                             f"Gibit per {'channel/subchannel' if is_lpddr else 'die'}, "
                             f"not a capacity - capacity is aggregate_capacity_bytes"))
 
-        bank_rows = sorted((o for o in subset if o.group == "bank"),
-                           key=lambda o: (engagement_of(o), int(o.row["total_banks"])))
+        density_rows = sorted((o for o in subset if o.group == "density"),
+                              key=lambda o: int(o.row["total_banks"]))
         points = "; ".join(
-            f"{o.row['total_banks']} banks, cov={float(o.row['coverage']):.2f}, "
-            f"eng={engagement_of(o)}, bw={float(o.row['achieved_bw_GBps']):.3f}"
-            for o in bank_rows)
-        # 请求数固定时，bank 数超过请求数的配置有一部分 bank 根本到不了，
-        # 其带宽不代表该组织规模，不能当作该规模的代表。优先只用覆盖到全部
-        # bank 的配置；它们若凑不出两个 engagement 档，才退回全部用例。
-        covered = [o for o in bank_rows if float(o.row["coverage"]) >= 1.0 - 1e-9]
-        if len({engagement_of(o) for o in covered}) >= 2:
-            scope, scope_label = covered, "coverage=1.00"
+            f"{o.case}: {o.row['total_banks']} banks / {o.row['lanes']} lanes, "
+            f"rows={o.row['rows']}, {float(o.row['aggregate_capacity_GiB']):.2f} GiB, "
+            f"bw={float(o.row['achieved_bw_GBps']):.3f}" for o in density_rows)
+
+        # 组织形状不变的密度档位（只声明 rows）之间，行为指标应逐位相同：
+        # 按 JEDEC 这些器件的 bank 组织与列宽在全密度档固定，只有容量和地址
+        # 范围变。把它写成正向断言，避免"三点没差异"被当成空洞通过。
+        shape_fixed = [o for o in density_rows if declared_of(o) <= {"rows"}]
+        if len(shape_fixed) >= 2:
+            first = shape_fixed[0].row
+            same = all(
+                (o.row["cycles"], o.row["row_hit_rate_pct"],
+                 o.row["row_conflict_rate_pct"]) ==
+                (first["cycles"], first["row_hit_rate_pct"],
+                 first["row_conflict_rate_pct"]) for o in shape_fixed)
+            checks.append(Check("PASS" if same else "FAIL",
+                                f"density behavior invariance: {standard}",
+                                f"{len(shape_fixed)} variants share one organization shape "
+                                f"(only rows differ): cycles/hit/conflict "
+                                f"{'identical' if same else 'DIFFER'}; per JEDEC these "
+                                f"densities differ only in capacity. {points}"))
         else:
-            scope, scope_label = bank_rows, "all cases"
-        levels: dict[int, Observation] = {}
-        for observation in scope:
-            level = engagement_of(observation)
-            best = levels.get(level)
-            if best is None or (float(observation.row["achieved_bw_GBps"]) >
-                                float(best.row["achieved_bw_GBps"])):
-                levels[level] = observation
-        if len(levels) < 2:
-            only = next(iter(levels), None)
-            checks.append(Check("PASS", f"bank scaling: {standard}",
-                                f"not resolvable at {bank_rows[0].row['requests']} requests: "
-                                f"all cases engage "
-                                f"{engagement_of(only) if only else 0} banks per lane; {points}"))
-        else:
-            low_engagement, high_engagement = min(levels), max(levels)
-            low, high = levels[low_engagement], levels[high_engagement]
+            checks.append(Check("PASS", f"density behavior invariance: {standard}",
+                                f"no rows-only variant pair to compare. {points}"))
+
+        # 只有 bank/lane 数随密度变的家族才有可分辨的并行度轴。HBM3 与 LPDDR
+        # 的 bank 组织在全密度档固定，bank scaling 在这些标准上无信号可言。
+        distinct = {int(o.row["total_banks"]) for o in density_rows}
+        # 带宽比较只在各档每 lane 负载相等且非零时成立：lane 数随密度档变，
+        # 若把请求数固定成一个常数，档位越高每 lane 分到的请求越少，
+        # 带宽下降只是负载摊薄，不是并行度变差。门禁必须先校验这个前提。
+        per_lane = {int(o.row["requests"]) // max(1, int(o.row["lanes"]))
+                    for o in density_rows}
+        comparable = len(per_lane) == 1 and next(iter(per_lane)) > 0
+        if len(distinct) >= 2 and not comparable:
+            checks.append(Check("PASS", f"density scaling: {standard}",
+                                f"not comparable: request count is pinned at "
+                                f"{density_rows[0].row['requests']} while lanes differ "
+                                f"({density_rows[0].row['lanes']}..{density_rows[-1].row['lanes']}), "
+                                f"so per-lane load is {sorted(per_lane)} - raise "
+                                f"--density-requests (use 0 for auto). {points}"))
+        elif len(distinct) >= 2:
+            low, high = density_rows[0], density_rows[-1]
             scaled = (float(high.row["achieved_bw_GBps"]) + 1e-9 >=
                       BANK_SCALING_TOLERANCE * float(low.row["achieved_bw_GBps"]))
-            checks.append(Check("PASS" if scaled else "FAIL", f"bank scaling: {standard}",
-                                f"{scope_label}: engagement {low_engagement} "
-                                f"({low.row['total_banks']} banks, "
-                                f"{float(low.row['achieved_bw_GBps']):.3f} GB/s) -> "
-                                f"{high_engagement} ({high.row['total_banks']} banks, "
-                                f"{float(high.row['achieved_bw_GBps']):.3f} GB/s); {points}"))
-
-        geometry = sorted((o for o in subset if o.group == "geometry"),
-                          key=lambda o: int(o.row["columns"]))
-        geometry_ok = (float(geometry[-1].row["row_hit_rate_pct"]) + 1e-9 >=
-                       float(geometry[0].row["row_hit_rate_pct"]) and
-                       float(geometry[-1].row["row_conflict_rate_pct"]) <=
-                       float(geometry[0].row["row_conflict_rate_pct"]) + 1e-9)
-        checks.append(Check("PASS" if geometry_ok else "FAIL",
-                            f"geometry trend: {standard}",
-                            f"columns {geometry[0].row['columns']}->{geometry[-1].row['columns']}: "
-                            f"hit {float(geometry[0].row['row_hit_rate_pct']):.2f}% -> "
-                            f"{float(geometry[-1].row['row_hit_rate_pct']):.2f}%; conflict "
-                            f"{float(geometry[0].row['row_conflict_rate_pct']):.2f}% -> "
-                            f"{float(geometry[-1].row['row_conflict_rate_pct']):.2f}%"))
+            checks.append(Check("PASS" if scaled else "FAIL",
+                                f"density scaling: {standard}",
+                                f"{low.row['total_banks']} -> {high.row['total_banks']} banks: "
+                                f"{float(low.row['achieved_bw_GBps']):.3f} -> "
+                                f"{float(high.row['achieved_bw_GBps']):.3f} GB/s "
+                                f"(per-lane load held equal at {next(iter(per_lane))}). {points}"))
+        else:
+            checks.append(Check("PASS", f"density scaling: {standard}",
+                                f"bank organization is fixed at {next(iter(distinct))} banks "
+                                f"across all density variants, so there is no "
+                                f"bank-parallelism axis to resolve. {points}"))
 
         by_case = {o.case: o.row for o in subset if o.group == "refresh"}
         per_bank, all_bank = by_case["per_bank"], by_case["all_bank"]
@@ -710,54 +745,52 @@ def write_summary(path: Path, observations: list[Observation], checks: list[Chec
                   args: argparse.Namespace) -> None:
     lines = [
         "# Architecture sweep result", "",
-        "每个 case 以该标准**自己的完整标准组织**为基线，只在一个维度上扰动：",
-        "bank 组改 `banks_per_group`，geometry 组改 `columns`，refresh 组改 `refresh_policy`；",
-        "`channels/pseudo_channels/sids/ranks` 始终保持标准值。",
-        f"geometry/refresh 生成 {args.requests} 个请求（refresh 的 inject_interval="
-        f"{args.inject_interval}）；bank 组按标准 bank 总数取请求数，使每 lane 有足够请求"
-        "暴露 bank 并行度。",
+        "每个 case 以该标准**自己的完整标准组织**为基线。密度组按各标准的真实 JEDEC",
+        "规格取点，真实器件变密度时不变的是 `channels`、`banks_per_group`、`columns`，",
+        "变的是 `rows`，以及（HBM4 的堆叠配置）`stack_height` 所带动的 SID 域数量；",
+        "refresh 组只改 `refresh_policy`。",
+        f"密度组每个 case 生成 max(--requests={args.requests}, 该档 bank 数) 个请求，"
+        "使各档每 lane 负载相等，带宽差异才归因于并行度；"
+        f"refresh 组固定 {args.requests} 个请求（inject_interval={args.inject_interval}）。",
         "`channel_mapper` 显式设为 `decoded`：`configs/hbm.cfg` 默认的 `xor` 会按地址哈希覆盖",
-        "解码出的 channel，而该哈希多对一、需在 row 上搜索才能反解，会污染 geometry 变量。",
+        "解码出的 channel，实验无法控制落点。",
         "workload.trace 与 resolved.cfg 是审计依据。", "",
         "## Automated checks", "", "| status | check | detail |", "|---|---|---|",
     ]
     lines.extend(f"| {c.status} | {c.name} | {c.detail} |" for c in checks)
     lines.extend([
         "", "## Trend interpretation", "",
-        "以下解释只比较同一标准、同一组内的定向 workload。bank 与 geometry 具有由 trace "
-        "构造保证的预期方向；refresh 只对 REFpb/REFdb/REFab scope 做硬性门禁，"
+        "以下解释只比较同一标准、同一组内的定向 workload。密度组的可分辨性取决于该家族"
+        "是否在密度档之间有 bank 组织变化：按 JEDEC，HBM3 与 LPDDR 的 bank 组织在全密度档"
+        "固定，因此这些标准的密度轴只改变容量与地址范围，行为指标逐位相同——脚本对此做"
+        "正向断言，而不是给出趋势。refresh 只对 REFpb/REFdb/REFab scope 做硬性门禁，"
         "不预设 per-bank 必然快于 all-bank。", "",
     ])
     for standard in sorted({o.standard for o in observations}):
         subset = [o for o in observations if o.standard == standard]
         base = subset[0].baseline
-        banks = sorted((o for o in subset if o.group == "bank"),
-                       key=lambda o: (engagement_of(o), int(o.row["total_banks"])))
-        geometry = sorted((o for o in subset if o.group == "geometry"),
-                          key=lambda o: int(o.row["columns"]))
+        density = sorted((o for o in subset if o.group == "density"),
+                         key=lambda o: int(o.row["total_banks"]))
         refresh = {o.case: o.row for o in subset if o.group == "refresh"}
         per_bank, all_bank = refresh["per_bank"], refresh["all_bank"]
+        bank_counts = {int(o.row["total_banks"]) for o in density}
         lines.extend([
             f"### {standard}", "",
             f"- 标准基线：{base['channels']}ch × {base['pseudo_channels']}pc × "
             f"{base['sids']}sid × {base['ranks']}rank × {base['bank_groups']}bg × "
             f"{base['banks_per_group']}bpg × {base['rows']}rows × {base['columns']}cols × "
-            f"{base['dram_transaction_bytes']}B = {capacity_of(base) / 2**30:.3f} GiB。",
-            f"- Bank：{banks[0].row['total_banks']}→{banks[-1].row['total_banks']} banks，"
-            f"容量 {float(banks[0].row['capacity_ratio_vs_baseline']):.3f}→"
-            f"{float(banks[-1].row['capacity_ratio_vs_baseline']):.3f}× 基线，带宽 "
-            f"{float(banks[0].row['achieved_bw_GBps']):.3f}→"
-            f"{float(banks[-1].row['achieved_bw_GBps']):.3f} GB/s。门禁按每 lane 实际可用的"
-            " bank 并行度（engagement）归一；三点 engagement 相同时判定为在该请求数下"
-            "不可分辨，而不是给出趋势。",
-            f"- Geometry：columns {geometry[0].row['columns']}→{geometry[-1].row['columns']}，"
-            f"容量 {float(geometry[0].row['capacity_ratio_vs_baseline']):.3f}→"
-            f"{float(geometry[-1].row['capacity_ratio_vs_baseline']):.3f}× 基线，行命中率 "
-            f"{float(geometry[0].row['row_hit_rate_pct']):.2f}%→"
-            f"{float(geometry[-1].row['row_hit_rate_pct']):.2f}%，冲突率 "
-            f"{float(geometry[0].row['row_conflict_rate_pct']):.2f}%→"
-            f"{float(geometry[-1].row['row_conflict_rate_pct']):.2f}%。该组固定在单 lane 上"
-            "顺序扫描，其带宽只是单 lane 值，不可跨标准或对峰值比较。",
+            f"{base['dram_transaction_bytes']}B，stack_height={base['stack_height']}，"
+            f"= {capacity_of(base) / 2**30:.3f} GiB。",
+            f"- 密度：{density[0].case}→{density[-1].case}，容量 "
+            f"{float(density[0].row['aggregate_capacity_GiB']):.2f}→"
+            f"{float(density[-1].row['aggregate_capacity_GiB']):.2f} GiB，bank "
+            f"{density[0].row['total_banks']}→{density[-1].row['total_banks']}，带宽 "
+            f"{float(density[0].row['achieved_bw_GBps']):.3f}→"
+            f"{float(density[-1].row['achieved_bw_GBps']):.3f} GB/s。"
+            + ("该标准的 bank 组织在所有密度档位相同，因此没有可分辨的并行度轴，"
+               "三点差异只体现在容量上。"
+               if len(bank_counts) < 2 else
+               "bank 数随密度档变化，带宽差异即并行度差异。"),
             f"- Refresh：per-bank 触发 {per_bank['refresh_pb_batches']} 个 PB batch，"
             f"延迟/带宽 {float(per_bank['avg_read_latency_ticks']):.2f} tick / "
             f"{float(per_bank['achieved_bw_GBps']):.3f} GB/s；all-bank 触发 "
@@ -768,16 +801,17 @@ def write_summary(path: Path, observations: list[Observation], checks: list[Chec
         ])
     lines.extend([
         "", "## Measurements", "",
-        "| standard | group | case | perturbation | requests | rows | bpg | banks | "
-        "engaged | cov | cap/GiB | ratio | BW/GBps | hit/% | conflict/% | REFpb | REFab | wall/s |",
-        "|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| standard | group | case | perturbation | requests | rows | cols | sids | "
+        "stackH | banks | lanes | cap/GiB | ratio | BW/GBps | hit/% | conflict/% | "
+        "REFpb | REFab | wall/s |",
+        "|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ])
     for observation in observations:
         row = observation.row
         lines.append(
             f"| {row['standard']} | {row['group']} | {row['case']} | `{row['perturbation']}` | "
-            f"{row['requests']} | {row['rows']} | {row['banks_per_group']} | "
-            f"{row['total_banks']} | {row['engaged_banks']} | {float(row['coverage']):.2f} | "
+            f"{row['requests']} | {row['rows']} | {row['columns']} | {row['sids']} | "
+            f"{row['stack_height']} | {row['total_banks']} | {row['lanes']} | "
             f"{float(row['aggregate_capacity_GiB']):.3f} | "
             f"{float(row['capacity_ratio_vs_baseline']):.3f} | "
             f"{float(row['achieved_bw_GBps']):.3f} | {float(row['row_hit_rate_pct']):.2f} | "
@@ -806,8 +840,8 @@ def write_html(path: Path, observations: list[Observation], checks: list[Check])
     )
     document = f"""<!doctype html><meta charset=\"utf-8\"><title>Architecture sweep</title>
 <style>body{{font:14px system-ui;background:#0b1020;color:#e6edf7;padding:28px}}table{{border-collapse:collapse;width:100%;margin-bottom:28px}}th,td{{border:1px solid #334155;padding:8px;text-align:right}}th:first-child,td:first-child,th:nth-child(2),td:nth-child(2),th:nth-child(3),td:nth-child(3),th:nth-child(4),td:nth-child(4){{text-align:left}}tr:hover{{background:#17213b}}.pass{{color:#4ade80}}.fail{{color:#f87171}}</style>
-<h1>HBM/LPDDR architecture sweep</h1><p>每个 case 是该标准完整组织的单维度扰动；容量由容量公式自动核算，不是器件标定值。</p>
-<p>bank scaling 门禁按每 lane 可用 bank 并行度（engagement）归一，engagement 三点相同的标准会显式标注“不可分辨”。geometry 组固定在单 lane，其带宽不可跨标准比较。详细逐标准解释见同目录 summary.md。</p>
+<h1>HBM/LPDDR architecture sweep</h1><p>密度组按各标准的真实 JEDEC 规格取点；容量由容量公式自动核算，不是器件标定值。</p>
+<p>按 JEDEC，HBM3 与 LPDDR 的 bank 组织在全密度档固定，其密度轴只改变容量与地址范围，脚本对三点行为的一致性做正向断言而非给出趋势；只有 bank 数随密度变的家族（HBM4 的 SID 域数量随 stack_height 变）才有可分辨的并行度轴。详细逐标准解释见同目录 summary.md。</p>
 <h2>Automated checks</h2><table><thead><tr><th>status</th><th>check</th><th>detail</th></tr></thead><tbody>{serialized_checks}</tbody></table>
 <h2>Measurements</h2><table><thead><tr><th>standard</th><th>group</th><th>case</th><th>perturbation</th><th>cap/GiB</th><th>ratio</th><th>latency/tick</th><th>BW/GBps</th><th>row hit/%</th><th>conflict/%</th></tr></thead><tbody>{serialized_rows}</tbody></table>"""
     path.write_text(document, encoding="utf-8")
@@ -818,9 +852,9 @@ def main() -> int:
     if not args.binary.is_file():
         raise SystemExit(f"binary not found: {args.binary}")
     if (args.requests < 1 or args.inject_interval < 1 or args.case_timeout <= 0 or
-            args.bank_requests < 0):
+            args.density_requests < 0):
         raise SystemExit("--requests, --inject-interval and --case-timeout must be positive; "
-                         "--bank-requests must be non-negative")
+                         "--density-requests must be non-negative")
     standards = [item.strip().lower() for item in args.standards.split(",") if item.strip()]
     if not standards or len(standards) != len(set(standards)):
         raise SystemExit("--standards must contain a non-empty, unique list")
