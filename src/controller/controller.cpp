@@ -687,9 +687,11 @@ void Controller::complete_pending() {
         responses_.push_back(std::move(response));
       }
     } else if (it->type == RequestType::Write) {
-      // completion 已在发射路径确定：Direct PHY 使用发出后 1 cycle 的轻量
-      // 语义，Behavioral PHY 则等待 MemPhy 报告包含写数据时序的完成事件。
+      // completion 沿用现有执行路径：Direct 的普通 WR 是发出后 1 tick，
+      // WRA 还受自动 PRE/write-recovery gate 约束；Behavioral 等待 PHY
+      // 完成事件。这里仅累计事务延迟，不重新定义任一完成时序。
       stats_.completed_writes++;
+      stats_.total_write_latency += it->completion - it->arrival;
       if (!it->bypass_dram) {
         const std::size_t payload_bytes = request_data_size(spec_, *it);
         const int interface_bytes =

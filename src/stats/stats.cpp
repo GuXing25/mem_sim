@@ -215,6 +215,7 @@ ResultFields collect_stats(const Stats& stats) {
   record_field(fields, "hit_cycle_limit", stats.hit_cycle_limit);
   // Retain full numerical precision; rounding is a presentation concern.
   record_field(fields, "avg_read_latency", stats.avg_read_latency());
+  record_field(fields, "avg_write_latency", stats.avg_write_latency());
   record_field(fields, "read_q_avg_per_ctrl", stats.read_queue_len_avg_per_controller());
   record_field(fields, "write_q_avg_per_ctrl", stats.write_queue_len_avg_per_controller());
   record_field(fields, "priority_q_avg_per_ctrl", stats.priority_queue_len_avg_per_controller());

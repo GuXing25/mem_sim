@@ -1508,6 +1508,7 @@ void test_active_six_stack_memory_system_routing_qos_and_stats() {
           "stack ingress QoS did not account the priority request");
   require(memory.per_stack_stats().size() == 6,
           "active six-stack system did not expose per-stack stats");
+  std::uint64_t stack_write_latency_sum = 0;
 
   for (int stack = 0; stack < options.stack_count; stack++) {
     bool initialized = false;
@@ -1521,7 +1522,14 @@ void test_active_six_stack_memory_system_routing_qos_and_stats() {
     require(memory.per_stack_stats()[static_cast<std::size_t>(stack)]
                     .completed_writes == expected_writes,
             "per-stack completion statistics are incorrect");
+    stack_write_latency_sum +=
+        memory.per_stack_stats()[static_cast<std::size_t>(stack)]
+            .total_write_latency;
   }
+  require(memory.stats().total_write_latency == stack_write_latency_sum &&
+              memory.stats().avg_write_latency() ==
+                  static_cast<double>(stack_write_latency_sum) / writes.size(),
+          "system write latency must be weighted by completed transactions");
 
   std::vector<bool> traced(6, false);
   std::uint64_t first_stack0_request = 0;
@@ -1660,9 +1668,15 @@ void test_write_forward_and_coalesce() {
   int response_count = 0;
   int forwarded_responses = 0;
   int coalesced_responses = 0;
+  std::uint64_t write_latency_sum = 0;
   while (controller.has_response()) {
     const hbm_sim::TransactionResponse response = controller.pop_response();
     response_count++;
+    if (response.type == RequestType::Write) {
+      require(response.completion_cycle >= response.arrival_cycle,
+              "write response completed before arrival");
+      write_latency_sum += response.completion_cycle - response.arrival_cycle;
+    }
     if (response.forwarded) {
       forwarded_responses++;
       require(response.type == RequestType::Read && !response.data.empty(),
@@ -1678,6 +1692,10 @@ void test_write_forward_and_coalesce() {
               coalesced_responses == 1,
           "Controller did not return one response for each accepted bypass "
           "request");
+  require(controller.stats().total_write_latency == write_latency_sum &&
+              controller.stats().avg_write_latency() ==
+                  static_cast<double>(write_latency_sum) / 2,
+          "coalesced write latency did not use every completed transaction");
 }
 
 void test_closed_page_row_policy() {

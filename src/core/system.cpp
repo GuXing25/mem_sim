@@ -216,6 +216,7 @@ void merge_stats(Stats &dst, const Stats &src) {
   dst.priority_queue_len_sum += src.priority_queue_len_sum;
   dst.active_queue_len_sum += src.active_queue_len_sum;
   dst.total_read_latency += src.total_read_latency;
+  dst.total_write_latency += src.total_write_latency;
   dst.read_bytes += src.read_bytes;
   dst.write_bytes += src.write_bytes;
   dst.interface_read_bytes += src.interface_read_bytes;

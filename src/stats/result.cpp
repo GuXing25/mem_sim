@@ -114,6 +114,8 @@ ResultReport make_result_report(const ResultFields& f) {
     r.metrics["simulation_time_ns"] = number(f, "system_cycles") * ns;
     r.metrics["avg_read_latency_ns"] = number(f, "completed_reads") == 0
         ? ResultValue(nullptr) : ResultValue(number(f, "avg_read_latency") * ns);
+    r.metrics["avg_write_latency_ns"] = number(f, "completed_writes") == 0
+        ? ResultValue(nullptr) : ResultValue(number(f, "avg_write_latency") * ns);
     const double classified = number(f, "row_hits") + number(f, "row_misses") +
                               number(f, "row_conflicts");
     r.metrics["row_hit_pct"] = classified == 0 ? ResultValue(nullptr)
@@ -150,6 +152,9 @@ ResultReport make_result_report(const ResultFields& f) {
         s[key] = f.at(prefix + old);
       s["avg_read_latency_ns"] = number(f, prefix + "reads") == 0 ? ResultValue(nullptr)
           : ResultValue(number(f, prefix + "avg_read_latency") *
+                        number(f, "tick_duration_ps") / 1000);
+      s["avg_write_latency_ns"] = number(f, prefix + "writes") == 0 ? ResultValue(nullptr)
+          : ResultValue(number(f, prefix + "avg_write_latency") *
                         number(f, "tick_duration_ps") / 1000);
       r.stacks.push_back(std::move(s));
     }
@@ -266,6 +271,7 @@ void print_result(std::ostream& out, const ResultReport& r) {
       << "Simulation Time          : " << s("simulation_time_ns") << " ns\n"
       << "Bandwidth / Utilization  : " << s("achieved_bw_GBps") << " GB/s / " << s("bandwidth_util_pct") << "%\n"
       << "Read Transaction Latency : " << s("avg_read_latency_ns") << " ns\n"
+      << "Write Transaction Latency: " << s("avg_write_latency_ns") << " ns\n"
       << "Row Hit Rate             : " << s("row_hit_pct") << "% (first-scheduling classification)\n"
       << "Validation               : Command=" << v("cmd_validation") << "; DFI=" << v("dfi_validation")
       << "; checked_reads=" << v("data_checked_reads") << "; data_errors=" << v("data_mismatches");
