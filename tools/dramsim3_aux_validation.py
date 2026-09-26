@@ -73,6 +73,19 @@ def main() -> int:
     hbm_thermal_ini = dramsim_root / "configs/HBM_4Gb_x128.ini"
     for required in (binary, dramsim_binary, hbm2_ini, PROJECT_CONFIG):
         if not required.is_file():
+            # --dramsim3-root 是外部参考仓库的根目录，不是仓库自带路径。这里明确
+            # 区分“路径写错”和“没构建”，否则报错只给一个文件名，容易被当成占位符
+            # 没替换。
+            if required == dramsim_binary:
+                raise SystemExit(
+                    f"DRAMsim3 executable not found: {required}\n"
+                    f"Check --dramsim3-root (currently {dramsim_root}); it must point "
+                    f"at the DRAMsim3 repository root, and "
+                    f"{args.dramsim3_build}/ must be built with CMD_TRACE=ON:\n"
+                    f"  cmake -S {dramsim_root} -B {dramsim_root / args.dramsim3_build} "
+                    f"-DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5 "
+                    f"-DCMD_TRACE=ON\n"
+                    f"  cmake --build {dramsim_root / args.dramsim3_build} --parallel")
             raise SystemExit(f"required file not found: {required}")
 
     ini = read_ini(hbm2_ini)
@@ -121,8 +134,24 @@ def main() -> int:
         if completed.returncode:
             raise RuntimeError(completed.stdout + completed.stderr)
         external_stats = json.loads((dram_out / "dramsim3.json").read_text())["0"]
+        # DRAMsim3 只在编译期开了 CMD_TRACE 时才写每通道命令 trace
+        # （src/controller.cc 的 #ifdef CMD_TRACE，由 CMakeLists 的 CMD_TRACE 选项
+        # 注入）。缺失时 dramsim3main 仍会正常退出并产出 dramsim3.json，所以这里
+        # 必须显式说明原因，否则只会抛一个看起来像路径写错的 FileNotFoundError。
+        command_trace = dram_out / "dramsim3ch_0cmd.trace"
+        if not command_trace.is_file():
+            raise SystemExit(
+                f"DRAMsim3 did not write {command_trace.name}; the build at\n"
+                f"  {dramsim_root / args.dramsim3_build}\n"
+                f"was configured without CMD_TRACE. Rebuild it with:\n"
+                f"  cmake -S {dramsim_root} -B "
+                f"{dramsim_root / args.dramsim3_build} -DCMAKE_BUILD_TYPE=Release "
+                f"-DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMD_TRACE=ON\n"
+                f"  cmake --build {dramsim_root / args.dramsim3_build} --parallel\n"
+                f"Note: CMake >= 3.5 policy override is required because DRAMsim3's "
+                f"CMakeLists declares cmake_minimum_required(VERSION 3.0.0).")
         external_commands = []
-        for line in (dram_out / "dramsim3ch_0cmd.trace").read_text().splitlines():
+        for line in command_trace.read_text().splitlines():
             fields = line.split()
             if len(fields) >= 2:
                 external_commands.append({"cycle": int(fields[0]), "command": fields[1]})
