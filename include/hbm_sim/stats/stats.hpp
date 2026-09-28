@@ -200,6 +200,9 @@ struct Stats {
   std::uint64_t low_power_entries = 0;
   std::uint64_t low_power_exits = 0;
   std::uint64_t low_power_cycles = 0;
+  std::uint64_t self_refresh_cycles = 0;
+  double self_refresh_time_ns = 0.0;
+  double self_refresh_energy_pj = 0.0;
   std::uint64_t low_power_exit_blocked_cycles = 0;
   // 命令/地址总线保护带来的 bit 级开销，例如 LPDDR6 CA parity。它和
   // interface_read/write_bytes 分开保存，避免把命令开销误认为 payload 数据。

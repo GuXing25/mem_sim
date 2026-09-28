@@ -708,3 +708,10 @@ vendor_profile 和 vendor 来源数值。它们只实施程序门槛，不验证
 
 查看单项覆盖链时，可在第 1 节检查命令中附加 `--explain-config nCL`；对比选定 preset
 则附加 `--compare-preset`。别把最终 resolved 快照、配置覆盖差异、结果 changes 当成同一种文件。
+## 自刷新配置口径
+
+`low_power_mode=self_refresh` 采用 DRAMsim3 空闲进入/工作唤醒方法，发出真实 SREFEN/SREFEX；`low_power_entry_cycles` 是进入前的空闲门限，并非驻留长度或内部刷新间隔。当前模型按 Controller/Channel 管理，未实现独立 Rank 自刷新。open-page 打开行不会为了自动进入而强制关闭。
+
+功耗启用时，复用 `power_vdd`、`idd6x`、`idd_devices_per_rank` 和 `power_scale`，按物理驻留时间(ns)计能；器件数量为当前 Channel 每 Rank 的数量。默认电流是研究输入，不能直接声明厂家校准。驻留能量参考 DRAMsim3 作为背景热能量均匀分配到本项目的 memory-layer grid；当前热网格/求解器仍是本项目的行为模型。没有内部刷新事件或漏电失效模型。
+
+CLI 批处理在完成请求后结束，不会额外推算待机驻留；要模拟空闲时间，应在 trace 中安排后续请求时间，或通过外部接口继续 step()，最后 finish()。

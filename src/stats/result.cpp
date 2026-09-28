@@ -103,7 +103,8 @@ ResultReport make_result_report(const ResultFields& f) {
       "remaining_requests remaining_pending hit_cycle_limit system_cycles "
       "read_bytes write_bytes achieved_bw_GBps peak_bandwidth_GBps bandwidth_util_pct "
       "storage_lines_allocated storage_bytes_allocated power_energy_pJ "
-      "thermal_avg_temp_C thermal_peak_temp_C");
+      "thermal_avg_temp_C thermal_peak_temp_C self_refresh_cycles "
+      "self_refresh_time_ns self_refresh_energy_pJ");
   select(r.validation, f, "cmd_validation dfi_validation cmd_validation_checked "
       "dfi_validation_events data_checked_reads data_mismatches "
       "ecc_uncorrectable_errors golden_verified golden_mismatches");
@@ -121,7 +122,15 @@ ResultReport make_result_report(const ResultFields& f) {
     r.metrics["row_hit_pct"] = classified == 0 ? ResultValue(nullptr)
         : ResultValue(100 * number(f, "row_hits") / classified);
   }
-  if (!enabled(f, "power_model_enabled")) r.metrics.erase("power_energy_pJ");
+  if (!enabled(f, "power_model_enabled")) {
+    r.metrics.erase("power_energy_pJ");
+    r.metrics.erase("self_refresh_energy_pJ");
+  }
+  if (!f.contains("self_refresh_cycles") || number(f, "self_refresh_cycles") == 0) {
+    r.metrics.erase("self_refresh_cycles");
+    r.metrics.erase("self_refresh_time_ns");
+    r.metrics.erase("self_refresh_energy_pJ");
+  }
   if (!enabled(f, "thermal_model_enabled")) {
     r.metrics.erase("thermal_avg_temp_C");
     r.metrics.erase("thermal_peak_temp_C");
@@ -278,6 +287,12 @@ void print_result(std::ostream& out, const ResultReport& r) {
   if (v("data_checked_reads") == "0") out << " (no independent data-check evidence)";
   out << '\n';
   if (r.metrics.contains("power_energy_pJ")) out << "Energy                   : " << s("power_energy_pJ") << " pJ\n";
+  if (r.metrics.contains("self_refresh_time_ns")) {
+    out << "Self-refresh Residency   : " << s("self_refresh_time_ns")
+        << " ns (sum over controllers)\n";
+    if (r.metrics.contains("self_refresh_energy_pJ"))
+      out << "Self-refresh Energy      : " << s("self_refresh_energy_pJ") << " pJ\n";
+  }
   if (r.metrics.contains("thermal_peak_temp_C")) out << "Mean / Peak Temperature  : " << s("thermal_avg_temp_C") << " / " << s("thermal_peak_temp_C") << " degC\n";
   if (r.metrics.contains("storage_lines_allocated")) out << "Backend Allocation       : " << s("storage_lines_allocated") << " lines; " << s("storage_bytes_allocated") << " B (data-byte accounting)\n";
   if (r.validation.contains("golden_mismatches")) out << "Golden Check             : " << v("golden_verified") << " lines; errors=" << v("golden_mismatches") << '\n';
