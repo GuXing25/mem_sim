@@ -16,6 +16,8 @@
 #include <unistd.h>
 #include <unordered_map>
 
+#include "hbm_sim/core/utils.hpp"
+
 namespace hbm_sim {
 namespace {
 
@@ -54,10 +56,7 @@ struct DiskLineMeta {
 static_assert(std::is_trivially_copyable_v<DiskLineMeta>);
 
 std::uint64_t checked_mul(std::uint64_t lhs, std::uint64_t rhs, std::string_view what) {
-  if (lhs != 0 && rhs > std::numeric_limits<std::uint64_t>::max() / lhs) {
-    throw std::overflow_error(std::string(what) + " size overflow");
-  }
-  return lhs * rhs;
+  return checked_multiply_u64(lhs, rhs, what, " size overflow");
 }
 
 std::size_t checked_size(std::uint64_t value, std::string_view what) {

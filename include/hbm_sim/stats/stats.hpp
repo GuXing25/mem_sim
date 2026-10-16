@@ -62,18 +62,14 @@ struct Stats {
   std::uint64_t refresh_per_bank_batches = 0;
   std::uint64_t refresh_all_bank_batches = 0;
   std::uint64_t refresh_postpones = 0;
-  std::uint64_t refresh_pullins = 0;
   std::uint64_t refresh_credit_peak = 0;
   std::uint64_t rfm_events = 0;
-  std::uint64_t rfm_per_bank_events = 0;
   std::uint64_t rfm_all_bank_events = 0;
   // HBM 双总线模式下，同一 cycle 成功发出 row+column 的次数。
   std::uint64_t dual_issue_cycles = 0;
   std::uint64_t row_bus_issues = 0;
   std::uint64_t column_bus_issues = 0;
   std::uint64_t unified_bus_issues = 0;
-  std::uint64_t rising_edge_ticks = 0;   // HBM edge pairing 下 rising edge tick 数。
-  std::uint64_t falling_edge_ticks = 0;  // HBM edge pairing 下 falling edge tick 数。
   std::uint64_t write_mode_cycles = 0;   // write-drain 模式持续的 controller cycle 数。
   std::uint64_t injected_requests = 0;   // frontend 成功进入 controller buffer 的请求数。
   std::uint64_t injection_stall_cycles = 0;  // frontend 因目标 buffer 满而停顿的 cycle。
@@ -117,7 +113,6 @@ struct Stats {
   std::uint64_t storage_cells_touched = 0;
   std::uint64_t storage_microbumps_touched = 0;
   std::uint64_t floorplan_tiles_touched = 0;
-  std::uint64_t thermal_tiles_touched = 0;
   std::uint64_t thermal_grid_cells_touched = 0;
   std::uint64_t storage_read_line_accesses = 0;
   std::uint64_t storage_write_line_accesses = 0;
@@ -248,7 +243,6 @@ struct Stats {
   // payload 加按配置折算的保护/metadata byte；是记账量，不代表已增加总线拍。
   std::uint64_t interface_read_bytes = 0;
   std::uint64_t interface_write_bytes = 0;
-  double interface_transfer_rate_gbps = 0.0;          // 每 pin 外部接口速率。
   double peak_bandwidth_GBps = 0.0;                   // data_rate * bus_width / 8。
   double achieved_bandwidth_GBps = 0.0;               // payload 字节换算的实际带宽。
   // payload+metadata/ECC 的记账等效带宽；当前不会据此延长数据总线占用。
@@ -289,5 +283,11 @@ struct Stats {
   }
 };
 
+
+// Finalize derived rates without changing the scope's original zero-time rules.
+// Per-stack snapshots leave efficiency at its default with no elapsed cycles;
+// Controller/system snapshots still report an empty interface as 100% efficient.
+void finalize_bandwidth_stats(Stats& stats, double cycles_per_second,
+                              double peak_bandwidth_GBps, bool per_stack = false);
 
 }  // namespace hbm_sim

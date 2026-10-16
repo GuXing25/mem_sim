@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import configparser
 import csv
 import json
 import os
@@ -14,7 +15,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from config_selection import REFERENCE_PRESETS, selection_args
-from result_io import count, number, run_simulator
+from result_io import count, number, run_simulator, latency_ticks
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -485,17 +486,22 @@ def canonical_events(standard: str, scenario_name: str,
 
 
 def read_project_timings(binary: Path, config_args: list[str], standard: str,
-                         temp: Path) -> tuple[dict[str, int], int, dict]:
+                         temp: Path) -> tuple[dict[str, int], int, dict, dict]:
     output = temp / (standard + "_timing.csv")
+    snapshot = temp / (standard + "_resolved.cfg")
     stats, _ = run_simulator(
         [str(binary), *config_args, "--requests", "0",
-         "--dump-timing-table", str(output)], cwd=ROOT, diagnostic=True)
+         "--dump-timing-table", str(output), "--dump-resolved-config", str(snapshot)],
+        cwd=ROOT, diagnostic=True)
     multiplier = count(stats, "tick_multiplier")
     if multiplier == 0:
         raise ValueError("tick_multiplier must be positive")
     with output.open(newline="", encoding="utf-8") as stream:
         rows = list(csv.DictReader(stream))
-    return {row["name"]: int(row["value_nck"]) * multiplier for row in rows}, multiplier, stats
+    resolved = configparser.ConfigParser(interpolation=None)
+    resolved.read(snapshot)
+    return ({row["name"]: int(row["value_nck"]) * multiplier for row in rows},
+            multiplier, stats, dict(resolved["architecture"]))
 
 
 def add(checks: list[Check], name: str, passed: bool, detail: str) -> None:
@@ -529,7 +535,7 @@ def main() -> int:
             config = (args.config or meta["config"]).resolve()
             config_args = (["--config", str(config)] if args.config
                            else selection_args(standard, str(meta["preset"])))
-            project_timings, multiplier, geometry_stats = read_project_timings(
+            project_timings, multiplier, geometry_stats, geometry = read_project_timings(
                 binary, config_args, standard, temp)
             ram = ramulator["standards"][standard]
             dims = ram["geometry"]
@@ -538,7 +544,7 @@ def main() -> int:
             capacity = 1
             for value in dims.values():
                 capacity *= value
-            observed_geometry = {key: count(geometry_stats, "banks_per_group" if key == "banks"
+            observed_geometry = {key: count(geometry, "banks_per_group" if key == "banks"
                 else "dram_transaction_bytes" if key == "transaction_bytes" else key)
                 for key in dims}
             add(checks, f"{standard}_executed_geometry", observed_geometry == dims,
@@ -606,7 +612,7 @@ def main() -> int:
                 has_read = any(event.get("kind") == "request" and event.get("type") == "Read"
                                for event in scenario["events"])
                 if has_read and sequence_ok:
-                    project_latency = number(project_stats, "avg_read_latency")
+                    project_latency = latency_ticks(project_stats)
                     ram_latency = number(ram_result["stats"], "avg_read_latency")
                     latency_delta = project_latency - ram_latency
                     latency_tolerance = max(
@@ -625,7 +631,7 @@ def main() -> int:
                     "raw_ramulator2": raw_ram_events,
                     "cycle_deltas": cycle_deltas, "read_latency_delta": latency_delta,
                     "project_stats": {key: project_stats.get(key) for key in
-                                      ("avg_read_latency", "row_hits", "row_misses",
+                                      ("avg_read_latency_ns", "row_hits", "row_misses",
                                        "row_conflicts", "completed_reads", "completed_writes")},
                     "ramulator_stats": ram_result["stats"],
                 }
@@ -644,7 +650,6 @@ def main() -> int:
     for check in checks:
         print(f"{'PASS' if check.passed else 'FAIL':4} {check.name}: {check.detail}")
     report = {
-        "schema_version": 2,
         "scope": "external_reference_overlap_four_standards_commands_timing_maintenance",
         "relationship": "non_normative_external_reference",
         "external_engine_executed": True,

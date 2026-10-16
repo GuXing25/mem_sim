@@ -9,7 +9,7 @@
 #include <vector>
 
 #include "hbm_sim/controller/command.hpp"
-#include "hbm_sim/dram/spec.hpp"
+#include "hbm_sim/dram/interface.hpp"
 
 namespace hbm_sim {
 
@@ -72,7 +72,6 @@ struct DfiValidationReport {
 const char* to_string(DfiEventKind kind);
 
 int dfi_phase_count(const DramSpec& spec);
-std::size_t dfi_payload_beat_bytes(const DramSpec& spec);
 std::uint64_t encode_dfi_address(const IssuedCommand& command);
 std::vector<DfiEvent> build_dfi_trace(const DramSpec& spec,
                                       const std::vector<IssuedCommand>& commands);

@@ -530,6 +530,12 @@ struct DramSpec {
            lpddr_wck_training_mode.find("Retrain") != std::string::npos;
   }
 
+  // nCK->模拟 tick 的公共单位换算；不包含任何命令合法性/时序判定。
+  Cycle nck_to_ticks(int nck) const {
+    return static_cast<Cycle>(std::max(0, nck)) *
+           static_cast<Cycle>(std::max(1, tick_multiplier));
+  }
+
   double cycles_per_second() const {
     return timing.tCK_ps <= 0.0
                ? 0.0

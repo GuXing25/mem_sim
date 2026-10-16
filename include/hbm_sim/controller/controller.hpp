@@ -203,6 +203,7 @@ private:
 
   // 扫描 pending_，把 completion <= clk_ 的请求转入完成统计。
   void complete_pending();
+  void record_completed_transfer(const Request &req);
   TransactionResponse
   complete_read(Request &req, const MemPhyCompletion *phy_completion = nullptr);
   TransactionResponse
@@ -295,9 +296,7 @@ private:
   bool any_bank_busy_in_channel(const DecodedAddress &decoded) const;
   bool any_bank_busy_in_rank(const DecodedAddress &decoded) const;
   bool any_bank_activating_in_rank(const DecodedAddress &decoded) const;
-  std::pair<int, int> rank_bank_range(const DecodedAddress &decoded) const;
 
-  Cycle timing_delay(int cycles) const;
   void schedule_refresh();
   void service_pending_maintenance();
   void schedule_maintenance(Command cmd, const DecodedAddress &decoded);

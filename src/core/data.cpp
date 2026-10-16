@@ -16,18 +16,12 @@
 #include "hbm_sim/dram/semantics.hpp"
 #include "hbm_sim/stats/stats.hpp"
 
+#include "hbm_sim/core/utils.hpp"
+
 namespace hbm_sim {
 namespace {
 
 constexpr double kPi = 3.14159265358979323846;
-
-std::uint64_t checked_multiply_u64(std::uint64_t lhs, std::uint64_t rhs,
-                                   const char *context) {
-  if (lhs != 0 && rhs > std::numeric_limits<std::uint64_t>::max() / lhs) {
-    throw std::overflow_error(std::string(context) + " exceeds uint64 range");
-  }
-  return lhs * rhs;
-}
 
 void validate_address_span(Address address, std::size_t size,
                            const char *context,
@@ -592,7 +586,6 @@ void apply_physical_storage_stats(Stats &stats,
   stats.storage_cells_touched = storage.cells_touched;
   stats.storage_microbumps_touched = storage.microbumps_touched;
   stats.floorplan_tiles_touched = storage.floorplan_tiles_touched;
-  stats.thermal_tiles_touched = storage.thermal_tiles_touched;
   stats.thermal_grid_cells_touched = storage.thermal_grid_cells_touched;
   stats.storage_read_line_accesses = storage.read_line_accesses;
   stats.storage_write_line_accesses = storage.write_line_accesses;
@@ -1058,7 +1051,6 @@ PhysicalStorageStats MemoryImage::storage_stats() const {
   stats.cells_touched = cells.size();
   stats.microbumps_touched = microbumps.size();
   stats.floorplan_tiles_touched = floorplan_tiles.size();
-  stats.thermal_tiles_touched = thermal_tiles_.size();
   stats.thermal_grid_cells_touched = thermal_tiles_.size();
   double temp_sum = 0.0;
   for (const auto &[key, tile] : thermal_tiles_) {

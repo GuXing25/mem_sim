@@ -108,7 +108,6 @@ private:
   std::size_t scope_count(const DramSpec &spec, TimingScope scope) const;
   std::size_t scope_index(const DramSpec &spec, TimingScope scope,
                           const DecodedAddress &decoded) const;
-  Cycle timing_delay(const DramSpec &spec, int cycles) const;
   // mutable_scope/scope_state 给 table-driven constraint 使用，因为每条
   // constraint 自己声明作用域，不能只走 row/column/wck 固定路径。
   TimingScopeState &mutable_scope(const DramSpec &spec, TimingScope scope,

@@ -33,6 +33,7 @@ int main() {
     r.diagnostics["run_status"] = std::string("completed");
     hbm_sim::write_result_json(path.string(), r, "failed", "late output failure");
     const auto text = read(path);
+    require(text.find("schema_version") == std::string::npos, "result contains a format version");
     require(text.find("9007199254740993") != std::string::npos, "64-bit integer rounded");
     require(text.find("1.2345678901234567") != std::string::npos, "double rounded");
     require(text.find("a\\\"b\\u000a汉字") != std::string::npos, "JSON escaping failed");

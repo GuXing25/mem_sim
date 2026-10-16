@@ -120,7 +120,6 @@ def main() -> int:
             args.csv_out.write_bytes(generated_csv.read_bytes())
 
         report = {
-            "schema_version": 1,
             "scope": "active_table_constraints_and_stateful_refdb_boundaries_four_standards",
             "probe": str(probe),
             "rows": len(rows),

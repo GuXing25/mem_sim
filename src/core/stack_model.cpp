@@ -231,7 +231,6 @@ merge_physical_storage_stats(const std::vector<PhysicalStorageStats> &stats) {
     total.cells_touched += src.cells_touched;
     total.microbumps_touched += src.microbumps_touched;
     total.floorplan_tiles_touched += src.floorplan_tiles_touched;
-    total.thermal_tiles_touched += src.thermal_tiles_touched;
     total.thermal_grid_cells_touched += src.thermal_grid_cells_touched;
     total.read_line_accesses += src.read_line_accesses;
     total.write_line_accesses += src.write_line_accesses;

@@ -48,8 +48,8 @@ argv
   CLI 仅提供响应 CSV 和进度回调，不重复维护注入/重试/step/收尾循环。
 - 输出与验证：打印配置、统计、timing table dump、command trace / DFI beat/signal trace、command/DFI validation report。
 
-默认 `summary` 输出 MODEL—PARAMETERS—RESULTS 英文精简报告；`--stats-json` 输出分区 schema 2。
-只有 diagnostic 才附加内部审计字段。CLI 收集类型化值并直接序列化 JSON；
+默认 `summary` 输出 MODEL—PARAMETERS—RESULTS 英文精简报告；`--stats-json` 输出分区 JSON。
+只有 diagnostic 才附加筛选后的内部审计字段。CLI 将类型化的配置、统计和验证结果交给统计层，直接生成分区 JSON；
 参数变化比较使用实际 resolved 值与程序内置基准，不局限于 override 段。
 模型字段的白名单、单位和相互推导在 `src/config/model.cpp`，不再在 CLI 维护第二套模型覆盖表。
 

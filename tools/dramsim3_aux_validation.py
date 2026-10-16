@@ -15,7 +15,7 @@ import tempfile
 from pathlib import Path
 
 from config_selection import DRAMSIM3_HBM2, explicit_selection_args
-from result_io import run_simulator
+from result_io import run_simulator, latency_ticks
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -195,9 +195,9 @@ def main() -> int:
         add(checks, "older_hbm_tRCDRD_gap", project_gap == external_gap == 14,
             f"hbm_sim={project_gap} dramsim3={external_gap} cycles")
         add(checks, "older_hbm_read_latency",
-            abs(float(project_stats["avg_read_latency"])
+            abs(latency_ticks(project_stats)
                 - float(external_stats["average_read_latency"])) <= 1.0,
-            f"hbm_sim={project_stats['avg_read_latency']} "
+            f"hbm_sim={latency_ticks(project_stats)} "
             f"dramsim3={external_stats['average_read_latency']}")
 
         observed = {
@@ -329,7 +329,6 @@ def main() -> int:
     commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=dramsim_root,
                             text=True, stdout=subprocess.PIPE, check=True).stdout.strip()
     report = {
-        "schema_version": 1,
         "scope": "dramsim3_older_hbm_idd_thermal_auxiliary_validation",
         "external_engine_executed": True,
         "external_engine_binary": str(dramsim_binary),

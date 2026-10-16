@@ -121,7 +121,6 @@ struct PhysicalStorageStats {
   std::uint64_t cells_touched = 0;
   std::uint64_t microbumps_touched = 0;
   std::uint64_t floorplan_tiles_touched = 0;
-  std::uint64_t thermal_tiles_touched = 0;
   std::uint64_t thermal_grid_cells_touched = 0;
   std::uint64_t read_line_accesses = 0;
   std::uint64_t write_line_accesses = 0;

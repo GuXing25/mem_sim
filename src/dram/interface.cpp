@@ -6,6 +6,16 @@
 
 namespace hbm_sim {
 
+std::size_t dfi_payload_beat_bytes(const DramSpec& spec) {
+  if (spec.dfi_data_lane_bytes > 0) {
+    return static_cast<std::size_t>(spec.dfi_data_lane_bytes);
+  }
+  const std::size_t payload =
+      static_cast<std::size_t>(std::max(1, spec.transaction_bytes()));
+  const std::size_t beats = static_cast<std::size_t>(std::max(1, spec.timing.nBL));
+  return std::max<std::size_t>(1, (payload + beats - 1) / beats);
+}
+
 int lpddr_metadata_lane_bits_per_request(const DramSpec& spec) {
   if (!spec.lpddr_family) {
     return 0;

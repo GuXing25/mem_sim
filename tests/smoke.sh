@@ -19,123 +19,29 @@ run_and_check() {
   local out
   # 捕获完整 stdout：既能打印给人看，也能用 grep 做字段检查。
   # 如果被测命令退出非 0，set -e 会让 smoke 立即失败。
-  out="$("$@" --stats-view diagnostic)"
+  local case_dir
+  case_dir=$(mktemp -d)
+  out="$("$@" --stats-view diagnostic --stats-json "$case_dir/result.json" --dump-resolved-config "$case_dir/resolved.cfg")"
   echo "==========${name} ==========="
   echo "$out"
-  # smoke 只检查关键字段是否存在；协议精确性由 sequence_tests.cpp 覆盖。
-  # 不在这里绑定具体数值，是为了 timing preset 调整时不频繁维护 smoke。
-  grep -Eq "^completed_reads[[:space:]]*:" <<<"$out"
-  grep -Eq "^cycles[[:space:]]*:" <<<"$out"
-  grep -Eq "^address_mapping[[:space:]]*:" <<<"$out"
-  grep -Eq "^memory_image[[:space:]]*:" <<<"$out"
-  grep -Eq "^memory_image_dump[[:space:]]*:" <<<"$out"
-  grep -Eq "^memory_csv_dump[[:space:]]*:" <<<"$out"
-  grep -Eq "^mismatch_report[[:space:]]*:" <<<"$out"
-  grep -Eq "^thermal_map_dump[[:space:]]*:" <<<"$out"
-  grep -Eq "^floorplan_enabled[[:space:]]*:" <<<"$out"
-  grep -Eq "^power_model_enabled[[:space:]]*:" <<<"$out"
-  grep -Eq "^thermal_model_enabled[[:space:]]*:" <<<"$out"
-  grep -Eq "^power_source[[:space:]]*:" <<<"$out"
-  grep -Eq "^power_scale[[:space:]]*:" <<<"$out"
-  grep -Eq "^thermal_ambient_C[[:space:]]*:" <<<"$out"
-  grep -Eq "^thermal_cooling_per_cycle[[:space:]]*:" <<<"$out"
-  grep -Eq "^thermal_rise_C_per_pJ[[:space:]]*:" <<<"$out"
-  grep -Eq "^thermal_grid_cols_tile[[:space:]]*:" <<<"$out"
-  grep -Eq "^thermal_grid_rows_tile[[:space:]]*:" <<<"$out"
-  grep -Eq "^thermal_coupling[[:space:]]*:" <<<"$out"
-  grep -Eq "^thermal_tsvs_per_grid[[:space:]]*:" <<<"$out"
-  grep -Eq "^subarrays_per_bank[[:space:]]*:" <<<"$out"
-  grep -Eq "^mats_per_subarray_x[[:space:]]*:" <<<"$out"
-  grep -Eq "^microbumps_x[[:space:]]*:" <<<"$out"
-  grep -Eq "^ecc_shadow[[:space:]]*:" <<<"$out"
-  grep -Eq "^ecc_inject_period[[:space:]]*:" <<<"$out"
-  grep -Eq "^power_act_pJ[[:space:]]*:" <<<"$out"
-  grep -Eq "^power_read_pJ[[:space:]]*:" <<<"$out"
-  grep -Eq "^power_write_pJ[[:space:]]*:" <<<"$out"
-  grep -Eq "^timing_source_jedec[[:space:]]*:" <<<"$out"
-  grep -Eq "^timing_profile[[:space:]]*:" <<<"$out"
-  ! grep -Eq "^timing_profile_file[[:space:]]*:" <<<"$out"
-  grep -Eq "^init_sequence[[:space:]]*:" <<<"$out"
-  grep -Eq "^init_sequence_interval[[:space:]]*:" <<<"$out"
-  grep -Eq "^speed_bin_mbps[[:space:]]*:" <<<"$out"
-  grep -Eq "^hbm_pairing_matrix[[:space:]]*:" <<<"$out"
-  grep -Eq "^lpddr_wck_mode[[:space:]]*:" <<<"$out"
-  grep -Eq "^lpddr_wck_training[[:space:]]*:" <<<"$out"
-  grep -Eq "^lpddr_ca_parity[[:space:]]*:" <<<"$out"
-  grep -Eq "^refresh_temperature[[:space:]]*:" <<<"$out"
-  grep -Eq "^system_cycles[[:space:]]*:" <<<"$out"
-  grep -Eq "^aggregate_ctrl_cycles[[:space:]]*:" <<<"$out"
-  grep -Eq "^if_xfer_rate_Gbps[[:space:]]*:" <<<"$out"
-  grep -Eq "^peak_bandwidth_GBps[[:space:]]*:" <<<"$out"
-  grep -Eq "^achieved_if_bw_GBps[[:space:]]*:" <<<"$out"
-  grep -Eq "^bandwidth_util_pct[[:space:]]*:" <<<"$out"
-  grep -Eq "^payload_efficiency_pct[[:space:]]*:" <<<"$out"
-  grep -Eq "^interface_command_bits[[:space:]]*:" <<<"$out"
-  grep -Eq "^interface_overhead_bits[[:space:]]*:" <<<"$out"
-  grep -Eq "^data_checked_reads[[:space:]]*:" <<<"$out"
-  grep -Eq "^data_mismatches[[:space:]]*:" <<<"$out"
-  grep -Eq "^data_write_commits[[:space:]]*:" <<<"$out"
-  grep -Eq "^storage_lines_allocated[[:space:]]*:" <<<"$out"
-  grep -Eq "^unique_written_lines[[:space:]]*:" <<<"$out"
-  grep -Eq "^storage_topology_lines_scanned[[:space:]]*:" <<<"$out"
-  grep -Eq "^storage_topology_scan_skipped[[:space:]]*:" <<<"$out"
-  grep -Eq "^request_source[[:space:]]*: streaming" <<<"$out"
-  grep -Eq "^command_trace_retained[[:space:]]*:" <<<"$out"
-  grep -Eq "^dfi_validation[[:space:]]*:" <<<"$out"
-  grep -Eq "^dfi_validation_events[[:space:]]*:" <<<"$out"
-  grep -Eq "^dfi_validation_expected_checks[[:space:]]*:" <<<"$out"
-  grep -Eq "^memory_backend[[:space:]]*:" <<<"$out"
-  grep -Eq "^memory_backend_line_bytes[[:space:]]*:" <<<"$out"
-  grep -Eq "^host_requests[[:space:]]*:" <<<"$out"
-  grep -Eq "^dram_transactions[[:space:]]*:" <<<"$out"
-  grep -Eq "^storage_backend_recommendation[[:space:]]*:" <<<"$out"
-  grep -Eq "^storage_channels_touched[[:space:]]*:" <<<"$out"
-  grep -Eq "^storage_banks_touched[[:space:]]*:" <<<"$out"
-  grep -Eq "^storage_rows_touched[[:space:]]*:" <<<"$out"
-  grep -Eq "^storage_subarrays_touched[[:space:]]*:" <<<"$out"
-  grep -Eq "^storage_mats_touched[[:space:]]*:" <<<"$out"
-  grep -Eq "^storage_microbumps_touched[[:space:]]*:" <<<"$out"
-  grep -Eq "^storage_write_line_accesses[[:space:]]*:" <<<"$out"
-  grep -Eq "^floorplan_tiles_touched[[:space:]]*:" <<<"$out"
-  grep -Eq "^thermal_tiles_touched[[:space:]]*:" <<<"$out"
-  grep -Eq "^thermal_grid_cells_touched[[:space:]]*:" <<<"$out"
-  grep -Eq "^rowbuf_activations[[:space:]]*:" <<<"$out"
-  grep -Eq "^rowbuf_precharges[[:space:]]*:" <<<"$out"
-  grep -Eq "^rowbuf_dirty_writebacks[[:space:]]*:" <<<"$out"
-  grep -Eq "^rowbuf_reads[[:space:]]*:" <<<"$out"
-  grep -Eq "^rowbuf_writes[[:space:]]*:" <<<"$out"
-  grep -Eq "^power_events[[:space:]]*:" <<<"$out"
-  grep -Eq "^power_energy_pJ[[:space:]]*:" <<<"$out"
-  grep -Eq "^thermal_peak_temp_C[[:space:]]*:" <<<"$out"
-  grep -Eq "^thermal_vertical_transfers[[:space:]]*:" <<<"$out"
-  grep -Eq "^thermal_tsv_transfers[[:space:]]*:" <<<"$out"
-  grep -Eq "^ecc_shadow_updates[[:space:]]*:" <<<"$out"
-  grep -Eq "^ecc_checked_reads[[:space:]]*:" <<<"$out"
-  grep -Eq "^dfi_phase_count[[:space:]]*:" <<<"$out"
-  grep -Eq "^dfi_data_lane_bytes[[:space:]]*:" <<<"$out"
-  grep -Eq "^dfi_read_latency_nck[[:space:]]*:" <<<"$out"
-  grep -Eq "^dfi_write_latency_nck[[:space:]]*:" <<<"$out"
-  grep -Eq "^dfi_read_beats[[:space:]]*:" <<<"$out"
-  grep -Eq "^dfi_write_beats[[:space:]]*:" <<<"$out"
-  grep -Eq "^dfi_beat_bytes[[:space:]]*:" <<<"$out"
-  grep -Eq "^lpddr_metadata_bits_req[[:space:]]*:" <<<"$out"
-  grep -Eq "^commands.MRW[[:space:]]*:" <<<"$out"
-  grep -Eq "^commands.WCK_TRAIN[[:space:]]*:" <<<"$out"
-  grep -Eq "^cmd_validation_checked[[:space:]]*:" <<<"$out"
-  grep -Eq "^cmd_validation_pair_checks[[:space:]]*:" <<<"$out"
-  grep -Eq "^cmd_validation_state_checks[[:space:]]*:" <<<"$out"
-  grep -Eq "^cmd_validation_timing_checks[[:space:]]*:" <<<"$out"
-  grep -Eq "^dfi_trace[[:space:]]*:" <<<"$out"
-  grep -Eq "^dfi_signal_trace[[:space:]]*:" <<<"$out"
-  grep -Eq "^response_trace[[:space:]]*:" <<<"$out"
-  grep -Eq "^transaction_response_trace[[:space:]]*:" <<<"$out"
-  grep -Eq "^response_delivery_mode[[:space:]]*:" <<<"$out"
-  grep -Eq "^host_response_queue_capacity[[:space:]]*:" <<<"$out"
-  grep -Eq "^transaction_response_queue_capacity[[:space:]]*:" <<<"$out"
-  grep -Eq "^host_responses_consumed[[:space:]]*:" <<<"$out"
-  grep -Eq "^host_responses_exported[[:space:]]*:" <<<"$out"
-  grep -Eq "^transaction_responses_consumed[[:space:]]*:" <<<"$out"
-  grep -Eq "^transaction_responses_exported[[:space:]]*:" <<<"$out"
+  # Check executed values and validity, rather than requiring a full configuration dump.
+  python3 - "$case_dir/result.json" "$case_dir/resolved.cfg" <<'CHECK'
+import json, sys
+report = json.load(open(sys.argv[1]))
+assert report['run_status'] == 'completed', report
+assert 'schema_version' not in report
+assert 'schema_version' not in open(sys.argv[2]).read()
+m = report['metrics']
+assert m['completed_reads'] + m['completed_writes'] == m['dram_transactions']
+assert m['remaining_requests'] == m['remaining_pending'] == 0
+assert report['validation']['data_mismatches'] == 0
+assert not m['hit_cycle_limit']
+assert m['achieved_bw_GBps'] <= m['peak_bandwidth_GBps'] * 1.001
+public = {key for section in ('model', 'parameters', 'metrics', 'validation') for key in report[section]}
+assert not public.intersection(report.get('diagnostics', {}))
+CHECK
+  rm -f -- "$case_dir/result.json" "$case_dir/resolved.cfg"
+  rmdir -- "$case_dir"
 }
 
 # 覆盖 HBM 双总线、随机/顺序流量，以及 LPDDR split activate + WCK/CAS 路径。
@@ -364,7 +270,7 @@ run_and_check hbm4_link_crc_cli "$HBM_SIM_BIN" --stats-view diagnostic --standar
   --hbm-link-retry true --refresh-postpone-limit 2 --refresh-pullin-limit 1 \
   --refresh-credit-limit 4
 
-# schema-v2 主配置：四种标准均可选择；CLI 始终高于配置文件且与参数顺序无关。
+# 主配置：四种标准均可选择；CLI 始终高于配置文件且与参数顺序无关。
 config_tmp_dir="$(mktemp -d)"
 for standard in hbm3 hbm4; do
   "$HBM_SIM_BIN" --stats-view diagnostic --config configs/hbm.cfg --standard "$standard" --check-config \
@@ -446,12 +352,16 @@ rm -rf "$config_tmp_dir"
 run_and_check hbm4_config "$HBM_SIM_BIN" --stats-view diagnostic --config configs/hbm.cfg --standard hbm4 --requests 128
 multistack_out="$(mktemp)"
 "$HBM_SIM_BIN" --stats-view diagnostic --config configs/hbm.cfg --standard hbm4 --stack-count 6 \
-  --requests 24 >"$multistack_out"
+  --requests 24 --stats-json "$multistack_out.json" >"$multistack_out"
 grep -Eq "^stack_count[[:space:]]*: 6" "$multistack_out"
 grep -Eq "^active_stacks[[:space:]]*: 6" "$multistack_out"
 grep -Eq "^controller_count[[:space:]]*: 192" "$multistack_out"
-grep -Eq "^stack_5_reads[[:space:]]*: [1-9]" "$multistack_out"
-rm -f "$multistack_out"
+python3 - "$multistack_out.json" <<'CHECK'
+import json, sys
+report = json.load(open(sys.argv[1]))
+assert report['stacks'][5]['completed_reads'] > 0
+CHECK
+rm -f "$multistack_out" "$multistack_out.json"
 multistack_qos_out="$(mktemp)"
 "$HBM_SIM_BIN" --stats-view diagnostic --config configs/hbm.cfg --standard hbm4 --stack-count 6 \
   --trace examples/multistack_qos.trace --requests 0 --max-cycles 4000 >"$multistack_qos_out"

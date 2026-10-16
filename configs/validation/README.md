@@ -14,7 +14,7 @@
 负责选择它们，`ramulator2_differential.py` 和 `dramsim3_aux_validation.py` 才会分别
 执行外部模型并保存外部版本、入口、原始结果和比较判据。
 
-验证夹具也采用 schema 3；不再借旧版本保留与几何矛盾的显式密度或时钟。
+验证夹具与普通配置使用相同的联动和一致性检查，密度、几何和时钟必须相互一致。
 单通道 HBM 夹具的 density 是其实际几何按层数折算的值，不是完整 Ramulator 器件的标称密度。
 LPDDR5/6 夹具统一使用事务槽：参考端原始 `column=1024` 除以地址预取因子 16，
 得到 `columns=64`；每槽 32 B，每行 2 KiB。当前单 Channel、单 Subchannel 共同面

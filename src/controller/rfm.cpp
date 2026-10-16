@@ -63,7 +63,6 @@ std::optional<RfmMaintenanceCommand> RfmManager::on_activate(
   // per-bank RFM 只针对触发阈值的 bank。Controller 后续可能需要先 PREpb，
   // 因此真正计数递减要等 CommandExecutor 看到 RFMPB 发出。
   stats.rfm_events++;
-  stats.rfm_per_bank_events++;
   return RfmMaintenanceCommand{Command::RFMPB, decoded};
 }
 

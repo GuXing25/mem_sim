@@ -19,7 +19,7 @@ r = read_result(Path(sys.argv[2]), require_completed=True)
 assert count(r, 'stack_count') == 2
 assert count(r, 'data_mismatches') == 0
 for i in range(2):
-    assert count(r, f'stack_{i}_reads') + count(r, f'stack_{i}_writes') > 0
+    assert count(r, f'stack_{i}_completed_reads') + count(r, f'stack_{i}_completed_writes') > 0
 PY
   test -s "$demo_tmp/${demo_standard}_2stack/resolved.cfg"
   test -s "$demo_tmp/${demo_standard}_2stack/dashboard.html"

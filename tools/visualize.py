@@ -137,22 +137,6 @@ def read_stats(path: Path | None) -> dict[str, str]:
     if path is None:
         return {}
     result = read_result(path)
-    # Historical input may only provide tick latency. Do not silently relabel
-    # it ns, and do not turn a no-read sentinel into a measured zero latency.
-    if "avg_read_latency_ns" not in result and int(result.get("completed_reads", "0")) > 0:
-        if "avg_read_latency" in result:
-            if "tick_duration_ps" in result:
-                result["avg_read_latency_ns"] = str(float(result["avg_read_latency"]) *
-                                                     float(result["tick_duration_ps"]) / 1000)
-            else:
-                result["avg_read_latency_ticks"] = result["avg_read_latency"]
-    if "avg_write_latency_ns" not in result and int(result.get("completed_writes", "0")) > 0:
-        if "avg_write_latency" in result:
-            if "tick_duration_ps" in result:
-                result["avg_write_latency_ns"] = str(float(result["avg_write_latency"]) *
-                                                      float(result["tick_duration_ps"]) / 1000)
-            else:
-                result["avg_write_latency_ticks"] = result["avg_write_latency"]
     for kind in ("read", "write"):
         if int(result.get(f"completed_{kind}s", "0")) == 0:
             result[f"avg_{kind}_latency_ns"] = "N/A"

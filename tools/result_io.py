@@ -1,6 +1,6 @@
-"""Versioned simulator results; missing/invalid metrics are never silently zero.
+"""Structured simulator results; missing/invalid metrics are never silently zero.
 
-Text input remains supported for historical artifacts. Simulation tools request
+Diagnostic text and structured JSON share field names. Simulation tools request
 JSON explicitly, independently of the user's terminal view.
 """
 from __future__ import annotations
@@ -36,47 +36,23 @@ def read_result(path: Path, *, require_completed: bool = False) -> dict[str, str
             raise ValueError(f"non-finite JSON value: {value}")
 
         report = json.loads(text, parse_constant=reject_constant)
-        if report.get("schema_version") not in (1, 2):
-            raise ValueError(f"unsupported result schema in {path}")
         if report.get("run_status") not in {"completed", "truncated", "failed"}:
             raise ValueError(f"invalid run_status in {path}")
-        raw = report.get("metrics")
-        if not isinstance(raw, dict):
-            raise ValueError(f"missing metrics object in {path}")
-        if report["schema_version"] == 2:
-            # Diagnostics are opt-in and never required by the public result.
-            # This adapter is the sole compatibility mapping for old tools.
-            raw = dict(report.get("diagnostics", {}))
-            for section in ("model", "parameters", "metrics", "validation"):
-                fields = report.get(section)
-                if not isinstance(fields, dict):
-                    raise ValueError(f"missing {section} object in {path}")
-                raw.update(fields)
-            raw.pop("run_status", None)
-            if raw.get("avg_read_latency_ns") is not None:
-                raw["avg_read_latency"] = (raw["avg_read_latency_ns"] * 1000 /
-                                           raw["tick_duration_ps"])
-            elif raw.get("completed_reads") == 0:
-                # Legacy numerical zero only; canonical JSON uses null.
-                raw["avg_read_latency"] = 0
-            if raw.get("avg_write_latency_ns") is not None:
-                raw["avg_write_latency"] = (raw["avg_write_latency_ns"] * 1000 /
-                                            raw["tick_duration_ps"])
-            elif raw.get("completed_writes") == 0:
-                raw["avg_write_latency"] = 0
-            for stack in report.get("stacks", []):
-                prefix = f"stack_{stack['stack']}_"
-                for old, key in (("reads", "completed_reads"), ("writes", "completed_writes"),
-                                 ("bw_GBps", "achieved_bw_GBps")):
-                    raw[prefix + old] = stack[key]
-                if stack.get("avg_read_latency_ns") is not None:
-                    raw[prefix + "avg_read_latency"] = (
-                        stack["avg_read_latency_ns"] * 1000 / raw["tick_duration_ps"])
-                if stack.get("avg_write_latency_ns") is not None:
-                    raw[prefix + "avg_write_latency"] = (
-                        stack["avg_write_latency_ns"] * 1000 / raw["tick_duration_ps"])
-            # Public null means unavailable, never zero. Keep absent when reading.
-            raw = {k: v for k, v in raw.items() if v is not None}
+        raw = {}
+        for section in ("model", "parameters", "metrics", "validation", "diagnostics"):
+            fields = report.get(section, {} if section == "diagnostics" else None)
+            if not isinstance(fields, dict):
+                raise ValueError(f"missing {section} object in {path}")
+            for key, value in fields.items():
+                if key in raw or key == "run_status":
+                    raise ValueError(f"duplicate result field: {key}")
+                raw[key] = value
+        for stack in report.get("stacks", []):
+            for key, value in stack.items():
+                if key != "stack":
+                    raw[f"stack_{stack['stack']}_{key}"] = value
+        # null means unavailable. Callers must check completion counts before use.
+        raw = {key: value for key, value in raw.items() if value is not None}
         metrics = {}
         for key, value in raw.items():
             if not isinstance(value, (str, int, float, bool)):
@@ -85,8 +61,6 @@ def read_result(path: Path, *, require_completed: bool = False) -> dict[str, str
                 raise ValueError(f"non-finite metric: {key}")
             metrics[key] = str(value).lower() if isinstance(value, bool) else str(value)
         status = report["run_status"]
-        if "run_status" in metrics and metrics["run_status"] != status:
-            raise ValueError(f"contradictory run status in {path}")
         metrics["run_status"] = status
         if require_completed and status != "completed":
             raise ValueError(f"simulation {status}: {report.get('error', '')}")
@@ -105,6 +79,14 @@ def number(metrics: dict[str, str], key: str) -> float:
     if not math.isfinite(result):
         raise ValueError(f"non-finite metric {key}: {metrics[key]!r}")
     return result
+
+
+def latency_ticks(metrics: dict[str, str], kind: str = "read") -> float:
+    """Convert a measured transaction latency from ns to simulator ticks."""
+    tick_ps = number(metrics, "tick_duration_ps")
+    if tick_ps <= 0:
+        raise ValueError("tick_duration_ps must be positive")
+    return number(metrics, f"avg_{kind}_latency_ns") * 1000 / tick_ps
 
 
 def count(metrics: dict[str, str], key: str) -> int:

@@ -19,7 +19,7 @@ Mem PHY 与 Mem Stack，支持控制器时序研究、真实数据读写、
 ## 主要能力
 
 日常运行默认打印英文精简报告（MODEL / PARAMETERS / RESULTS）。默认 `summary` 使用该报告；
-机器工具读取 `--stats-json` 生成的 schema 2 结果，不解析人读报告。内部计数排障使用
+机器工具读取 `--stats-json` 生成的 结构化结果，不解析人读报告。内部计数排障使用
 `--stats-view diagnostic`。详细配置仍可通过 `--dump-resolved-config` 保存。
 
 ### 仿真平台
@@ -55,17 +55,14 @@ DFI 输出和行为级 PHY 是 DFI 6.0/6.0.1-oriented 研究模型，不是完�
 
 ## 开发与构建环境
 
-当前 Linux 开发环境以 Clang 18 为主线，已验证的组合是 Ubuntu 26.04 LTS、
-Clang/clangd/LLDB 18.1.8、CMake 4.2、Ninja 1.13、ccache 4.12 和 Python 3.14。
-项目只要求 C++20，不依赖第三方 C++ 库；Clang 默认配合 Ubuntu 的
-`libstdc++`，当前不额外切换到 `libc++`。
+项目要求支持 C++20 的 Clang 或 G++，不依赖第三方 C++ 库。Clang 也需要标准库开发头文件；
+Ubuntu/Debian 可由 build-essential 提供，默认配合 libstdc++。
 
 安装开发工具：
 
 ```bash
 sudo apt update
-sudo apt install clang-18 clangd-18 lldb-18 lld-18 \
-  clang-format-18 clang-tidy-18 cmake ninja-build make ccache
+sudo apt install build-essential clang clangd lldb cmake ninja-build python3 bash ccache
 ```
 
 推荐使用独立的 Clang Debug 构建目录，避免和早期 G++/Make 构建缓存混用：
@@ -73,8 +70,7 @@ sudo apt install clang-18 clangd-18 lldb-18 lld-18 \
 ```bash
 cmake -S . -B build-clang-debug -G Ninja \
   -DCMAKE_BUILD_TYPE=Debug \
-  -DCMAKE_CXX_COMPILER=/usr/bin/clang++-18 \
-  -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+  -DCMAKE_CXX_COMPILER=clang++ \
   -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 cmake --build build-clang-debug --parallel
 ctest --test-dir build-clang-debug --output-on-failure
@@ -82,6 +78,8 @@ ctest --test-dir build-clang-debug --output-on-failure
 
 `compile_commands.json` 会生成在 `build-clang-debug/`，供 clangd 使用。CMake
 会缓存编译器，因此切换 G++/Clang 时应使用不同构建目录，不要在旧目录上直接覆盖。
+需要固定工具链时使用本机的具体路径；安装了 ccache 后可额外传入
+`-DCMAKE_CXX_COMPILER_LAUNCHER=ccache`。完整步骤见交付手册第 5 节。
 
 Makefile 保留为兼容入口。因为 Make 的内建 `CXX` 默认是 `g++`，使用 Clang 时要
 显式传入版本化路径。Make 会记录编译器、编译/链接参数并在它们变化时重建 object；

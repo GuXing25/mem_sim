@@ -176,8 +176,8 @@ class ResultContract(unittest.TestCase):
                 self.assertIn('error:', run.stderr)
         with tempfile.TemporaryDirectory(prefix='hbm_option_contract_') as directory:
             cfg = Path(directory) / 'invalid.cfg'
-            for assignment in ('stats_view=full', 'timing_profile_file=unused.cfg'):
-                cfg.write_text('[meta]\nschema_version=3\n[override]\n' + assignment + '\n')
+            for assignment in ('stats_view=full', 'timing_profile_file=unused.cfg', 'schema_version=3'):
+                cfg.write_text('[override]\n' + assignment + '\n')
                 run = subprocess.run([str(BINARY), '--config', str(cfg), '--requests', '0'],
                                      cwd=ROOT, text=True, capture_output=True, timeout=20)
                 self.assertNotEqual(run.returncode, 0, run.stdout)
@@ -187,7 +187,7 @@ class ResultContract(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='lpddr_density_contract_') as directory:
             cfg = Path(directory) / 'case.cfg'
             result = Path(directory) / 'result.json'
-            cfg.write_text('[meta]\nschema_version=3\n[override]\nchannels=2\nranks=2\n')
+            cfg.write_text('[override]\nchannels=2\nranks=2\n')
             for standard, expected_gib in (('lpddr5', 8), ('lpddr6', 16)):
                 run = subprocess.run([str(BINARY), '--standard', standard, '--config', str(cfg),
                                       '--requests', '8', '--stats-json', str(result)], cwd=ROOT,
@@ -204,10 +204,6 @@ class ResultContract(unittest.TestCase):
             cfg, table = temp / 'case.cfg', temp / 'timing.csv'
 
             def run_table(text, extra=()):
-                if '[meta]' in text:
-                    text = text.replace('[meta]', '[meta]\nschema_version=3', 1)
-                elif '[' in text:
-                    text = '[meta]\nschema_version=3\n' + text
                 cfg.write_text(text)
                 run = subprocess.run([str(BINARY), '--config', str(cfg),
                                       '--standard', 'hbm4', '--requests', '0',
@@ -242,22 +238,20 @@ class ResultContract(unittest.TestCase):
             cfg = Path(directory) / 'case.cfg'
             for text, error in (
                     ('requests=1\nrequests=2\n[override]\nseed=1\n', 'duplicate key'),
-                    ('[meta]\nschema_version=3\n[dram.timing]\nnCL=30\nsource=unknown_source\n',
+                    ('[dram.timing]\nnCL=30\nsource=unknown_source\n',
                      'invalid timing source')):
                 cfg.write_text(text)
                 run = subprocess.run([str(BINARY), '--config', str(cfg), '--check-config'],
                                      cwd=ROOT, text=True, capture_output=True, timeout=20)
                 self.assertNotEqual(run.returncode, 0, run.stdout)
                 self.assertIn(error, run.stderr)
-            for schema in (1, 2, 3):
+            for prefix in ('', '[override]\n'):
                 for values in ('nRC=2', 'density_gb=999', 'data_rate_mbps=9000\ntCK_ps=500'):
-                    prefix = '' if schema == 1 else f'[meta]\nschema_version={schema}\n[override]\n'
                     cfg.write_text(prefix + values + '\n')
                     run = subprocess.run([str(BINARY), '--config', str(cfg), '--standard', 'hbm4',
                                           '--check-config'], cwd=ROOT, text=True,
                                          capture_output=True, timeout=20)
                     self.assertNotEqual(run.returncode, 0, run.stdout)
-                    self.assertNotIn('sectioned config documents require', run.stderr)
 
     def test_english_compact_report_across_standards(self):
         for standard in ('hbm3', 'hbm4', 'lpddr5', 'lpddr6'):
@@ -346,13 +340,22 @@ class ResultContract(unittest.TestCase):
                 raw = json.loads(result.read_text())
                 d, m = raw['diagnostics'], raw['metrics']
                 ns = raw['parameters']['tick_duration_ps'] / 1000
-                self.assertAlmostEqual(m['simulation_time_ns'], d['system_cycles'] * ns)
-                self.assertAlmostEqual(m['avg_read_latency_ns'], d['avg_read_latency'] * ns)
-                self.assertAlmostEqual(m['avg_write_latency_ns'], d['avg_write_latency'] * ns)
+                self.assertAlmostEqual(m['simulation_time_ns'], m['system_cycles'] * ns)
+                self.assertNotIn('schema_version', raw)
+                public = {key for section in ('model', 'parameters', 'metrics', 'validation')
+                          for key in raw[section]}
+                self.assertFalse(public.intersection(d))
+                self.assertLessEqual(len(d), 100)
+                self.assertNotIn('refresh_postpones', d)
+                self.assertNotIn('power_act_pJ', d)
+                self.assertAlmostEqual(
+                    m['avg_read_latency_ns'],
+                    sum(stack['avg_read_latency_ns'] * stack['completed_reads']
+                        for stack in raw['stacks'] if stack['completed_reads']) / m['completed_reads'])
                 self.assertAlmostEqual(
                     m['avg_write_latency_ns'],
                     sum(stack['avg_write_latency_ns'] * stack['completed_writes']
-                        for stack in raw['stacks']) / m['completed_writes'])
+                        for stack in raw['stacks'] if stack['completed_writes']) / m['completed_writes'])
                 denominator = d['row_hits'] + d['row_misses'] + d['row_conflicts']
                 if denominator:
                     self.assertAlmostEqual(m['row_hit_pct'], 100 * d['row_hits'] / denominator)
@@ -384,14 +387,20 @@ class ResultContract(unittest.TestCase):
                 self.assertGreater(metrics[present], 0)
                 self.assertIn('Write Transaction Latency', run.stdout)
 
-    def test_old_results_and_compact_input_error(self):
-        with tempfile.TemporaryDirectory(prefix="hbm_result_legacy_") as temp:
+    def test_structured_results_and_compact_input_error(self):
+        with tempfile.TemporaryDirectory(prefix="hbm_result_input_") as temp:
             path = Path(temp) / 'stats.txt'
             path.write_text('completed_reads: 9007199254740993\n')
             self.assertEqual(count(read_result(path), 'completed_reads'), 9007199254740993)
-            path.write_text(json.dumps({'schema_version': 1, 'run_status': 'completed',
+            path.write_text(json.dumps({'run_status': 'completed', 'model': {}, 'parameters': {}, 'validation': {},
                                        'metrics': {'completed_reads': 9007199254740993}}))
             self.assertEqual(count(read_result(path), 'completed_reads'), 9007199254740993)
+            structured = {'run_status': 'completed', 'model': {}, 'parameters': {}, 'validation': {},
+                          'metrics': {'completed_reads': 9007199254740993},
+                          'diagnostics': {'completed_reads': 1}}
+            path.write_text(json.dumps(structured))
+            with self.assertRaisesRegex(ValueError, 'duplicate result field'):
+                read_result(path)
             for marker in ('# ===== 模型 / MODEL =====', '# ===== MODEL ====='):
                 path.write_text(marker + '\n')
                 with self.assertRaisesRegex(ValueError, 'stats-json'):
@@ -459,7 +468,7 @@ class ResultContract(unittest.TestCase):
                             golden = image
                         self.assertEqual(image, golden, (standard, backend, phy))
 
-    def test_schema3_geometry_and_resolved_replay(self):
+    def test_geometry_and_resolved_replay(self):
         with tempfile.TemporaryDirectory(prefix="hbm_config_replay_") as temp:
             temp = Path(temp)
             for standard in ("hbm3", "hbm4", "lpddr5", "lpddr6"):
@@ -477,6 +486,7 @@ class ResultContract(unittest.TestCase):
                            "--validate-cmd-trace", "--validate-dfi-trace"]
                 run = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, timeout=20)
                 self.assertEqual(run.returncode, 0, run.stderr)
+                self.assertNotIn("schema_version", snapshot.read_text())
                 first = read_result(result, require_completed=True)
                 require_valid_run(first)
                 self.assertEqual(count(first, "columns"), 16)
@@ -522,10 +532,10 @@ class ResultContract(unittest.TestCase):
                 self.assertIn("row_hit_pct", report)
                 self.assertNotIn("row_hits", report)
                 raw = json.loads(result.read_text())
-                self.assertEqual(raw["schema_version"], 2)
+                self.assertNotIn("schema_version", raw)
                 self.assertEqual(raw["validation"]["dfi_validation"], "not_run")
                 self.assertNotIn("diagnostics", raw)
-                self.assertLessEqual(len(raw["metrics"]), 24)
+                self.assertLessEqual(len(raw["metrics"]), 36)
                 self.assertLessEqual(len(run.stdout.splitlines()), 34)
                 for section in ("# ===== MODEL =====", "# ===== PARAMETERS =====", "# ===== RESULTS ====="):
                     self.assertIn(section, run.stdout)

@@ -1,5 +1,7 @@
 #include "hbm_sim/stats/result.hpp"
 #include "hbm_sim/dram/spec.hpp"
+#include "hbm_sim/controller/controller.hpp"
+#include "hbm_sim/frontend/traffic.hpp"
 
 #include <cmath>
 #include <filesystem>
@@ -65,12 +67,6 @@ double number(const ResultFields& f, const std::string& k) {
 bool enabled(const ResultFields& f, const std::string& k) {
   return value(f, k) == "true";
 }
-void select(ResultFields& target, const ResultFields& source, const char* keys) {
-  std::istringstream in(keys);
-  std::string key;
-  while (in >> key) if (auto it = source.find(key); it != source.end())
-    target.emplace(*it);
-}
 }  // namespace
 
 std::string result_value_text(const ResultValue& v) {
@@ -87,88 +83,94 @@ std::string result_value_text(const ResultValue& v) {
   }, v);
 }
 
-ResultReport make_result_report(const ResultFields& f) {
+ResultReport make_result_report(const DramSpec& spec, const Stats& stats,
+    const ControllerOptions& controller, const StorageModelOptions& storage,
+    const TrafficOptions& traffic, const ResultContext& context,
+    std::span<const Stats> stacks) {
   ResultReport r;
-  select(r.model, f, "model_name standard model_conformance stack_count channels "
-      "pseudo_channels sids ranks bank_groups banks_per_group rows columns "
-      "stack_height density_gb capacity_per_instance_bytes aggregate_capacity_bytes "
-      "line_size dram_transaction_bytes scheduler row_policy address_mapping "
-      "mem_phy_mode memory_backend supports_refresh supports_rfm ecc_shadow "
-      "power_model_enabled thermal_model_enabled lpddr_family memory_system channel_mapper stack_mapping");
-  select(r.parameters, f, "data_rate_mbps data_bus_bits tCK_ps tick_duration_ps "
-      "tick_multiplier lpddr_wck_ratio pattern requests read_ratio inject_interval "
-      "seed random_address_space_bytes effective_random_address_space_bytes "
-      "addr_stride read_buffer_size write_buffer_size input_kind");
-  select(r.metrics, f, "host_requests dram_transactions completed_reads completed_writes "
-      "remaining_requests remaining_pending hit_cycle_limit system_cycles "
-      "read_bytes write_bytes achieved_bw_GBps peak_bandwidth_GBps bandwidth_util_pct "
-      "storage_lines_allocated storage_bytes_allocated power_energy_pJ "
-      "thermal_avg_temp_C thermal_peak_temp_C self_refresh_cycles "
-      "self_refresh_time_ns self_refresh_energy_pJ");
-  select(r.validation, f, "cmd_validation dfi_validation cmd_validation_checked "
-      "dfi_validation_events data_checked_reads data_mismatches "
-      "ecc_uncorrectable_errors golden_verified golden_mismatches");
-  for (const char* key : {"cmd_validation", "dfi_validation"})
-    if (value(r.validation, key) == "off") r.validation[key] = std::string("not_run");
-  if (f.contains("system_cycles")) {
-    const double ns = number(f, "tick_duration_ps") / 1000;
-    r.metrics["simulation_time_ns"] = number(f, "system_cycles") * ns;
-    r.metrics["avg_read_latency_ns"] = number(f, "completed_reads") == 0
-        ? ResultValue(nullptr) : ResultValue(number(f, "avg_read_latency") * ns);
-    r.metrics["avg_write_latency_ns"] = number(f, "completed_writes") == 0
-        ? ResultValue(nullptr) : ResultValue(number(f, "avg_write_latency") * ns);
-    const double classified = number(f, "row_hits") + number(f, "row_misses") +
-                              number(f, "row_conflicts");
-    r.metrics["row_hit_pct"] = classified == 0 ? ResultValue(nullptr)
-        : ResultValue(100 * number(f, "row_hits") / classified);
+  auto put = [](ResultFields& fields, const char* key, auto value) {
+    record_field(fields, key, value);
+  };
+  put(r.model, "model_name", context.model_name);
+  put(r.model, "model_conformance", context.model_conformance);
+  put(r.model, "standard", spec.name);
+  put(r.model, "timing_profile", spec.timing_profile);
+  put(r.model, "mode_profile", spec.mode_profile);
+  put(r.model, "stack_count", traffic.stack_count);
+  put(r.model, "channels", spec.org.channels);
+  put(r.model, "pseudo_channels", spec.org.pseudo_channels);
+  if (!spec.lpddr_family || spec.org.sids != 1) put(r.model, "sids", spec.org.sids);
+  if (spec.lpddr_family || spec.org.ranks != 1) put(r.model, "ranks", spec.org.ranks);
+  put(r.model, "bank_groups", spec.org.bank_groups);
+  put(r.model, "banks_per_group", spec.org.banks_per_group);
+  put(r.model, "rows", spec.org.rows);
+  put(r.model, "columns", spec.org.columns);
+  put(r.model, "line_size", spec.org.line_size);
+  put(r.model, "dram_transaction_bytes", spec.transaction_bytes());
+  put(r.model, "stack_height", spec.stack_height);
+  put(r.model, "density_gb", spec.density_gb);
+  put(r.model, "capacity_per_instance_bytes", spec.addressable_capacity_bytes());
+  put(r.model, "aggregate_capacity_bytes", spec.addressable_capacity_bytes() *
+      static_cast<std::uint64_t>(traffic.stack_count));
+  put(r.model, "scheduler", to_string(controller.scheduler));
+  put(r.model, "row_policy", to_string(controller.row_policy));
+  put(r.model, "address_mapping", to_string(spec.address_mapping));
+  put(r.model, "channel_mapper", context.channel_mapper);
+  put(r.model, "stack_mapping", context.stack_mapping);
+  put(r.model, "mem_phy_mode", to_string(controller.phy.mode));
+  put(r.model, "phy_protocol", spec.lpddr_family ? "lpddr" : "hbm");
+  put(r.model, "memory_backend", to_string(storage.memory_backend.kind));
+  put(r.model, "memory_system", context.single_controller ? "single_controller" : "multi_controller");
+  put(r.model, "supports_refresh", spec.supports_refresh);
+  put(r.model, "supports_rfm", spec.supports_rfm);
+  put(r.model, "ecc_shadow", storage.ecc_shadow_enabled);
+  put(r.model, "power_model_enabled", storage.power_enabled);
+  put(r.model, "thermal_model_enabled", storage.thermal_enabled);
+  put(r.model, "lpddr_family", spec.lpddr_family);
+  put(r.parameters, "data_rate_mbps", spec.data_rate_mbps);
+  put(r.parameters, "data_bus_bits", spec.data_bus_bits);
+  put(r.parameters, "tCK_ps", spec.timing.tCK_ps);
+  put(r.parameters, "tick_multiplier", spec.tick_multiplier);
+  const double tick_ps = spec.timing.tCK_ps / spec.tick_multiplier;
+  put(r.parameters, "tick_duration_ps", tick_ps);
+  if (spec.lpddr_family) put(r.parameters, "lpddr_wck_ratio", spec.lpddr_wck_ratio);
+  put(r.parameters, "input_kind", traffic.trace_path.empty() ? "synthetic" : "trace");
+  put(r.parameters, "inject_interval", traffic.inject_interval);
+  put(r.parameters, "read_buffer_size", controller.read_buffer_size);
+  put(r.parameters, "write_buffer_size", controller.write_buffer_size);
+  if (traffic.trace_path.empty()) {
+    put(r.parameters, "pattern", traffic.pattern);
+    put(r.parameters, "requests", traffic.requests);
+    put(r.parameters, "read_ratio", traffic.read_ratio);
+    put(r.parameters, "seed", traffic.seed);
+    put(r.parameters, "addr_stride", traffic.addr_stride);
+    put(r.parameters, "random_address_space_bytes", traffic.random_address_space_bytes);
+    put(r.parameters, "effective_random_address_space_bytes", traffic.random_address_space_bytes
+        ? traffic.random_address_space_bytes : spec.addressable_capacity_bytes() *
+            static_cast<std::uint64_t>(traffic.stack_count));
   }
-  if (!enabled(f, "power_model_enabled")) {
-    r.metrics.erase("power_energy_pJ");
-    r.metrics.erase("self_refresh_energy_pJ");
+  r.metrics = collect_metrics(stats, tick_ps / 1000, storage.power_enabled, storage.thermal_enabled);
+  put(r.validation, "cmd_validation", "not_run");
+  put(r.validation, "dfi_validation", "not_run");
+  put(r.validation, "cmd_validation_checked", std::uint64_t{0});
+  put(r.validation, "dfi_validation_events", std::uint64_t{0});
+  put(r.validation, "data_checked_reads", stats.data_checked_reads);
+  put(r.validation, "data_mismatches", stats.data_mismatches);
+  put(r.validation, "ecc_uncorrectable_errors", stats.ecc_uncorrectable_errors);
+  for (std::size_t i = 0; i < stacks.size(); ++i) {
+    const auto& s = stacks[i];
+    ResultFields fields;
+    put(fields, "stack", i);
+    put(fields, "completed_reads", s.completed_reads);
+    put(fields, "completed_writes", s.completed_writes);
+    put(fields, "achieved_bw_GBps", s.achieved_bandwidth_GBps);
+    fields["avg_read_latency_ns"] = s.completed_reads
+        ? ResultValue(s.avg_read_latency() * tick_ps / 1000) : ResultValue(nullptr);
+    fields["avg_write_latency_ns"] = s.completed_writes
+        ? ResultValue(s.avg_write_latency() * tick_ps / 1000) : ResultValue(nullptr);
+    r.stacks.push_back(std::move(fields));
   }
-  if (!f.contains("self_refresh_cycles") || number(f, "self_refresh_cycles") == 0) {
-    r.metrics.erase("self_refresh_cycles");
-    r.metrics.erase("self_refresh_time_ns");
-    r.metrics.erase("self_refresh_energy_pJ");
-  }
-  if (!enabled(f, "thermal_model_enabled")) {
-    r.metrics.erase("thermal_avg_temp_C");
-    r.metrics.erase("thermal_peak_temp_C");
-  }
-  if (enabled(f, "lpddr_family")) {
-    if (value(f, "sids") == "1") r.model.erase("sids");
-  }
-  else {
-    // A nontrivial experimental rank dimension must never disappear.
-    if (value(f, "ranks") == "1") r.model.erase("ranks");
-    r.parameters.erase("lpddr_wck_ratio");
-  }
-  if (value(f, "input_kind") == "trace") {
-    for (const char* key : {"pattern", "read_ratio", "seed",
-                           "random_address_space_bytes", "effective_random_address_space_bytes",
-                           "addr_stride", "requests"})
-      r.parameters.erase(key);
-  }
-  if (f.contains("stack_count")) {
-    const auto count = static_cast<std::size_t>(number(f, "stack_count"));
-    for (std::size_t i = 0; i < count; ++i) {
-      const auto prefix = "stack_" + std::to_string(i) + "_";
-      if (!f.contains(prefix + "reads")) continue;
-      ResultFields s;
-      record_field(s, "stack", i);
-      for (auto [old, key] : {std::pair{"reads", "completed_reads"},
-                             {"writes", "completed_writes"}, {"bw_GBps", "achieved_bw_GBps"}})
-        s[key] = f.at(prefix + old);
-      s["avg_read_latency_ns"] = number(f, prefix + "reads") == 0 ? ResultValue(nullptr)
-          : ResultValue(number(f, prefix + "avg_read_latency") *
-                        number(f, "tick_duration_ps") / 1000);
-      s["avg_write_latency_ns"] = number(f, prefix + "writes") == 0 ? ResultValue(nullptr)
-          : ResultValue(number(f, prefix + "avg_write_latency") *
-                        number(f, "tick_duration_ps") / 1000);
-      r.stacks.push_back(std::move(s));
-    }
-  }
-  if (value(f, "stats_view") == "diagnostic") r.diagnostics = f;
+  if (context.diagnostic) r.diagnostics = collect_diagnostics(stats, spec, storage);
   return r;
 }
 
@@ -210,8 +212,19 @@ std::vector<ParameterChange> compare_resolved_parameters(
   return changes;
 }
 
-void print_diagnostics(std::ostream& out, const ResultFields& f) {
-  for (const auto& [k, v] : f)
+ResultFields result_fields(const ResultReport& report) {
+  ResultFields fields;
+  for (const auto* section : {&report.model, &report.parameters, &report.metrics,
+                              &report.validation, &report.diagnostics})
+    fields.insert(section->begin(), section->end());
+  return fields;
+}
+
+void print_diagnostics(std::ostream& out, const ResultReport& report,
+                       const std::string& run_status) {
+  auto fields = result_fields(report);
+  fields["run_status"] = run_status;
+  for (const auto& [k, v] : fields)
     out << std::left << std::setw(32) << k << ": " << result_value_text(v) << '\n';
 }
 
@@ -308,10 +321,11 @@ void print_result(std::ostream& out, const ResultReport& r) {
     out << "WARNING: Nominal density_gb differs from geometry-derived density; simulation capacity uses geometry\n";
   if (m("memory_system") == "single_controller") out << "WARNING: Single-controller validation; organization capacity does not imply all Channels are simulated\n";
   if (r.stacks.size() > 1) {
-    out << "Stack  Completed_Reads  Completed_Writes  Bandwidth(GB/s)  Read_Latency(ns)\n";
+    out << "Stack  Completed_Reads  Completed_Writes  Bandwidth(GB/s)  Read_Latency(ns)  Write_Latency(ns)\n";
     for (const auto& st : r.stacks) out << value(st, "stack") << "  "
         << value(st, "completed_reads") << "  " << value(st, "completed_writes") << "  "
-        << value(st, "achieved_bw_GBps") << "  " << value(st, "avg_read_latency_ns") << '\n';
+        << value(st, "achieved_bw_GBps") << "  " << value(st, "avg_read_latency_ns")
+        << "  " << value(st, "avg_write_latency_ns") << '\n';
   }
 }
 
@@ -321,7 +335,7 @@ void write_result_json(const std::string& path, const ResultReport& r,
   if (status != "completed" && status != "truncated" && status != "failed")
     throw std::invalid_argument("invalid run status");
   std::ostringstream out;
-  out << "{\n  \"schema_version\": 2,\n  \"run_status\": " << quote(status)
+  out << "{\n  \"run_status\": " << quote(status)
       << ",\n  \"error\": " << quote(error);
   for (auto [name, fields] : {std::pair{"model", &r.model}, {"parameters", &r.parameters},
                              {"metrics", &r.metrics}, {"validation", &r.validation}}) {
@@ -343,7 +357,7 @@ void write_result_json(const std::string& path, const ResultReport& r,
   out << "\n  ]";
   if (!r.diagnostics.empty()) {
     auto diagnostic = r.diagnostics;
-    diagnostic["run_status"] = status;
+    diagnostic.erase("run_status");
     out << ",\n  \"diagnostics\": ";
     object(out, diagnostic);
   }

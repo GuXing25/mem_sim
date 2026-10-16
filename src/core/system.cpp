@@ -11,20 +11,10 @@
 #include <stdexcept>
 #include <utility>
 
+#include "hbm_sim/core/utils.hpp"
+
 namespace hbm_sim {
 namespace {
-
-std::uint64_t rounded_bytes_from_bits(std::uint64_t bits) {
-  return (bits + 7) / 8;
-}
-
-std::uint64_t checked_multiply_u64(std::uint64_t lhs, std::uint64_t rhs,
-                                   const char *context) {
-  if (lhs != 0 && rhs > std::numeric_limits<std::uint64_t>::max() / lhs) {
-    throw std::overflow_error(std::string(context) + " exceeds uint64 range");
-  }
-  return lhs * rhs;
-}
 
 MemorySystemOptions legacy_options(ControllerOptions controller) {
   MemorySystemOptions options;
@@ -33,9 +23,10 @@ MemorySystemOptions legacy_options(ControllerOptions controller) {
   return options;
 }
 
-void merge_stats(Stats &dst, const Stats &src) {
-  // merge_stats 是 controller-aggregate 口径：命令数、队列长度累计值、
-  // read/write bytes 等都直接相加。system-level cycle 在 finalize_run_stats()
+void merge_controller_stats(Stats &dst, const Stats &src) {
+  // 只合并 controller-owned 统计；存储/行缓冲/功耗/热/ECC 在所有
+  // Controller 结束后统一从 per-stack MemoryImage 读取，避免重复汇总。
+  // system-level cycle 在 finalize_run_stats()
   // 中单独写入 stats_.system_cycles，避免和 aggregate_controller_cycles 混淆。
   dst.reads += src.reads;
   dst.writes += src.writes;
@@ -78,18 +69,14 @@ void merge_stats(Stats &dst, const Stats &src) {
   dst.refresh_per_bank_batches += src.refresh_per_bank_batches;
   dst.refresh_all_bank_batches += src.refresh_all_bank_batches;
   dst.refresh_postpones += src.refresh_postpones;
-  dst.refresh_pullins += src.refresh_pullins;
   dst.refresh_credit_peak =
       std::max(dst.refresh_credit_peak, src.refresh_credit_peak);
   dst.rfm_events += src.rfm_events;
-  dst.rfm_per_bank_events += src.rfm_per_bank_events;
   dst.rfm_all_bank_events += src.rfm_all_bank_events;
   dst.dual_issue_cycles += src.dual_issue_cycles;
   dst.row_bus_issues += src.row_bus_issues;
   dst.column_bus_issues += src.column_bus_issues;
   dst.unified_bus_issues += src.unified_bus_issues;
-  dst.rising_edge_ticks += src.rising_edge_ticks;
-  dst.falling_edge_ticks += src.falling_edge_ticks;
   dst.write_mode_cycles += src.write_mode_cycles;
   dst.injected_requests += src.injected_requests;
   dst.injection_stall_cycles += src.injection_stall_cycles;
@@ -101,72 +88,6 @@ void merge_stats(Stats &dst, const Stats &src) {
   dst.data_write_commits += src.data_write_commits;
   dst.data_masked_write_commits += src.data_masked_write_commits;
   dst.data_forward_checks += src.data_forward_checks;
-  dst.storage_lines_allocated += src.storage_lines_allocated;
-  dst.unique_written_lines += src.unique_written_lines;
-  dst.storage_bytes_allocated += src.storage_bytes_allocated;
-  dst.storage_topology_lines_scanned += src.storage_topology_lines_scanned;
-  dst.storage_topology_scan_skipped += src.storage_topology_scan_skipped;
-  dst.storage_stacks_touched += src.storage_stacks_touched;
-  dst.storage_dies_touched += src.storage_dies_touched;
-  dst.storage_layers_touched += src.storage_layers_touched;
-  dst.storage_channels_touched += src.storage_channels_touched;
-  dst.storage_pseudo_channels_touched += src.storage_pseudo_channels_touched;
-  dst.storage_sids_touched += src.storage_sids_touched;
-  dst.storage_ranks_touched += src.storage_ranks_touched;
-  dst.storage_bank_groups_touched += src.storage_bank_groups_touched;
-  dst.storage_banks_touched += src.storage_banks_touched;
-  dst.storage_rows_touched += src.storage_rows_touched;
-  dst.storage_columns_touched += src.storage_columns_touched;
-  dst.storage_subarrays_touched += src.storage_subarrays_touched;
-  dst.storage_mats_touched += src.storage_mats_touched;
-  dst.storage_cells_touched += src.storage_cells_touched;
-  dst.storage_microbumps_touched += src.storage_microbumps_touched;
-  dst.floorplan_tiles_touched += src.floorplan_tiles_touched;
-  dst.thermal_tiles_touched += src.thermal_tiles_touched;
-  dst.thermal_grid_cells_touched += src.thermal_grid_cells_touched;
-  dst.storage_read_line_accesses += src.storage_read_line_accesses;
-  dst.storage_write_line_accesses += src.storage_write_line_accesses;
-  dst.rowbuf_activations += src.rowbuf_activations;
-  dst.rowbuf_precharges += src.rowbuf_precharges;
-  dst.rowbuf_dirty_writebacks += src.rowbuf_dirty_writebacks;
-  dst.rowbuf_clean_precharges += src.rowbuf_clean_precharges;
-  dst.rowbuf_hits += src.rowbuf_hits;
-  dst.rowbuf_misses += src.rowbuf_misses;
-  dst.rowbuf_lazy_loads += src.rowbuf_lazy_loads;
-  dst.rowbuf_reads += src.rowbuf_reads;
-  dst.rowbuf_writes += src.rowbuf_writes;
-  dst.rowbuf_forced_closes += src.rowbuf_forced_closes;
-  dst.rowbuf_open_rows += src.rowbuf_open_rows;
-  dst.rowbuf_dirty_rows += src.rowbuf_dirty_rows;
-  dst.power_events += src.power_events;
-  dst.thermal_updates += src.thermal_updates;
-  dst.power_energy_pj += src.power_energy_pj;
-  dst.self_refresh_energy_pj += src.self_refresh_energy_pj;
-  dst.power_act_energy_pj += src.power_act_energy_pj;
-  dst.power_pre_energy_pj += src.power_pre_energy_pj;
-  dst.power_read_energy_pj += src.power_read_energy_pj;
-  dst.power_write_energy_pj += src.power_write_energy_pj;
-  dst.power_refresh_energy_pj += src.power_refresh_energy_pj;
-  dst.power_rfm_energy_pj += src.power_rfm_energy_pj;
-  dst.power_control_energy_pj += src.power_control_energy_pj;
-  if (src.thermal_peak_temp_c > dst.thermal_peak_temp_c) {
-    dst.thermal_peak_temp_c = src.thermal_peak_temp_c;
-    dst.thermal_hotspot_layer = src.thermal_hotspot_layer;
-    dst.thermal_hotspot_x = src.thermal_hotspot_x;
-    dst.thermal_hotspot_y = src.thermal_hotspot_y;
-  }
-  dst.thermal_avg_temp_c =
-      std::max(dst.thermal_avg_temp_c, src.thermal_avg_temp_c);
-  dst.thermal_lateral_transfers += src.thermal_lateral_transfers;
-  dst.thermal_vertical_transfers += src.thermal_vertical_transfers;
-  dst.thermal_tsv_transfers += src.thermal_tsv_transfers;
-  dst.thermal_coupled_delta_c += src.thermal_coupled_delta_c;
-  dst.ecc_shadow_updates += src.ecc_shadow_updates;
-  dst.ecc_checked_reads += src.ecc_checked_reads;
-  dst.ecc_corrected_errors += src.ecc_corrected_errors;
-  dst.ecc_uncorrectable_errors += src.ecc_uncorrectable_errors;
-  dst.ecc_injected_errors += src.ecc_injected_errors;
-  dst.ecc_parity_repairs += src.ecc_parity_repairs;
   dst.dfi_read_beats += src.dfi_read_beats;
   dst.dfi_write_beats += src.dfi_write_beats;
   dst.dfi_forwarded_read_beats += src.dfi_forwarded_read_beats;
@@ -1099,47 +1020,19 @@ void MemorySystem::finalize_run_stats() {
     // 总和。它用于队列平均 “per controller” 口径；system_cycles
     // 则用于真实外部时间和带宽计算。
     stats_.aggregate_controller_cycles += controller.stats().cycles;
-    merge_stats(stats_, controller.stats());
+    merge_controller_stats(stats_, controller.stats());
     Stats &stack_stats =
         per_stack_stats_[index / static_cast<std::size_t>(channels_per_stack)];
     stack_stats.aggregate_controller_cycles += controller.stats().cycles;
-    merge_stats(stack_stats, controller.stats());
+    merge_controller_stats(stack_stats, controller.stats());
   }
 
   stats_.remaining_requests += remaining_frontend_requests_;
   stats_.injection_stall_cycles += frontend_stall_cycles_;
   stats_.hit_cycle_limit =
       stats_.hit_cycle_limit || remaining_frontend_requests_ > 0;
-  stats_.interface_transfer_rate_gbps = spec_.interface_transfer_rate_gbps();
-  stats_.peak_bandwidth_GBps =
-      spec_.peak_bandwidth_GBps() * options_.stack_count;
-  if (stats_.cycles > 0 && spec_.cycles_per_second() > 0.0) {
-    // 多 controller 模式下 bandwidth 使用 system_cycles 计算，因为 channel
-    // 是并行工作的。 如果用 aggregate_controller_cycles，会把并行 channel
-    // 误当成串行执行，带宽被低估。
-    double bytes = static_cast<double>(stats_.read_bytes + stats_.write_bytes);
-    double interface_bytes = static_cast<double>(
-        stats_.interface_read_bytes + stats_.interface_write_bytes +
-        rounded_bytes_from_bits(stats_.interface_command_bits));
-    double seconds =
-        static_cast<double>(stats_.cycles) / spec_.cycles_per_second();
-    stats_.achieved_bandwidth_GBps =
-        seconds <= 0.0 ? 0.0 : bytes / seconds / 1.0e9;
-    stats_.achieved_interface_bandwidth_GBps =
-        seconds <= 0.0 ? 0.0 : interface_bytes / seconds / 1.0e9;
-  }
-  stats_.bandwidth_utilization =
-      stats_.peak_bandwidth_GBps <= 0.0
-          ? 0.0
-          : 100.0 * stats_.achieved_bandwidth_GBps / stats_.peak_bandwidth_GBps;
-  const auto interface_bytes =
-      stats_.interface_read_bytes + stats_.interface_write_bytes +
-      rounded_bytes_from_bits(stats_.interface_command_bits);
-  const auto payload_bytes = stats_.read_bytes + stats_.write_bytes;
-  stats_.payload_efficiency = interface_bytes == 0
-                                  ? 100.0
-                                  : 100.0 * static_cast<double>(payload_bytes) /
-                                        static_cast<double>(interface_bytes);
+  finalize_bandwidth_stats(stats_, spec_.cycles_per_second(),
+                           spec_.peak_bandwidth_GBps() * options_.stack_count);
   std::vector<PhysicalStorageStats> storage_stats;
   storage_stats.reserve(memory_images_.size());
   for (const auto &image : memory_images_) {
@@ -1183,29 +1076,8 @@ void MemorySystem::finalize_run_stats() {
         per_stack_dispatch_budget_exhausted_[static_cast<std::size_t>(stack)];
     per.controller_refused_dispatches =
         per_stack_controller_refused_[static_cast<std::size_t>(stack)];
-    per.interface_transfer_rate_gbps = spec_.interface_transfer_rate_gbps();
-    per.peak_bandwidth_GBps = spec_.peak_bandwidth_GBps();
-    if (clk_ > 0 && spec_.cycles_per_second() > 0.0) {
-      const double seconds =
-          static_cast<double>(clk_) / spec_.cycles_per_second();
-      per.achieved_bandwidth_GBps =
-          static_cast<double>(per.read_bytes + per.write_bytes) / seconds /
-          1.0e9;
-      const std::uint64_t interface_bytes =
-          per.interface_read_bytes + per.interface_write_bytes +
-          rounded_bytes_from_bits(per.interface_command_bits);
-      per.achieved_interface_bandwidth_GBps =
-          static_cast<double>(interface_bytes) / seconds / 1.0e9;
-      per.payload_efficiency =
-          interface_bytes == 0
-              ? 100.0
-              : 100.0 * static_cast<double>(per.read_bytes + per.write_bytes) /
-                    static_cast<double>(interface_bytes);
-    }
-    per.bandwidth_utilization =
-        per.peak_bandwidth_GBps <= 0.0
-            ? 0.0
-            : 100.0 * per.achieved_bandwidth_GBps / per.peak_bandwidth_GBps;
+    finalize_bandwidth_stats(per, spec_.cycles_per_second(),
+                             spec_.peak_bandwidth_GBps(), true);
     apply_physical_storage_stats(
         per, storage_stats[static_cast<std::size_t>(stack)]);
     per.total_addressable_lines = spec_.total_addressable_lines();

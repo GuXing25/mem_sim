@@ -20,7 +20,7 @@ void RefreshManager::reset(const DramSpec &spec, Cycle clk) {
   rank_states_.assign(static_cast<std::size_t>(std::max(1, spec.org.ranks)),
                       {});
   for (auto &state : rank_states_) {
-    state.next_refresh_cycle = clk + timing_delay(spec, interval);
+    state.next_refresh_cycle = clk + spec.nck_to_ticks(interval);
   }
 }
 
@@ -38,7 +38,7 @@ RefreshTickResult RefreshManager::tick(const DramSpec &spec, Cycle clk,
     reset(spec, clk);
   }
 
-  const Cycle interval_ticks = timing_delay(spec, interval);
+  const Cycle interval_ticks = spec.nck_to_ticks(interval);
   std::vector<bool> newly_due(rank_states_.size(), false);
   // deadline 是周期性义务来源，而不是“下一次允许发 refresh”的 gate。每跨过
   // 一个 deadline 就增加一项 obligation；提前刷新留下的负 credit 会在这里
@@ -104,7 +104,7 @@ RefreshTickResult RefreshManager::tick(const DramSpec &spec, Cycle clk,
                        static_cast<int>(rank_states_.size());
       auto &state = rank_states_[static_cast<std::size_t>(rank)];
       const bool in_window =
-          clk + timing_delay(spec, std::max(1, interval / 2)) >=
+          clk + spec.nck_to_ticks(std::max(1, interval / 2)) >=
           state.next_refresh_cycle;
       if (state.credit == 0 && in_window &&
           state.pullin_count < spec.refresh_pullin_limit) {
@@ -122,14 +122,6 @@ RefreshTickResult RefreshManager::tick(const DramSpec &spec, Cycle clk,
 
   result.credit = aggregate_credit();
   return result;
-}
-
-Cycle RefreshManager::timing_delay(const DramSpec &spec, int cycles) const {
-  if (cycles <= 0) {
-    return 0;
-  }
-  return static_cast<Cycle>(cycles) *
-         static_cast<Cycle>(std::max(1, spec.tick_multiplier));
 }
 
 int RefreshManager::refresh_interval(const DramSpec &spec) const {

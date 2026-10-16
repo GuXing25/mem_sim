@@ -8,7 +8,7 @@ import csv
 import json
 import sys
 from pathlib import Path
-from result_io import run_simulator
+from result_io import run_simulator, latency_ticks
 
 from config_selection import REFERENCE_PRESETS, selection_args
 
@@ -77,9 +77,9 @@ def main() -> int:
                     "requests": args.requests, "system_cycles": int(stats["system_cycles"]),
                     "completed_reads": int(stats["completed_reads"]),
                     "completed_writes": int(stats["completed_writes"]),
-                    "avg_read_latency_ticks": (float(stats["avg_read_latency"])
+                    "avg_read_latency_ticks": (latency_ticks(stats)
                                                if int(stats["completed_reads"]) else None),
-                    "avg_write_latency_ticks": (float(stats["avg_write_latency"])
+                    "avg_write_latency_ticks": (latency_ticks(stats, "write")
                                                 if int(stats["completed_writes"]) else None),
                     "achieved_bw_GBps": float(stats["achieved_bw_GBps"]),
                     "peak_bandwidth_GBps": float(stats["peak_bandwidth_GBps"]),
@@ -115,7 +115,6 @@ def main() -> int:
                 })
 
     report = {
-        "schema_version": 2,
         "scope": "synthetic_injection_latency_throughput_curve",
         "workload": {"pattern": args.pattern, "requests": args.requests,
                      "seed": args.seed, "intervals": sorted(set(intervals), reverse=True),

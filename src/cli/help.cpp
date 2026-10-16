@@ -94,7 +94,7 @@ void print_help(const char* argv0) {
       << "  --max-cycles N\n"
       << "  --progress-interval N  write periodic progress to stderr; 0 disables it\n"
       << "  --stats-view summary|diagnostic  summary is the default English report; diagnostic is audit-only\n"
-      << "  --stats-json <path>        schema 2 model/parameters/metrics/validation; diagnostic adds audit fields\n"
+      << "  --stats-json <path>        structured model/parameters/metrics/validation; diagnostic adds selected counters\n"
       << "  --single-controller  run one controller for isolated experiments\n"
       << "  --scheduler frfcfs|fcfs\n"
       << "  --row-policy open_page|closed_page|closed_cap\n"

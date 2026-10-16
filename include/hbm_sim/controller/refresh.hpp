@@ -56,7 +56,6 @@ class RefreshManager {
     int pullin_count = 0;
   };
 
-  Cycle timing_delay(const DramSpec& spec, int cycles) const;
   int refresh_interval(const DramSpec& spec) const;
   std::vector<MaintenanceCommand> seed_refresh_batch(const DramSpec& spec,
                                                       int rank,

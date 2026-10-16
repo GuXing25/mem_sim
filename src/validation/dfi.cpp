@@ -18,13 +18,6 @@
 namespace hbm_sim {
 namespace {
 
-Cycle timing_delay(const DramSpec& spec, int cycles) {
-  if (cycles <= 0) {
-    return 0;
-  }
-  return static_cast<Cycle>(cycles) * static_cast<Cycle>(std::max(1, spec.tick_multiplier));
-}
-
 std::size_t ceil_div(std::size_t value, std::size_t divisor) {
   return divisor == 0 ? value : (value + divisor - 1) / divisor;
 }
@@ -171,16 +164,6 @@ int dfi_phase_count(const DramSpec& spec) {
   return std::max(1, spec.dfi_phase_count > 0 ? spec.dfi_phase_count : spec.tick_multiplier);
 }
 
-std::size_t dfi_payload_beat_bytes(const DramSpec& spec) {
-  if (spec.dfi_data_lane_bytes > 0) {
-    return static_cast<std::size_t>(spec.dfi_data_lane_bytes);
-  }
-  const std::size_t payload =
-      static_cast<std::size_t>(std::max(1, spec.transaction_bytes()));
-  const std::size_t beats = static_cast<std::size_t>(std::max(1, spec.timing.nBL));
-  return std::max<std::size_t>(1, ceil_div(payload, beats));
-}
-
 std::uint64_t encode_dfi_address(const IssuedCommand& command) {
   const DecodedAddress& d = command.decoded;
   // 紧凑的通道局部 DFI 地址视图。这是稳定轨迹编码，不代表精确 JEDEC CA
@@ -241,9 +224,9 @@ std::vector<DfiEvent> build_dfi_trace(const DramSpec& spec,
     const int beat_count = static_cast<int>(ceil_div(payload_bytes, beat_bytes));
     const Cycle first_data_cycle = issued.data_cycle > 0
                                        ? issued.data_cycle
-                                       : issued.cycle + timing_delay(spec, read ? read_latency : write_latency);
+                                       : issued.cycle + spec.nck_to_ticks(read ? read_latency : write_latency);
     for (int beat = 0; beat < beat_count; beat++) {
-      Cycle cycle = first_data_cycle + timing_delay(spec, beat);
+      Cycle cycle = first_data_cycle + spec.nck_to_ticks(beat);
       const std::size_t bytes_before = static_cast<std::size_t>(beat) * beat_bytes;
       const std::size_t bytes_left = payload_bytes > bytes_before ? payload_bytes - bytes_before : 0;
       DfiEvent data_event;
@@ -463,7 +446,7 @@ DfiValidationReport validate_dfi_trace(const DramSpec& spec,
     const int expected_beats = static_cast<int>(ceil_div(payload_bytes, beat_bytes));
     const Cycle first_cycle = issued.data_cycle > 0
                                   ? issued.data_cycle
-                                  : issued.cycle + timing_delay(spec, read ? read_latency : write_latency);
+                                  : issued.cycle + spec.nck_to_ticks(read ? read_latency : write_latency);
     const DfiDataKey data_key{issued.stack_id, issued.decoded.channel, issued.request_id,
                               issued.command, issued.cycle};
     const auto data_it = data_events.find(data_key);
@@ -482,7 +465,7 @@ DfiValidationReport validate_dfi_trace(const DramSpec& spec,
     for (int beat = 0; beat < expected_beats; beat++) {
       const DfiEvent& event = *indexed_events[static_cast<std::size_t>(beat)];
       report.latency_checks++;
-      const Cycle expected_cycle = first_cycle + timing_delay(spec, beat);
+      const Cycle expected_cycle = first_cycle + spec.nck_to_ticks(beat);
       const std::size_t bytes_before = static_cast<std::size_t>(beat) * beat_bytes;
       const std::size_t expected_bytes = std::min(beat_bytes, payload_bytes - bytes_before);
       const std::string expected_payload =

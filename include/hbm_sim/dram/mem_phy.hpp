@@ -156,7 +156,6 @@ class MemPhy {
   std::deque<MemPhyCompletion> completions_;
   MemPhyStats stats_;
 
-  Cycle timing_delay(int nck) const;
   void advance_lifecycle(Cycle cycle);
   void complete_slot(const DataSlot& slot, Cycle cycle);
 };

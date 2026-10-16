@@ -9,6 +9,26 @@
 #include <string>
 
 namespace hbm_sim {
+
+std::pair<int, int> rank_bank_range(const DramSpec& spec,
+                                    const DecodedAddress& decoded,
+                                    std::size_t bank_count) {
+  const int banks_per_rank =
+      std::max(1, spec.org.bank_groups * spec.org.banks_per_group);
+  const int channel =
+      std::clamp(decoded.channel, 0, std::max(1, spec.org.channels) - 1);
+  const int pc = std::clamp(decoded.pseudo_channel, 0,
+                            std::max(1, spec.org.pseudo_channels) - 1);
+  const int sid = std::clamp(decoded.sid, 0, std::max(1, spec.org.sids) - 1);
+  const int rank =
+      std::clamp(decoded.rank, 0, std::max(1, spec.org.ranks) - 1);
+  const int rank_index =
+      ((channel * std::max(1, spec.org.pseudo_channels) + pc) *
+           std::max(1, spec.org.sids) + sid) * std::max(1, spec.org.ranks) + rank;
+  const int begin = rank_index * banks_per_rank;
+  return {begin, std::min(static_cast<int>(bank_count), begin + banks_per_rank)};
+}
+
 namespace {
 
 std::uint64_t checked_multiply(std::uint64_t lhs, std::uint64_t rhs,

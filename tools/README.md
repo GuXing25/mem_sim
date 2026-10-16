@@ -83,7 +83,7 @@ python3 tools/compare_stats.py baseline.txt candidate.txt \
 ```bash
 python3 tools/view_stats.py outputs/a.txt outputs/b.txt \
   --labels baseline,candidate \
-  --keys standard,completed_reads,system_cycles,achieved_bw_GBps,avg_read_latency
+  --keys standard,completed_reads,system_cycles,achieved_bw_GBps,avg_read_latency_ns
 ```
 
 三后端审计是可直接重复调用的仓库脚本，不依赖当前 Bash 会话中是否定义过函数：

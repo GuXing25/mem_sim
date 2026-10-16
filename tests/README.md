@@ -1,5 +1,7 @@
 # 测试
 
+第一轮等价简化的边界由 `refactor_tests` 覆盖：nCK→tick 的负数/零/细分 tick、乘法溢出及原错误信息、PC/SID/Rank 范围裁剪、DFI 非整除 beat、十六进制格式、带宽计算顺序与零周期/零速率边界。调度、刷新状态机和 Validator 的独立约束检查不随辅助函数合并。
+
 配置/标准口径回归新增：LPDDR6 BL24 的速度分档与读写边界，REFdb 刷新行计数器
 的 S/L 边界、两轮推进、重复 Bank 拒绝、REFab/SREFEX 同步及跨 SC/Rank 隔离。
 在线 Controller 生成的 REFdb 轮转还需通过独立 validator，不能只检查参数表。
@@ -8,7 +10,7 @@
 
 结果精简回归：`result_value_tests` 检查 C++ 整数精度、JSON 转义、null、非有限值拒绝及
 迟到错误覆盖成功状态；`result_contract` 检查四标准、三后端/两 PHY、直接修改标准段、
-容量联动、ns 单位、默认/summary 一致性、诊断显式选择与历史结果读取。
+容量联动、ns 单位、默认/summary 一致性、诊断显式选择、重复字段拒绝和无版本号的统一结果格式。
 两者纳入 CTest，`make result-test` 也同时运行。专项 smoke 使用 diagnostic，不要求
 普通结果保留所有内部键；可视化和 Demo 使用分区 JSON。
 
@@ -35,7 +37,7 @@ Self-Refresh 回归位于 `sequence_tests.cpp`：四协议 × Direct/Behavioral 
 - `smoke.sh`：端到端 CLI smoke regression。
 - `sequence_tests.cpp`：C++ 命令序列测试，检查关键命令展开、timing 和 validator 行为。
 - `timing_boundary_tests.cpp`：枚举 active TimingConstraint，生成 `t-1/t` 和 scope 边界矩阵。
-- `config_tests.cpp` / `model_config_tests.cpp`：配置分层、所有 schema 共用最新联动、矛盾/溢出拒绝、来源与刷新表回归；覆盖库级密度/时钟/nRC 校验及内部单 Channel 视图。
+- `config_tests.cpp` / `model_config_tests.cpp`：配置分层、统一参数联动、矛盾/溢出拒绝、来源与刷新表回归；覆盖库级密度/时钟/nRC 校验及内部单 Channel 视图。
   SID 回归覆盖 HBM 4/8/12/16Hi 自动/省略/显式选择、容量和密度、非法层数/数值拒绝、
   LPDDR 中性 SID，以及库部分覆盖不改变现有研究 SID；Timing 继续使用原有选择逻辑。
 - `scheduler_contract_tests.cpp`：普通 FRFCFS 的 ready/arrival 共同契约，5,000 组候选集与独立参考选择器比较。
@@ -54,7 +56,7 @@ Self-Refresh 回归位于 `sequence_tests.cpp`：四协议 × Direct/Behavioral 
 - 新增 CLI 参数或输出字段时，优先补 smoke test。
 - 新增协议语义、命令状态或 timing 规则时，优先补 sequence test。
 - 测试应保持可在 Makefile 和 CMake/CTest 两条路径中运行。
-- 新增真实存储区、floorplan、power、thermal 或 DFI 统计时，要同时覆盖 `sequence_tests.cpp` 的精确断言和 `smoke.sh` 的端到端字段检查。DFI payload 相关修改必须同时检查 `request_payload` 写 beat、`memory_image` 读 beat、`payload_init_mask` 和 `dfi_wrdata_mask` 默认导出语义。
+- 新增真实存储区、floorplan、power、thermal 或 DFI 统计时，要同时覆盖 `sequence_tests.cpp` 的精确断言和 `smoke.sh` 的端到端结果检查。DFI payload 相关修改必须同时检查 `request_payload` 写 beat、`memory_image` 读 beat、`payload_init_mask` 和 `dfi_wrdata_mask` 默认导出语义。
 - 涉及数据正确性的修改要检查 `data_checked_reads`、`data_mismatches`、`data_write_commits`、`storage_lines_allocated`，并至少覆盖同地址 `R -> W` 顺序、退出码 3、`--allow-data-mismatch`、`--dump-memory-image`、`--dump-memory-csv`、`--verify-golden` 和 `--mismatch-report`。
 
 ## 测试分层

@@ -3,8 +3,13 @@
 #include "hbm_sim/config/fields.hpp"
 #include "hbm_sim/controller/request_queues.hpp"
 #include "hbm_sim/core/system.hpp"
+#include "hbm_sim/core/utils.hpp"
+#include "hbm_sim/dram/interface.hpp"
 #include "hbm_sim/frontend/traffic.hpp"
+#include <algorithm>
+#include <cmath>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <set>
 
@@ -51,6 +56,110 @@ void scalar_parsing() {
   rejects([] { parse_bool("truthy"); });
 }
 
+void shared_units_and_address_ranges() {
+  auto spec = config::build_model("hbm4");
+  for (int multiplier : {-1, 0, 1, 2, 4}) {
+    spec.tick_multiplier = multiplier;
+    for (int nck : {-2, 0, 1, 33, std::numeric_limits<int>::max()}) {
+      const Cycle expected = nck <= 0 ? 0 :
+          static_cast<Cycle>(nck) * static_cast<Cycle>(std::max(1, multiplier));
+      require(spec.nck_to_ticks(nck) == expected, "nCK conversion changed");
+    }
+  }
+  for (std::uint64_t bits : {0ull, 1ull, 7ull, 8ull, 9ull, 63ull})
+    require(rounded_bytes_from_bits(bits) == (bits + 7) / 8,
+            "interface command rounding changed");
+  require(checked_multiply_u64(0, UINT64_MAX, "capacity") == 0 &&
+          checked_multiply_u64(UINT64_MAX, 1, "capacity") == UINT64_MAX,
+          "checked multiplication rejected a valid product");
+  for (const char* suffix : {" exceeds uint64 range", " exceeds Address space", " size overflow"}) {
+    bool caught = false;
+    try { (void)checked_multiply_u64(UINT64_MAX, 2, "capacity", suffix); }
+    catch (const std::overflow_error& error) {
+      caught = true;
+      require(error.what() == std::string("capacity") + suffix,
+              "overflow diagnostic changed");
+    }
+    require(caught, "multiplication overflow accepted");
+  }
+
+  spec.org.channels = 2;
+  spec.org.pseudo_channels = 3;
+  spec.org.sids = 2;
+  spec.org.ranks = 2;
+  spec.org.bank_groups = 3;
+  spec.org.banks_per_group = 5;
+  for (int channel : {-1, 0, 1, 2})
+    for (int pc : {-1, 0, 2, 3})
+      for (int sid : {-1, 0, 1, 2})
+        for (int rank : {-1, 0, 1, 2}) {
+          DecodedAddress decoded;
+          decoded.channel = channel;
+          decoded.pseudo_channel = pc;
+          decoded.sid = sid;
+          decoded.rank = rank;
+          DecodedAddress clamped = decoded;
+          clamped.channel = std::clamp(channel, 0, 1);
+          clamped.pseudo_channel = std::clamp(pc, 0, 2);
+          clamped.sid = std::clamp(sid, 0, 1);
+          clamped.rank = std::clamp(rank, 0, 1);
+          const int begin = clamped.flat_bank(spec);
+          for (int count : {spec.total_banks(), begin + 7}) {
+            const auto range = rank_bank_range(spec, decoded, count);
+            require(range.first == begin && range.second == std::min(count, begin + 15),
+                    "PC/SID/Rank bank range changed");
+          }
+        }
+
+  spec.org.dram_transaction_bytes = 32;
+  spec.timing.nBL = 3;
+  spec.dfi_data_lane_bytes = 0;
+  require(dfi_payload_beat_bytes(spec) == 11, "DFI partial beat rounded down");
+  spec.dfi_data_lane_bytes = 5;
+  require(dfi_payload_beat_bytes(spec) == 5, "explicit DFI lane ignored");
+  require(bytes_to_hex({0x00, 0x0a, 0xff}) == "000aff", "byte hex format changed");
+}
+
+void bandwidth_stats_contract() {
+  for (bool per_stack : {false, true}) {
+    Stats stats;
+    stats.cycles = 10;
+    stats.read_bytes = 64;
+    stats.write_bytes = 32;
+    stats.interface_read_bytes = 68;
+    stats.interface_write_bytes = 36;
+    stats.interface_command_bits = 9;
+    finalize_bandwidth_stats(stats, 1.0e9, 200.0, per_stack);
+    const double seconds = 10.0 / 1.0e9;
+    require(stats.achieved_bandwidth_GBps == 96.0 / seconds / 1.0e9 &&
+            stats.achieved_interface_bandwidth_GBps == 106.0 / seconds / 1.0e9,
+            "bandwidth formula/evaluation order changed");
+    require(stats.bandwidth_utilization == 100.0 * stats.achieved_bandwidth_GBps / 200.0 &&
+            stats.payload_efficiency == 100.0 * 96.0 / 106.0,
+            "derived efficiency changed");
+    Stats empty;
+    finalize_bandwidth_stats(empty, 1.0e9, 200.0, per_stack);
+    require(empty.payload_efficiency == (per_stack ? 0.0 : 100.0) &&
+            empty.achieved_bandwidth_GBps == 0.0,
+            "zero-cycle scope convention changed");
+    Stats stopped;
+    stopped.cycles = 1;
+    stopped.read_bytes = 32;
+    finalize_bandwidth_stats(stopped, 0.0, 0.0, per_stack);
+    require(stopped.payload_efficiency == (per_stack ? 0.0 : 100.0) &&
+            stopped.bandwidth_utilization == 0.0,
+            "disabled clock/zero peak convention changed");
+    Stats underflow;
+    underflow.cycles = 1;
+    underflow.read_bytes = underflow.interface_read_bytes = 32;
+    finalize_bandwidth_stats(underflow, std::numeric_limits<double>::infinity(),
+                             200.0, per_stack);
+    require(per_stack ? std::isinf(underflow.achieved_bandwidth_GBps)
+                      : underflow.achieved_bandwidth_GBps == 0.0,
+            "scope-specific zero-seconds division changed");
+  }
+}
+
 void field_registry() {
   auto spec = config::build_model("hbm4");
   std::set<std::string_view> keys;
@@ -87,14 +196,13 @@ void field_registry() {
   rejects([&] { config::assign_timing_field(spec, "ncl", "1.5"); });
   rejects([] { config::build_model("hbm4", {{"ncl", "7"}, {"timing_source", "bad"}}); });
   rejects([] { config::build_model("hbm4", {{"nwr", "7"}, {"twtp_ns", "3.5"}}); });
-  for (int schema : {2, 3}) {
-    auto first = config::build_model("hbm4", {{"timing_source", "vendor"}, {"ncl", "60"}}, schema);
-    auto last = config::build_model("hbm4", {{"ncl", "60"}, {"timing_source", "vendor"}}, schema);
-    require(first.timing.nCL == 60 && last.timing.nCL == 60, "timing override lost");
-    require(first.timing_table.source_count(TimingValueSource::Vendor) ==
-            last.timing_table.source_count(TimingValueSource::Vendor),
-            "timing source depends on input order");
-  }
+  auto first = config::build_model("hbm4", {{"timing_source", "vendor"}, {"ncl", "60"}});
+  auto last = config::build_model("hbm4", {{"ncl", "60"}, {"timing_source", "vendor"}});
+  require(first.timing.nCL == 60 && last.timing.nCL == 60, "timing override lost");
+  require(first.timing_table.source_count(TimingValueSource::Vendor) ==
+          last.timing_table.source_count(TimingValueSource::Vendor),
+          "timing source depends on input order");
+
 }
 
 void queue_lifecycle() {
@@ -270,6 +378,8 @@ void driver_consumption_contract() {
 int main() {
   try {
     scalar_parsing();
+    shared_units_and_address_ranges();
+    bandwidth_stats_contract();
     field_registry();
     queue_lifecycle();
     streaming_driver();

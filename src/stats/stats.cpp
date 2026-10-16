@@ -1,229 +1,167 @@
-// Typed diagnostic counters; the public result contract is defined in result.cpp.
+// Public results and a bounded set of useful diagnostic counters.
 #include "hbm_sim/stats/stats.hpp"
 #include "hbm_sim/stats/result.hpp"
+#include "hbm_sim/core/data.hpp"
+#include "hbm_sim/core/utils.hpp"
 
 namespace hbm_sim {
-ResultFields collect_stats(const Stats& stats) {
-  ResultFields fields;
-  record_field(fields, "cycles", stats.cycles);
-  record_field(fields, "reads", stats.reads);
-  record_field(fields, "writes", stats.writes);
-  record_field(fields, "completed_reads", stats.completed_reads);
-  record_field(fields, "completed_writes", stats.completed_writes);
-  record_field(fields, "row_hits", stats.row_hits);
-  record_field(fields, "row_misses", stats.row_misses);
-  record_field(fields, "row_conflicts", stats.row_conflicts);
-  record_field(fields, "commands.ACT", stats.act);
-  record_field(fields, "commands.ACT1", stats.act1);
-  record_field(fields, "commands.ACT2", stats.act2);
-  record_field(fields, "commands.PRE", stats.pre);
-  record_field(fields, "commands.PREpb", stats.prepb);
-  record_field(fields, "commands.PREab", stats.preab);
-  record_field(fields, "commands.CAS_RD", stats.cas_rd);
-  record_field(fields, "commands.CAS_WR", stats.cas_wr);
-  record_field(fields, "commands.RD", stats.rd);
-  record_field(fields, "commands.WR", stats.wr);
-  record_field(fields, "commands.RDA", stats.rda);
-  record_field(fields, "commands.WRA", stats.wra);
-  record_field(fields, "commands.REFab", stats.refab);
-  record_field(fields, "commands.REFpb", stats.refpb);
-  record_field(fields, "commands.REFdb", stats.refdb);
-  record_field(fields, "commands.RFMab", stats.rfmab);
-  record_field(fields, "commands.RFMpb", stats.rfmpb);
-  record_field(fields, "commands.MRW", stats.mrw);
-  record_field(fields, "commands.MRR", stats.mrr);
-  record_field(fields, "commands.WCK_SYNC", stats.wck_sync);
-  record_field(fields, "commands.WCK_TRAIN", stats.wck_train);
-  record_field(fields, "commands.DVFS", stats.dvfs);
-  record_field(fields, "commands.PDE", stats.pde);
-  record_field(fields, "commands.PDX", stats.pdx);
-  record_field(fields, "commands.SREFEN", stats.srefen);
-  record_field(fields, "commands.SREFEX", stats.srefex);
-  record_field(fields, "commands.ECC_SCRUB", stats.ecc_scrub);
-  record_field(fields, "commands.RAS_ERR", stats.ras_err);
-  record_field(fields, "maintenance_requests", stats.maintenance_requests);
-  record_field(fields, "maintenance_served", stats.maintenance_served);
-  record_field(fields, "refresh_batches", stats.refresh_batches);
-  record_field(fields, "refresh_pb_batches", stats.refresh_per_bank_batches);
-  record_field(fields, "refresh_ab_batches", stats.refresh_all_bank_batches);
-  record_field(fields, "refresh_postpones", stats.refresh_postpones);
-  record_field(fields, "refresh_pullins", stats.refresh_pullins);
-  record_field(fields, "refresh_credit_peak", stats.refresh_credit_peak);
-  record_field(fields, "rfm_events", stats.rfm_events);
-  record_field(fields, "rfm_pb_events", stats.rfm_per_bank_events);
-  record_field(fields, "rfm_ab_events", stats.rfm_all_bank_events);
-  record_field(fields, "dual_issue_cycles", stats.dual_issue_cycles);
-  record_field(fields, "row_bus_issues", stats.row_bus_issues);
-  record_field(fields, "column_bus_issues", stats.column_bus_issues);
-  record_field(fields, "unified_bus_issues", stats.unified_bus_issues);
-  record_field(fields, "rising_edge_ticks", stats.rising_edge_ticks);
-  record_field(fields, "falling_edge_ticks", stats.falling_edge_ticks);
-  record_field(fields, "write_mode_cycles", stats.write_mode_cycles);
-  record_field(fields, "host_requests", stats.host_requests);
-  record_field(fields, "dram_transactions", stats.dram_transactions);
-  record_field(fields, "injected_requests", stats.injected_requests);
-  record_field(fields, "injection_stall_cycles", stats.injection_stall_cycles);
-  record_field(fields, "read_forwards", stats.read_forwards);
-  record_field(fields, "write_coalesces", stats.write_coalesces);
-  record_field(fields, "data_checked_reads", stats.data_checked_reads);
-  record_field(fields, "data_mismatches", stats.data_mismatches);
-  record_field(fields, "data_uninitialized_reads", stats.data_uninitialized_reads);
-  record_field(fields, "data_write_commits", stats.data_write_commits);
-  record_field(fields, "data_masked_write_commits", stats.data_masked_write_commits);
-  record_field(fields, "data_forward_checks", stats.data_forward_checks);
-  record_field(fields, "storage_lines_allocated", stats.storage_lines_allocated);
-  record_field(fields, "unique_written_lines", stats.unique_written_lines);
-  record_field(fields, "storage_bytes_allocated", stats.storage_bytes_allocated);
-  record_field(fields, "storage_topology_lines_scanned", stats.storage_topology_lines_scanned);
-  record_field(fields, "storage_topology_scan_skipped", stats.storage_topology_scan_skipped);
-  record_field(fields, "total_addressable_lines", stats.total_addressable_lines);
-  record_field(fields, "storage_density_pct", stats.storage_density_pct);
-  record_field(fields, "burst_trace_lines", stats.burst_trace_lines);
-  record_field(fields, "burst_split_requests", stats.burst_split_requests);
-  record_field(fields, "burst_read_requests", stats.burst_read_requests);
-  record_field(fields, "burst_write_requests", stats.burst_write_requests);
-  record_field(fields, "burst_read_bytes", stats.burst_read_bytes);
-  record_field(fields, "burst_write_bytes", stats.burst_write_bytes);
-  record_field(fields, "storage_stacks_touched", stats.storage_stacks_touched);
-  record_field(fields, "storage_dies_touched", stats.storage_dies_touched);
-  record_field(fields, "storage_layers_touched", stats.storage_layers_touched);
-  record_field(fields, "storage_channels_touched", stats.storage_channels_touched);
-  record_field(fields, "storage_pcs_touched", stats.storage_pseudo_channels_touched);
-  record_field(fields, "storage_sids_touched", stats.storage_sids_touched);
-  record_field(fields, "storage_ranks_touched", stats.storage_ranks_touched);
-  record_field(fields, "storage_bgs_touched", stats.storage_bank_groups_touched);
-  record_field(fields, "storage_banks_touched", stats.storage_banks_touched);
-  record_field(fields, "storage_rows_touched", stats.storage_rows_touched);
-  record_field(fields, "storage_columns_touched", stats.storage_columns_touched);
-  record_field(fields, "storage_subarrays_touched", stats.storage_subarrays_touched);
-  record_field(fields, "storage_mats_touched", stats.storage_mats_touched);
-  record_field(fields, "storage_cells_touched", stats.storage_cells_touched);
-  record_field(fields, "storage_microbumps_touched", stats.storage_microbumps_touched);
-  record_field(fields, "floorplan_tiles_touched", stats.floorplan_tiles_touched);
-  record_field(fields, "thermal_tiles_touched", stats.thermal_tiles_touched);
-  record_field(fields, "thermal_grid_cells_touched", stats.thermal_grid_cells_touched);
-  record_field(fields, "storage_read_line_accesses", stats.storage_read_line_accesses);
-  record_field(fields, "storage_write_line_accesses", stats.storage_write_line_accesses);
-  record_field(fields, "rowbuf_activations", stats.rowbuf_activations);
-  record_field(fields, "rowbuf_precharges", stats.rowbuf_precharges);
-  record_field(fields, "rowbuf_dirty_writebacks", stats.rowbuf_dirty_writebacks);
-  record_field(fields, "rowbuf_clean_precharges", stats.rowbuf_clean_precharges);
-  record_field(fields, "rowbuf_hits", stats.rowbuf_hits);
-  record_field(fields, "rowbuf_misses", stats.rowbuf_misses);
-  record_field(fields, "rowbuf_lazy_loads", stats.rowbuf_lazy_loads);
-  record_field(fields, "rowbuf_reads", stats.rowbuf_reads);
-  record_field(fields, "rowbuf_writes", stats.rowbuf_writes);
-  record_field(fields, "rowbuf_forced_closes", stats.rowbuf_forced_closes);
-  record_field(fields, "rowbuf_open_rows", stats.rowbuf_open_rows);
-  record_field(fields, "rowbuf_dirty_rows", stats.rowbuf_dirty_rows);
-  record_field(fields, "power_events", stats.power_events);
-  record_field(fields, "thermal_updates", stats.thermal_updates);
-  record_field(fields, "power_energy_pJ", stats.power_energy_pj);
-  record_field(fields, "power_act_energy_pJ", stats.power_act_energy_pj);
-  record_field(fields, "power_pre_energy_pJ", stats.power_pre_energy_pj);
-  record_field(fields, "power_read_energy_pJ", stats.power_read_energy_pj);
-  record_field(fields, "power_write_energy_pJ", stats.power_write_energy_pj);
-  record_field(fields, "power_refresh_energy_pJ", stats.power_refresh_energy_pj);
-  record_field(fields, "power_rfm_energy_pJ", stats.power_rfm_energy_pj);
-  record_field(fields, "power_control_energy_pJ", stats.power_control_energy_pj);
-  record_field(fields, "thermal_peak_temp_C", stats.thermal_peak_temp_c);
-  record_field(fields, "thermal_avg_temp_C", stats.thermal_avg_temp_c);
-  record_field(fields, "thermal_hotspot_layer", stats.thermal_hotspot_layer);
-  record_field(fields, "thermal_hotspot_x", stats.thermal_hotspot_x);
-  record_field(fields, "thermal_hotspot_y", stats.thermal_hotspot_y);
-  record_field(fields, "thermal_lateral_transfers", stats.thermal_lateral_transfers);
-  record_field(fields, "thermal_vertical_transfers", stats.thermal_vertical_transfers);
-  record_field(fields, "thermal_tsv_transfers", stats.thermal_tsv_transfers);
-  record_field(fields, "thermal_coupled_delta_C", stats.thermal_coupled_delta_c);
-  record_field(fields, "ecc_shadow_updates", stats.ecc_shadow_updates);
-  record_field(fields, "ecc_checked_reads", stats.ecc_checked_reads);
-  record_field(fields, "ecc_corrected_errors", stats.ecc_corrected_errors);
-  record_field(fields, "ecc_uncorrectable_errors", stats.ecc_uncorrectable_errors);
-  record_field(fields, "ecc_injected_errors", stats.ecc_injected_errors);
-  record_field(fields, "ecc_parity_repairs", stats.ecc_parity_repairs);
-  record_field(fields, "dfi_read_beats", stats.dfi_read_beats);
-  record_field(fields, "dfi_write_beats", stats.dfi_write_beats);
-  record_field(fields, "dfi_forwarded_read_beats", stats.dfi_forwarded_read_beats);
-  record_field(fields, "dfi_masked_write_beats", stats.dfi_masked_write_beats);
-  record_field(fields, "dfi_data_bytes", stats.dfi_data_bytes);
-  record_field(fields, "dfi_beat_bytes", stats.dfi_beat_bytes);
-  record_field(fields, "phy_commands", stats.phy_commands);
-  record_field(fields, "phy_read_requests", stats.phy_read_requests);
-  record_field(fields, "phy_write_requests", stats.phy_write_requests);
-  record_field(fields, "phy_read_completions", stats.phy_read_completions);
-  record_field(fields, "phy_write_completions", stats.phy_write_completions);
-  record_field(fields, "phy_command_backpressure", stats.phy_command_backpressure);
-  record_field(fields, "phy_data_backpressure", stats.phy_data_backpressure);
-  record_field(fields, "phy_reset_cycles", stats.phy_reset_cycles);
-  record_field(fields, "phy_initialization_cycles", stats.phy_initialization_cycles);
-  record_field(fields, "phy_training_cycles", stats.phy_training_cycles);
-  record_field(fields, "phy_ca_edges", stats.phy_ca_edges);
-  record_field(fields, "phy_hbm_row_commands", stats.phy_hbm_row_commands);
-  record_field(fields, "phy_hbm_column_commands", stats.phy_hbm_column_commands);
-  record_field(fields, "phy_lpddr_wck_events", stats.phy_lpddr_wck_events);
-  record_field(fields, "phy_lpddr_split_act", stats.phy_lpddr_split_act_events);
-  record_field(fields, "phy_max_command_fifo", stats.phy_max_command_fifo);
-  record_field(fields, "phy_max_read_fifo", stats.phy_max_read_fifo);
-  record_field(fields, "phy_max_write_fifo", stats.phy_max_write_fifo);
-  record_field(fields, "phy_read_service_cycles", stats.phy_total_read_service_cycles);
-  record_field(fields, "phy_write_service_cycles", stats.phy_total_write_service_cycles);
-  record_field(fields, "row_policy_ap_upgrades", stats.row_policy_ap_upgrades);
-  record_field(fields, "row_policy_precharges", stats.row_policy_precharges);
-  record_field(fields, "wck_syncs", stats.wck_syncs);
-  record_field(fields, "wck_sync_skips", stats.wck_sync_skips);
-  record_field(fields, "wck_training_events", stats.wck_training_events);
-  record_field(fields, "mode_register_ops", stats.mode_register_ops);
-  record_field(fields, "dvfs_transitions", stats.dvfs_transitions);
-  record_field(fields, "ras_ecc_events", stats.ras_ecc_events);
-  record_field(fields, "act2_deadline_forced", stats.act2_deadline_forced);
-  record_field(fields, "rfm_decrements", stats.rfm_decrements);
-  record_field(fields, "low_power_entries", stats.low_power_entries);
-  record_field(fields, "low_power_exits", stats.low_power_exits);
-  record_field(fields, "low_power_cycles", stats.low_power_cycles);
-  record_field(fields, "self_refresh_cycles", stats.self_refresh_cycles);
-  record_field(fields, "self_refresh_time_ns", stats.self_refresh_time_ns);
-  record_field(fields, "self_refresh_energy_pJ", stats.self_refresh_energy_pj);
-  record_field(fields, "low_power_exit_blocked", stats.low_power_exit_blocked_cycles);
-  record_field(fields, "interface_command_bits", stats.interface_command_bits);
-  record_field(fields, "interface_overhead_bits", stats.interface_overhead_bits);
-  record_field(fields, "controller_count", stats.controller_count);
-  record_field(fields, "active_controllers", stats.active_controllers);
-  record_field(fields, "stack_count", stats.stack_count);
-  record_field(fields, "active_stacks", stats.active_stacks);
-  record_field(fields, "stack_ingress_stalls", stats.stack_ingress_stall_cycles);
-  record_field(fields, "stack_ingress_peak", stats.stack_ingress_peak);
-  record_field(fields, "qos_priority_dispatches", stats.qos_priority_dispatches);
-  record_field(fields, "dispatch_budget_exhausted", stats.dispatch_budget_exhausted);
-  record_field(fields, "controller_refused_dispatches",
-               stats.controller_refused_dispatches);
-  record_field(fields, "system_cycles", stats.system_cycles);
-  record_field(fields, "aggregate_ctrl_cycles", stats.aggregate_controller_cycles);
-  record_field(fields, "read_bytes", stats.read_bytes);
-  record_field(fields, "write_bytes", stats.write_bytes);
-  record_field(fields, "interface_read_bytes", stats.interface_read_bytes);
-  record_field(fields, "interface_write_bytes", stats.interface_write_bytes);
-  // interface_transfer_rate_gbps 是 pin/link 速率；peak_bandwidth_GBps 是速率乘
-  // data_bus_bits 的理论峰值。achieved_if 是完成事务加协议 bit 的记账等效值，
-  // 当前模型不会用这些额外 bit 延长数据总线占用，不能当作 pin 波形测量值。
-  record_field(fields, "peak_bandwidth_GBps", stats.peak_bandwidth_GBps);
-  record_field(fields, "if_xfer_rate_Gbps", stats.interface_transfer_rate_gbps);
-  record_field(fields, "achieved_bw_GBps", stats.achieved_bandwidth_GBps);
-  record_field(fields, "achieved_if_bw_GBps", stats.achieved_interface_bandwidth_GBps);
-  record_field(fields, "bandwidth_util_pct", stats.bandwidth_utilization);
-  record_field(fields, "payload_efficiency_pct", stats.payload_efficiency);
-  // remaining_* 和 hit_cycle_limit 是实验有效性的保护字段。只看 completed_reads
-  // 容易忽略 max_cycles 到期导致的未完成请求。
-  record_field(fields, "remaining_requests", stats.remaining_requests);
-  record_field(fields, "remaining_pending", stats.remaining_pending);
-  record_field(fields, "hit_cycle_limit", stats.hit_cycle_limit);
-  // Retain full numerical precision; rounding is a presentation concern.
-  record_field(fields, "avg_read_latency", stats.avg_read_latency());
-  record_field(fields, "avg_write_latency", stats.avg_write_latency());
-  record_field(fields, "read_q_avg_per_ctrl", stats.read_queue_len_avg_per_controller());
-  record_field(fields, "write_q_avg_per_ctrl", stats.write_queue_len_avg_per_controller());
-  record_field(fields, "priority_q_avg_per_ctrl", stats.priority_queue_len_avg_per_controller());
-  record_field(fields, "active_q_avg_per_ctrl", stats.active_queue_len_avg_per_controller());
-  return fields;
+
+void finalize_bandwidth_stats(Stats& s, double cycles_per_second,
+                              double peak_bandwidth_GBps, bool per_stack) {
+  s.peak_bandwidth_GBps = peak_bandwidth_GBps;
+  const bool elapsed = s.cycles > 0 && cycles_per_second > 0.0;
+  if (elapsed) {
+    const double bytes = static_cast<double>(s.read_bytes + s.write_bytes);
+    const double interface_bytes = static_cast<double>(
+        s.interface_read_bytes + s.interface_write_bytes +
+        rounded_bytes_from_bits(s.interface_command_bits));
+    const double seconds = static_cast<double>(s.cycles) / cycles_per_second;
+    // Preserve the original per-stack division and Controller/system guards,
+    // including their floating-point evaluation order.
+    s.achieved_bandwidth_GBps = !per_stack && seconds <= 0.0
+                                  ? 0.0 : bytes / seconds / 1.0e9;
+    s.achieved_interface_bandwidth_GBps = !per_stack && seconds <= 0.0
+        ? 0.0 : interface_bytes / seconds / 1.0e9;
+  }
+  s.bandwidth_utilization = s.peak_bandwidth_GBps <= 0.0
+      ? 0.0 : 100.0 * s.achieved_bandwidth_GBps / s.peak_bandwidth_GBps;
+  if (!per_stack || elapsed) {
+    const auto interface_bytes = s.interface_read_bytes + s.interface_write_bytes +
+                                rounded_bytes_from_bits(s.interface_command_bits);
+    s.payload_efficiency = interface_bytes == 0 ? 100.0
+        : 100.0 * static_cast<double>(s.read_bytes + s.write_bytes) /
+              static_cast<double>(interface_bytes);
+  }
 }
 
+ResultFields collect_metrics(const Stats& s, double tick_ns, bool power, bool thermal) {
+  ResultFields f;
+  auto put = [&](const char* key, auto value) { record_field(f, key, value); };
+  put("host_requests", s.host_requests);
+  put("dram_transactions", s.dram_transactions);
+  put("completed_reads", s.completed_reads);
+  put("completed_writes", s.completed_writes);
+  put("remaining_requests", s.remaining_requests);
+  put("remaining_pending", s.remaining_pending);
+  put("hit_cycle_limit", s.hit_cycle_limit);
+  put("system_cycles", s.system_cycles);
+  put("simulation_time_ns", s.system_cycles * tick_ns);
+  put("read_bytes", s.read_bytes);
+  put("write_bytes", s.write_bytes);
+  put("interface_read_bytes", s.interface_read_bytes);
+  put("interface_write_bytes", s.interface_write_bytes);
+  put("achieved_bw_GBps", s.achieved_bandwidth_GBps);
+  put("achieved_if_bw_GBps", s.achieved_interface_bandwidth_GBps);
+  put("peak_bandwidth_GBps", s.peak_bandwidth_GBps);
+  put("bandwidth_util_pct", s.bandwidth_utilization);
+  put("payload_efficiency_pct", s.payload_efficiency);
+  f["avg_read_latency_ns"] = s.completed_reads
+      ? ResultValue(s.avg_read_latency() * tick_ns) : ResultValue(nullptr);
+  f["avg_write_latency_ns"] = s.completed_writes
+      ? ResultValue(s.avg_write_latency() * tick_ns) : ResultValue(nullptr);
+  const double classified = static_cast<double>(s.row_hits) + s.row_misses + s.row_conflicts;
+  f["row_hit_pct"] = classified ? ResultValue(100.0 * s.row_hits / classified) : ResultValue(nullptr);
+  put("read_q_avg_per_ctrl", s.read_queue_len_avg_per_controller());
+  put("write_q_avg_per_ctrl", s.write_queue_len_avg_per_controller());
+  put("injection_stall_cycles", s.injection_stall_cycles);
+  put("phy_command_backpressure", s.phy_command_backpressure);
+  put("phy_data_backpressure", s.phy_data_backpressure);
+  put("storage_lines_allocated", s.storage_lines_allocated);
+  put("storage_bytes_allocated", s.storage_bytes_allocated);
+  if (power) put("power_energy_pJ", s.power_energy_pj);
+  if (thermal) {
+    put("thermal_avg_temp_C", s.thermal_avg_temp_c);
+    put("thermal_peak_temp_C", s.thermal_peak_temp_c);
+  }
+  if (s.self_refresh_cycles) {
+    put("self_refresh_cycles", s.self_refresh_cycles);
+    put("self_refresh_time_ns", s.self_refresh_time_ns);
+    if (power) put("self_refresh_energy_pJ", s.self_refresh_energy_pj);
+  }
+  return f;
+}
+
+ResultFields collect_diagnostics(const Stats& s, const DramSpec& spec,
+                                 const StorageModelOptions& storage) {
+  ResultFields f;
+  auto put = [&](const char* key, auto value) { record_field(f, key, value); };
+  put("row_hits", s.row_hits);
+  put("row_misses", s.row_misses);
+  put("row_conflicts", s.row_conflicts);
+  put("aggregate_ctrl_cycles", s.aggregate_controller_cycles);
+  put("controller_count", s.controller_count);
+  put("active_controllers", s.active_controllers);
+  put("active_stacks", s.active_stacks);
+  put("stack_ingress_stalls", s.stack_ingress_stall_cycles);
+  put("dispatch_budget_exhausted", s.dispatch_budget_exhausted);
+  put("controller_refused_dispatches", s.controller_refused_dispatches);
+  put("qos_priority_dispatches", s.qos_priority_dispatches);
+  put("priority_q_avg_per_ctrl", s.priority_queue_len_avg_per_controller());
+  put("active_q_avg_per_ctrl", s.active_queue_len_avg_per_controller());
+  put("read_forwards", s.read_forwards);
+  put("write_coalesces", s.write_coalesces);
+  put("data_write_commits", s.data_write_commits);
+  put("data_uninitialized_reads", s.data_uninitialized_reads);
+  put("unique_written_lines", s.unique_written_lines);
+  put("storage_topology_scan_skipped", s.storage_topology_scan_skipped);
+  put("storage_layers_touched", s.storage_layers_touched);
+  put("storage_banks_touched", s.storage_banks_touched);
+  put("storage_subarrays_touched", s.storage_subarrays_touched);
+  put("storage_cells_touched", s.storage_cells_touched);
+  put("rowbuf_dirty_writebacks", s.rowbuf_dirty_writebacks);
+  put("rowbuf_hits", s.rowbuf_hits);
+  put("rowbuf_misses", s.rowbuf_misses);
+  put("burst_trace_lines", s.burst_trace_lines);
+  put("burst_split_requests", s.burst_split_requests);
+  put("burst_read_requests", s.burst_read_requests);
+  put("burst_write_requests", s.burst_write_requests);
+  put("dfi_read_beats", s.dfi_read_beats);
+  put("dfi_write_beats", s.dfi_write_beats);
+  put("dfi_data_bytes", s.dfi_data_bytes);
+  if (spec.supports_refresh) {
+    put("refresh_pb_batches", s.refresh_per_bank_batches);
+    put("refresh_ab_batches", s.refresh_all_bank_batches);
+  }
+  if (spec.supports_rfm) put("rfm_events", s.rfm_events);
+  if (storage.ecc_shadow_enabled) {
+    put("ecc_checked_reads", s.ecc_checked_reads);
+    put("ecc_corrected_errors", s.ecc_corrected_errors);
+  }
+  if (storage.power_enabled) {
+    put("power_events", s.power_events);
+    put("power_act_energy_pJ", s.power_act_energy_pj);
+    put("power_pre_energy_pJ", s.power_pre_energy_pj);
+    put("power_read_energy_pJ", s.power_read_energy_pj);
+    put("power_write_energy_pJ", s.power_write_energy_pj);
+    put("power_refresh_energy_pJ", s.power_refresh_energy_pj);
+    put("power_rfm_energy_pJ", s.power_rfm_energy_pj);
+  }
+  if (storage.thermal_enabled) {
+    put("thermal_updates", s.thermal_updates);
+    put("thermal_grid_cells_touched", s.thermal_grid_cells_touched);
+    put("thermal_vertical_transfers", s.thermal_vertical_transfers);
+    put("thermal_tsv_transfers", s.thermal_tsv_transfers);
+  }
+  // Command counts are workload observations; unobserved commands are omitted.
+  for (auto [name, count] : {
+      std::pair{"ACT", s.act}, {"ACT1", s.act1}, {"ACT2", s.act2},
+      {"RD", s.rd}, {"WR", s.wr}, {"RDA", s.rda}, {"WRA", s.wra},
+      {"PRE", s.pre}, {"PREpb", s.prepb}, {"PREab", s.preab}, {"REFpb", s.refpb},
+      {"REFab", s.refab}, {"REFdb", s.refdb}, {"RFMpb", s.rfmpb}, {"RFMab", s.rfmab},
+      {"CAS_RD", s.cas_rd}, {"CAS_WR", s.cas_wr}, {"MRW", s.mrw}, {"MRR", s.mrr},
+      {"WCK_TRAIN", s.wck_train}, {"WCK_SYNC", s.wck_sync}, {"DVFS", s.dvfs},
+      {"ECC_SCRUB", s.ecc_scrub}, {"RAS_ERR", s.ras_err},
+      {"PDE", s.pde}, {"PDX", s.pdx}, {"SREFEN", s.srefen}, {"SREFEX", s.srefex}}) {
+    if (count) record_field(f, std::string("commands.") + name, count);
+  }
+  put("maintenance_served", s.maintenance_served);
+  put("phy_read_requests", s.phy_read_requests);
+  put("phy_write_requests", s.phy_write_requests);
+  put("phy_read_completions", s.phy_read_completions);
+  put("phy_write_completions", s.phy_write_completions);
+  put("phy_max_command_fifo", s.phy_max_command_fifo);
+  put("phy_max_read_fifo", s.phy_max_read_fifo);
+  put("phy_max_write_fifo", s.phy_max_write_fifo);
+  return f;
+}
 }  // namespace hbm_sim

@@ -12,6 +12,8 @@
 #include <stdexcept>
 #include <unordered_map>
 
+#include "hbm_sim/core/utils.hpp"
+
 namespace hbm_sim {
 namespace {
 
@@ -336,21 +338,13 @@ std::size_t host_request_bytes(const DramSpec& spec, const Request& req) {
                    : static_cast<std::size_t>(std::max(1, spec.bytes_per_request()));
 }
 
-std::uint64_t checked_multiply_u64(std::uint64_t lhs, std::uint64_t rhs,
-                                   const char* context) {
-  if (lhs != 0 && rhs > std::numeric_limits<std::uint64_t>::max() / lhs) {
-    throw std::overflow_error(std::string(context) + " exceeds Address space");
-  }
-  return lhs * rhs;
-}
-
 std::uint64_t random_start_count(const DramSpec& spec,
                                  const TrafficOptions& options) {
   const std::uint64_t stacks =
       static_cast<std::uint64_t>(std::max(1, options.stack_count));
   const std::uint64_t aggregate_capacity = checked_multiply_u64(
       spec.addressable_capacity_bytes(), stacks,
-      "aggregate random traffic capacity");
+      "aggregate random traffic capacity", " exceeds Address space");
   const std::uint64_t address_space =
       options.random_address_space_bytes == 0
           ? aggregate_capacity

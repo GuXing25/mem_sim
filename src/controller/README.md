@@ -28,6 +28,7 @@ refresh/RFM manager、timing engine 和 command executor，决定每个 cycle �
 - 通过 `RequestQueues` 管理 read/write/priority/active buffer；
   队列组件集中处理容量查询、active 提升/移除和每 bank 的 active 所有权计数。
 - 处理请求进入、完成、读转发、写合并和 channel-local transaction response。
+- `record_completed_transfer()` 共用读写完成数、事务延迟及搬运字节统计；`complete_read()` / `complete_write()` 仍分别处理真实读写副作用，转发/合并不重复计算 DRAM 字节。
 - 调用 scheduler、row policy、timing engine、executor。
 - 维护 HBM row/column bus 发射顺序和 LPDDR split activate 流程。
 

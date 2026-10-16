@@ -162,11 +162,11 @@ void TimingEngine::apply_constraints(const DramSpec &spec,
                                 ? spec.timing.nREFDB2REFDBS : spec.timing.nRRDL;
       const int long_gap = spec.timing.nREFDB2REFDBL > 0
                                ? spec.timing.nREFDB2REFDBL : short_gap;
-      refresh.ready = clk + timing_delay(spec, refresh.bank_count == 0
+      refresh.ready = clk + spec.nck_to_ticks(refresh.bank_count == 0
                                                   ? long_gap : short_gap);
     } else if (issued == Command::REFAB) {
       refresh.bank_count = 0;
-      refresh.ready = clk + timing_delay(spec, spec.timing.nRFC);
+      refresh.ready = clk + spec.nck_to_ticks(spec.timing.nRFC);
       std::fill(refresh.visited_pairs.begin(), refresh.visited_pairs.end(), false);
     } else if (issued == Command::SREFEX) {
       // The current control-command model applies self-refresh to a channel.
@@ -190,7 +190,7 @@ void TimingEngine::apply_constraints(const DramSpec &spec,
     }
 
     const Cycle ready =
-        clk + timing_delay(spec, std::max(0, constraint.latency));
+        clk + spec.nck_to_ticks(std::max(0, constraint.latency));
     auto update = [&](TimingScopeState &scope) {
       // 一条 issued 命令可能同时限制多种 following 命令，例如 RD 会限制后续 WR
       // 和 PRE。 用 max 更新可以叠加不同作用域/不同先行命令产生的约束。
@@ -222,7 +222,7 @@ void TimingEngine::apply_constraints(const DramSpec &spec,
 }
 
 void TimingEngine::prune_recent_acts(const DramSpec &spec, Cycle clk) {
-  Cycle window = timing_delay(spec, std::max(1, spec.timing.nFAW));
+  Cycle window = spec.nck_to_ticks(std::max(1, spec.timing.nFAW));
   for (auto &scope : activation_scopes_) {
     // recent_acts 按发射顺序保存；只要队首已经滑出 tFAW 窗口即可弹出。
     // faw_ready() 只看窗口内数量是否小于 4。
@@ -342,16 +342,6 @@ std::size_t TimingEngine::scope_index(const DramSpec &spec, TimingScope scope,
       static_cast<std::size_t>(
           std::clamp(d.bank, 0, std::max(1, o.banks_per_group) - 1));
   return x;
-}
-
-Cycle TimingEngine::timing_delay(const DramSpec &spec, int cycles) const {
-  if (cycles <= 0) {
-    return 0;
-  }
-  // Timing 结构保存 nCK，Controller 内部 tick 可以更细。例如 HBM edge pairing
-  // 用 tick_multiplier=2 将一个 nCK 拆成 rising/falling 两个 tick。
-  return static_cast<Cycle>(cycles) *
-         static_cast<Cycle>(std::max(1, spec.tick_multiplier));
 }
 
 TimingScopeState &TimingEngine::mutable_scope(const DramSpec &spec,

@@ -21,10 +21,6 @@
 namespace hbm_sim {
 namespace {
 
-std::uint64_t rounded_bytes_from_bits(std::uint64_t bits) {
-  return (bits + 7) / 8;
-}
-
 int low_power_exit_latency(const DramSpec &spec) {
   if (spec.low_power_mode == LowPowerMode::SelfRefresh) {
     return spec.self_refresh_exit_cycles > 0 ? spec.self_refresh_exit_cycles
@@ -33,19 +29,9 @@ int low_power_exit_latency(const DramSpec &spec) {
   return spec.low_power_exit_cycles;
 }
 
-std::size_t dfi_beat_bytes(const DramSpec &spec) {
-  if (spec.dfi_data_lane_bytes > 0) {
-    return static_cast<std::size_t>(spec.dfi_data_lane_bytes);
-  }
-  std::size_t payload =
-      static_cast<std::size_t>(std::max(1, spec.transaction_bytes()));
-  std::size_t burst = static_cast<std::size_t>(std::max(1, spec.timing.nBL));
-  return std::max<std::size_t>(1, (payload + burst - 1) / burst);
-}
-
 std::uint64_t dfi_beats_for_payload(const DramSpec &spec,
                                     std::size_t payload_bytes) {
-  std::size_t beat = dfi_beat_bytes(spec);
+  std::size_t beat = dfi_payload_beat_bytes(spec);
   return static_cast<std::uint64_t>((payload_bytes + beat - 1) / beat);
 }
 
@@ -183,7 +169,7 @@ bool Controller::enqueue(Request req) {
       low_power_active_ = false;
       low_power_exit_until_ = std::max(
           low_power_exit_until_,
-          clk_ + timing_delay(std::max(0, low_power_exit_latency(spec_))));
+          clk_ + spec_.nck_to_ticks(std::max(0, low_power_exit_latency(spec_))));
       stats_.low_power_exits++;
     }
   }
@@ -426,36 +412,9 @@ void Controller::finalize_run_stats() {
   stats_.remaining_requests = queued_requests() + pending_maintenance_.size();
   stats_.remaining_pending = pending_.size();
   stats_.hit_cycle_limit = !done();
-  stats_.interface_transfer_rate_gbps = spec_.interface_transfer_rate_gbps();
-  stats_.peak_bandwidth_GBps = spec_.peak_bandwidth_GBps();
-  if (stats_.cycles > 0 && spec_.cycles_per_second() > 0.0) {
-    // achieved_bandwidth_GBps 只统计 payload；achieved_interface_bandwidth_GBps
-    // 统计 payload + metadata/ECC overhead，是协议开销的记账等效需求带宽。
-    // 当前保护 bit 不延长数据总线占用，不能把它解释为 pin-accurate 实测值。
-    double bytes = static_cast<double>(stats_.read_bytes + stats_.write_bytes);
-    double interface_bytes = static_cast<double>(
-        stats_.interface_read_bytes + stats_.interface_write_bytes +
-        rounded_bytes_from_bits(stats_.interface_command_bits));
-    double seconds =
-        static_cast<double>(stats_.cycles) / spec_.cycles_per_second();
-    stats_.achieved_bandwidth_GBps =
-        seconds <= 0.0 ? 0.0 : bytes / seconds / 1.0e9;
-    stats_.achieved_interface_bandwidth_GBps =
-        seconds <= 0.0 ? 0.0 : interface_bytes / seconds / 1.0e9;
-  }
-  stats_.bandwidth_utilization =
-      stats_.peak_bandwidth_GBps <= 0.0
-          ? 0.0
-          : 100.0 * stats_.achieved_bandwidth_GBps / stats_.peak_bandwidth_GBps;
-  const auto interface_bytes =
-      stats_.interface_read_bytes + stats_.interface_write_bytes +
-      rounded_bytes_from_bits(stats_.interface_command_bits);
-  const auto payload_bytes = stats_.read_bytes + stats_.write_bytes;
-  stats_.payload_efficiency = interface_bytes == 0
-                                  ? 100.0
-                                  : 100.0 * static_cast<double>(payload_bytes) /
-                                        static_cast<double>(interface_bytes);
-  stats_.dfi_beat_bytes = dfi_beat_bytes(spec_);
+  finalize_bandwidth_stats(stats_, spec_.cycles_per_second(),
+                           spec_.peak_bandwidth_GBps());
+  stats_.dfi_beat_bytes = dfi_payload_beat_bytes(spec_);
   if (mem_phy_) {
     const MemPhyStats &phy = mem_phy_->stats();
     stats_.phy_commands = phy.commands;
@@ -571,13 +530,6 @@ void Controller::tick() {
   if (mem_phy_) {
     mem_phy_->tick(clk_);
   }
-  if (spec_.hbm_edge_pairing) {
-    if (is_rising_edge()) {
-      stats_.rising_edge_ticks++;
-    } else {
-      stats_.falling_edge_ticks++;
-    }
-  }
 
   stats_.read_queue_len_sum += request_queues_[BufferKind::Read].size();
   stats_.write_queue_len_sum += request_queues_[BufferKind::Write].size();
@@ -663,7 +615,7 @@ void Controller::tick() {
       }
       if (!low_power_active_ &&
           clk_ - low_power_idle_since_ >=
-              timing_delay(std::max(0, spec_.low_power_entry_cycles))) {
+              spec_.nck_to_ticks(std::max(0, spec_.low_power_entry_cycles))) {
         if (spec_.low_power_mode == LowPowerMode::SelfRefresh) {
           // DRAMsim3 waits for closed idle banks; open-page rows do not
           // force precharge just to enter the automatic low-power policy.
@@ -681,6 +633,24 @@ void Controller::tick() {
       low_power_idle_since_ = 0;
     }
   }
+}
+
+void Controller::record_completed_transfer(const Request &req) {
+  const bool read = req.type == RequestType::Read;
+  ++(read ? stats_.completed_reads : stats_.completed_writes);
+  (read ? stats_.total_read_latency : stats_.total_write_latency) +=
+      req.completion - req.arrival;
+  // 转发/合并仍产生完成和延迟样本，但不重复计算 DRAM/interface 搬运字节。
+  // Direct/Behavioral 的完成点由原路径决定，这里不改变时序或数据副作用。
+  if (req.bypass_dram) return;
+  const std::size_t payload_bytes = request_data_size(spec_, req);
+  const int interface_bytes = request_interface_bytes(spec_, payload_bytes);
+  (read ? stats_.read_bytes : stats_.write_bytes) += payload_bytes;
+  (read ? stats_.interface_read_bytes : stats_.interface_write_bytes) +=
+      interface_bytes;
+  stats_.interface_overhead_bits +=
+      std::max<std::int64_t>(0, static_cast<std::int64_t>(interface_bytes) -
+                                   static_cast<std::int64_t>(payload_bytes)) * 8;
 }
 
 void Controller::complete_pending() {
@@ -709,49 +679,11 @@ void Controller::complete_pending() {
       it->completion = phy_completion->completion_cycle;
     }
 
-    if (it->type == RequestType::Read) {
-      // 读请求在 RD/RDA 发出后不会立即完成，而是等 nCL+nBL 的简化读延迟。
-      // bypass_dram 的读也在这里进入统一响应路径，但不计真实 DRAM/interface
-      // 搬运字节。
-      stats_.completed_reads++;
-      stats_.total_read_latency += it->completion - it->arrival;
-      if (!it->bypass_dram) {
-        const std::size_t payload_bytes = request_data_size(spec_, *it);
-        const int interface_bytes =
-            request_interface_bytes(spec_, payload_bytes);
-        stats_.read_bytes += payload_bytes;
-        stats_.interface_read_bytes += interface_bytes;
-        stats_.interface_overhead_bits +=
-            std::max<std::int64_t>(
-                0, static_cast<std::int64_t>(interface_bytes) -
-                       static_cast<std::int64_t>(payload_bytes)) *
-            8;
-      }
-      TransactionResponse response =
-          complete_read(*it, phy_completion ? &*phy_completion : nullptr);
-      if (options_.retain_responses) {
-        responses_.push_back(std::move(response));
-      }
-    } else if (it->type == RequestType::Write) {
-      // completion 沿用现有执行路径：Direct 的普通 WR 是发出后 1 tick，
-      // WRA 还受自动 PRE/write-recovery gate 约束；Behavioral 等待 PHY
-      // 完成事件。这里仅累计事务延迟，不重新定义任一完成时序。
-      stats_.completed_writes++;
-      stats_.total_write_latency += it->completion - it->arrival;
-      if (!it->bypass_dram) {
-        const std::size_t payload_bytes = request_data_size(spec_, *it);
-        const int interface_bytes =
-            request_interface_bytes(spec_, payload_bytes);
-        stats_.write_bytes += payload_bytes;
-        stats_.interface_write_bytes += interface_bytes;
-        stats_.interface_overhead_bits +=
-            std::max<std::int64_t>(
-                0, static_cast<std::int64_t>(interface_bytes) -
-                       static_cast<std::int64_t>(payload_bytes)) *
-            8;
-      }
-      TransactionResponse response =
-          complete_write(*it, phy_completion ? &*phy_completion : nullptr);
+    if (it->type == RequestType::Read || it->type == RequestType::Write) {
+      record_completed_transfer(*it);
+      const auto* completion = phy_completion ? &*phy_completion : nullptr;
+      TransactionResponse response = it->type == RequestType::Read
+          ? complete_read(*it, completion) : complete_write(*it, completion);
       if (options_.retain_responses) {
         responses_.push_back(std::move(response));
       }
@@ -1376,9 +1308,9 @@ std::optional<Command> Controller::next_command(Request &req) {
           req.type == RequestType::Read ? bank.next_rd : bank.next_wr,
           timing_engine_.constraint_ready_at(spec_, req.decoded, data_command));
       int cas_to_data = std::max(t.nCAS, t.nWCK2CK);
-      Cycle prospective_ready = clk_ + timing_delay(std::max(1, cas_to_data));
+      Cycle prospective_ready = clk_ + spec_.nck_to_ticks(std::max(1, cas_to_data));
       Cycle prospective_end =
-          clk_ + timing_delay(std::max(t.nWCKPST, t.nWCK2CK + 1));
+          clk_ + spec_.nck_to_ticks(std::max(t.nWCKPST, t.nWCK2CK + 1));
       if (std::max(data_gate, prospective_ready) >= prospective_end) {
         // WCK/CAS 过早启动会在 nRCD 或总线换向 gate 结束前过期，导致重复
         // CAS。等到本次窗口确实覆盖数据命令的最早合法 tick 再发。
@@ -1546,7 +1478,8 @@ bool Controller::would_close_active(const Request &req, Command cmd,
     // priority buffer 中的 PREab/REFab/RFMab 不能关闭仍有 active request 的
     // bank， 否则 active_buffer 里的普通请求会在 row 被维护命令关闭后继续发
     // RD/WR。
-    const auto [begin, end] = rank_bank_range(req.decoded);
+    const auto [begin, end] =
+        hbm_sim::rank_bank_range(spec_, req.decoded, banks_.size());
     return std::any_of(request_queues_.active_counts().begin() + begin,
                        request_queues_.active_counts().begin() + end,
                        [](int count) { return count > 0; });
@@ -1666,7 +1599,7 @@ void Controller::issue(Candidate cand) {
     explicit_self_refresh_active_ = false;
     refresh_manager_.set_self_refresh(false);
     low_power_exit_until_ = std::max(low_power_exit_until_,
-        clk_ + timing_delay(std::max(1, spec_.timing.nSREFEX)));
+        clk_ + spec_.nck_to_ticks(std::max(1, spec_.timing.nSREFEX)));
     if (explicit_low_power_exit_pending_ == Command::SREFEX) {
       explicit_low_power_exit_pending_.reset();
     }
@@ -1733,20 +1666,20 @@ void Controller::retire_or_advance(Candidate cand, Command issued) {
     done_req.completion = mem_phy_->submit_data(done_req, issued, clk_);
   } else {
     done_req.completion = (issued == Command::RD || issued == Command::RDA)
-                              ? clk_ + timing_delay(spec_.timing.read_latency())
+                              ? clk_ + spec_.nck_to_ticks(spec_.timing.read_latency())
                               : clk_ + 1;
   }
   if (issued == Command::RDA) {
     done_req.completion =
         std::max(done_req.completion,
-                 clk_ + timing_delay(std::max(0, spec_.timing.nRTP)));
+                 clk_ + spec_.nck_to_ticks(std::max(0, spec_.timing.nRTP)));
   } else if (issued == Command::WRA) {
     // WRA 的内部 PRE 不能早于写数据、burst 和 write recovery 完成。把
     // MemoryImage 的关闭点绑定到这个 gate，可避免 Direct 的一拍完成路径比
     // Behavioral PHY 更早关闭物理 row buffer。
     done_req.completion =
         std::max(done_req.completion,
-                 clk_ + timing_delay(spec_.timing.nCWL + spec_.timing.nBL +
+                 clk_ + spec_.nck_to_ticks(spec_.timing.nCWL + spec_.timing.nBL +
                                      spec_.timing.nWR));
   }
   // pending_ 是“已发数据命令但上层尚未看到完成”的队列。它让读延迟统计和
@@ -1878,31 +1811,8 @@ bool Controller::any_bank_busy_in_channel(const DecodedAddress &decoded) const {
                      });
 }
 
-std::pair<int, int>
-Controller::rank_bank_range(const DecodedAddress &decoded) const {
-  const int banks_per_rank =
-      std::max(1, spec_.org.bank_groups * spec_.org.banks_per_group);
-  const int channel =
-      std::clamp(decoded.channel, 0, std::max(1, spec_.org.channels) - 1);
-  const int pc = std::clamp(decoded.pseudo_channel, 0,
-                            std::max(1, spec_.org.pseudo_channels) - 1);
-  const int sid = std::clamp(decoded.sid, 0, std::max(1, spec_.org.sids) - 1);
-  const int rank =
-      std::clamp(decoded.rank, 0, std::max(1, spec_.org.ranks) - 1);
-  const int rank_index =
-      ((channel * std::max(1, spec_.org.pseudo_channels) + pc) *
-           std::max(1, spec_.org.sids) +
-       sid) *
-          std::max(1, spec_.org.ranks) +
-      rank;
-  const int begin = rank_index * banks_per_rank;
-  const int end =
-      std::min(static_cast<int>(banks_.size()), begin + banks_per_rank);
-  return {begin, end};
-}
-
 bool Controller::any_bank_busy_in_rank(const DecodedAddress &decoded) const {
-  const auto [begin, end] = rank_bank_range(decoded);
+  const auto [begin, end] = hbm_sim::rank_bank_range(spec_, decoded, banks_.size());
   return std::any_of(banks_.begin() + begin, banks_.begin() + end,
                      [](const BankState &bank) {
                        return bank.activating || bank.open_row >= 0;
@@ -1911,17 +1821,9 @@ bool Controller::any_bank_busy_in_rank(const DecodedAddress &decoded) const {
 
 bool Controller::any_bank_activating_in_rank(
     const DecodedAddress &decoded) const {
-  const auto [begin, end] = rank_bank_range(decoded);
+  const auto [begin, end] = hbm_sim::rank_bank_range(spec_, decoded, banks_.size());
   return std::any_of(banks_.begin() + begin, banks_.begin() + end,
                      [](const BankState &bank) { return bank.activating; });
-}
-
-Cycle Controller::timing_delay(int cycles) const {
-  if (cycles <= 0) {
-    return 0;
-  }
-  return static_cast<Cycle>(cycles) *
-         static_cast<Cycle>(std::max(1, spec_.tick_multiplier));
 }
 
 void Controller::schedule_refresh() {
@@ -1933,9 +1835,6 @@ void Controller::schedule_refresh() {
       refresh_manager_.tick(spec_, clk_, ordinary_work, allow_pull_in);
   if (result.postponed) {
     stats_.refresh_postpones++;
-  }
-  if (result.pulled_in) {
-    stats_.refresh_pullins++;
   }
   stats_.refresh_credit_peak = std::max<std::uint64_t>(
       stats_.refresh_credit_peak,

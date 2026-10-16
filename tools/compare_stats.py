@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare hbm_sim schema 1/2 JSON or historical/diagnostic key-value files.
+"""Compare hbm_sim structured JSON or diagnostic key-value files.
 
 Compact human reports are not machine inputs. Compare selected metrics with
 explicit tolerances after normalizing protocol, workload and units.

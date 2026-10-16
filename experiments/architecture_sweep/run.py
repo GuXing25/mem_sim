@@ -17,7 +17,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
-from result_io import count, number, read_result
+from result_io import count, number, read_result, latency_ticks
 
 
 ORG_KEYS = (
@@ -537,19 +537,21 @@ def run_case(args: argparse.Namespace, standard: str, case: Case,
         "capacity_formula_GiB": planned_capacity / 2**30,
         "capacity_ratio_vs_baseline": planned_capacity / baseline_capacity,
         "channel_mapper": stats.get("channel_mapper", ""),
-        "avg_read_latency_ticks": number(stats, "avg_read_latency"),
+        "avg_read_latency_ticks": latency_ticks(stats),
         "achieved_bw_GBps": bandwidth,
         "bw_per_engaged_bank_GBps": bandwidth / engaged if engaged else 0.0,
         "row_hits": int(hits), "row_misses": int(misses), "row_conflicts": int(conflicts),
         "row_hit_rate_pct": 100.0 * hits / decisions if decisions else 0.0,
         "row_conflict_rate_pct": 100.0 * conflicts / decisions if decisions else 0.0,
-        "refresh_pb_batches": int(number(stats, "refresh_pb_batches")),
-        "refresh_ab_batches": int(number(stats, "refresh_ab_batches")),
+        "refresh_pb_batches": (count(stats, "refresh_pb_batches")
+                               if stats["supports_refresh"] == "true" else 0),
+        "refresh_ab_batches": (count(stats, "refresh_ab_batches")
+                               if stats["supports_refresh"] == "true" else 0),
         "cmd_validation": stats.get("cmd_validation", ""),
         "dfi_validation": stats.get("dfi_validation", ""),
         "data_mismatches": int(number(stats, "data_mismatches")),
         "hit_cycle_limit": stats["hit_cycle_limit"].lower(),
-        "cycles": int(number(stats, "cycles")),
+        "cycles": int(number(stats, "system_cycles")),
         "wall_seconds": round(elapsed, 3),
     }
     return Observation(

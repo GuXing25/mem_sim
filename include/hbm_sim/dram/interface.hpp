@@ -34,4 +34,7 @@ int request_interface_bytes(const DramSpec& spec);
 // LPDDR6 CA parity；未来可继续扩展 CA CRC、command bus ECC 等特性。
 int command_interface_overhead_bits(const DramSpec& spec, Command command);
 
+// Controller 和 DFI 导出使用同一 payload beat 宽度，不依赖 validation 层。
+std::size_t dfi_payload_beat_bytes(const DramSpec& spec);
+
 }  // namespace hbm_sim

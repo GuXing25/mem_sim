@@ -33,6 +33,5 @@ bool is_timing_override_key(const std::string& key);
 void apply_spec_overrides(DramSpec& spec, const ModelOverrides& overrides);
 DramSpec build_model(const std::string& standard,
                      const ModelOverrides& overrides = {},
-                     int schema_version = 3,
                      std::vector<ParameterDerivation>* derived = nullptr);
 }  // namespace hbm_sim::config

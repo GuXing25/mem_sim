@@ -107,7 +107,7 @@ PY
 python3 "$repo_root/tools/view_stats.py" \
   "$case_out/sparse/stats.txt" "$case_out/mmap/stats.txt" "$case_out/chunk/stats.txt" \
   --labels sparse,mmap_sparse,chunk_file \
-  --keys standard,memory_backend,memory_backend_line_bytes,completed_reads,completed_writes,remaining_requests,hit_cycle_limit,data_mismatches,golden_verified,golden_mismatches,storage_lines_allocated,unique_written_lines
+  --keys standard,memory_backend,dram_transaction_bytes,completed_reads,completed_writes,remaining_requests,hit_cycle_limit,data_mismatches,golden_verified,golden_mismatches,storage_lines_allocated,unique_written_lines
 
 echo
 echo "backend metadata magic (both must read HBMBACK\\0):"

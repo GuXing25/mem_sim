@@ -46,7 +46,7 @@ LPDDR 同理，替换复制源即可。
 
 | 推荐 section | 职责及简写 |
 |---|---|
-| `[meta]` | schema_version；extends 相对当前配置文件解析，不相对运行目录 |
+| `[meta]` | 需要继承配置时使用 extends；路径相对当前配置文件解析 |
 | `[model]` | name、base_standard、preset |
 | `[memory_system]` | stack_count、入口、QoS、响应容量 |
 | `[frontend]` | pattern、requests、trace、seed、注入和地址范围 |
@@ -91,7 +91,7 @@ backend 为 sparse/mmap_sparse/chunk_file；PHY 为 direct/behavioral。陌生�
 
 | 建议用语 | 操作含义 | 典型字段 |
 |---|---|---|
-| 一般固定 / 保持基准 | 普通用例沿用所选协议的实现约定；专项研究可以改，但需重新验证受影响行为 | schema_version、tick_multiplier、HBM ranks |
+| 一般固定 / 保持基准 | 普通用例沿用所选协议的实现约定；专项研究可以改，但需重新验证受影响行为 | tick_multiplier、HBM ranks |
 | 可单独改动 / 可选策略 | 可以把它作为一个实验变量，通常不要求同时重填其他输入；仍须满足取值与启用条件 | requests、seed、scheduler |
 | 一般省略 / 自动派生 | 优先修改主输入，让解析器计算本项；只在明确支持时使用 auto 或约定的 0 | density_gb、tCK_ps、memory_capacity_bytes |
 | 联动修改 / 核对 | 检查列出的相关项是否仍一致；不要求每次都改动所有相关数值，也不表示代码会自动同步它们 | line_size、write_high_watermark、lpddr_dvfs_mode |
@@ -221,8 +221,8 @@ density_gb = auto
 | `vendor_profile` | 厂家/器件身份标签 | 名称不代表已校准；必须有真实参数和来源证据 | 审计标签：可按实际依据修改；改名称不自动生成参数、算法或合规能力 |
 | `mode_profile` | 模式审计名称 | 不按名称子串切换功能；显式设置保护、效率、DVFS 等字段 | 审计标签：可按实际依据修改；改名称不自动生成参数、算法或合规能力 |
 | `timing_override_source` | vendor/jedec/external_reference/research_default/derived | 按所在段绑定；顺序不影响同段来源，默认 research_default | 审计/校验项：按真实来源填写；与 parameter_reference、validation_mode、strict_timing_table 一起核对 |
-| `speed_bin_mbps` | Timing 速率选择，Mb/s/pin | schema 3 通常省略，跟随 data_rate_mbps；冲突时报错 | 一般不手填，省略/auto 随 data_rate_mbps 推导；显式值须一致 |
-| `density_gb` | Gibit；HBM 按平均每 die，LPDDR 按每子通道/rank | 所有版本均由几何推导，可为小数；显式值须与推导值一致 | 一般不手填，省略/auto 由几何推导；HBM 还按 stack_height 分摊，不能独立指定不一致密度 |
+| `speed_bin_mbps` | Timing 速率选择，Mb/s/pin | 通常省略，跟随 data_rate_mbps；冲突时报错 | 一般不手填，省略/auto 随 data_rate_mbps 推导；显式值须一致 |
+| `density_gb` | Gibit；HBM 按平均每 die，LPDDR 按每子通道/rank | 由几何推导，可为小数；显式值须与推导值一致 | 一般不手填，省略/auto 由几何推导；HBM 还按 stack_height 分摊，不能独立指定不一致密度 |
 | `stack_height` | 物理 die 层数 | HBM 自动 SID 的主输入；影响物理映射和密度分摊，不在逻辑容量乘积外再次乘入 | 联动修改：HBM 的自动 sids、density 和物理层映射；显式 sids 不会随之改变 |
 | `strict_timing_table` | 禁止未校准的必要默认值 | 目标器件参数齐备后应设为 true | 校验开关：依据是否齐全决定；与 Timing 来源及 validation_mode 配套，true 不代表标准认证 |
 | `data_rate_mbps` | Mb/s/pin，外部每 pin 数据率 | 主输入；触发时钟和速度档联动，见第 2 节 | 可修改的主输入；联动 speed_bin_mbps、tCK、LPDDR WCK/DVFS；另核对显式 Timing、RL/WL |
@@ -698,7 +698,6 @@ mkdir -p outputs/timing_check
 
 | 输入 | 含义与边界 | 修改建议 / 联动项 |
 |---|---|---|
-| `[meta] schema_version` | 配置语法版本；复制主模板保留 3，不等于 DRAM 协议版本 | 一般固定为模板的 3；修改语法版本不切换 HBM/LPDDR 协议 |
 | `[meta] extends` | 可选单个父配置路径，相对当前文件；自包含模板通常不需要 | 可选结构项；自包含副本一般省略，使用时核对父路径与覆盖优先级 |
 | `[model] name / base_standard / preset` | 模型名、基础标准、已有 preset 选择；名称不创造算法或时序 | name 可单独改标签；base_standard/preset 选择已有基准，须联动组织、模式与显式覆盖 |
 | `parameter_reference` / `[audit] reference` | 本次参数依据的可读记录；Timing 段 reference 绑定到该段 | 审计项：随实际数据来源/研究假设更新，不自动改变模型数值 |

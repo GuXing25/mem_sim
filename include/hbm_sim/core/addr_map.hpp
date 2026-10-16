@@ -38,6 +38,11 @@ struct DecodedAddress {
   }
 };
 
+// Controller/Executor 共用的 PC/SID/Rank Bank 范围；保持坐标 clamp 和数组上界。
+std::pair<int, int> rank_bank_range(const DramSpec& spec,
+                                    const DecodedAddress& decoded,
+                                    std::size_t bank_count);
+
 // 多 stack 系统在进入单颗 HBM 的 AddressMapper 前，先把系统地址拆成
 // stack_id 和 stack-local 地址。Interleaved 适合带宽聚合，Blocked 适合把
 // 每颗 stack 暴露成连续 NUMA 区间。

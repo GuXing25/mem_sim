@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import configparser
 import csv
 import json
 import math
@@ -12,7 +13,7 @@ import sys
 import tempfile
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from result_io import parse_stats, run_simulator
+from result_io import parse_stats, run_simulator, latency_ticks
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -190,13 +191,18 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="hbm_sim_validation_") as temp_name:
         temp = Path(temp_name)
         timing_csv = temp / "timing.csv"
+        resolved_cfg = temp / "resolved.cfg"
         base_stats, _ = run(
             binary,
             validation_selection,
-            ["--requests", "0", "--dump-timing-table", str(timing_csv)],
+            ["--requests", "0", "--dump-timing-table", str(timing_csv),
+             "--dump-resolved-config", str(resolved_cfg)],
         )
         timing_rows = read_csv(timing_csv)
         timings = timing_values(timing_rows)
+        resolved = configparser.ConfigParser(interpolation=None)
+        resolved.read(resolved_cfg)
+        dfi_read_latency = resolved.getint("architecture", "dfi_read_latency_nck") or timings["nCL"]
 
         add(
             checks,
@@ -220,15 +226,6 @@ def main() -> int:
             close(actual_peak, expected_peak),
             f"actual={actual_peak:.6f} expected={expected_peak:.6f} GB/s",
         )
-        expected_rate = data_rate / 1000.0
-        actual_rate = float(base_stats["if_xfer_rate_Gbps"])
-        add(
-            checks,
-            "interface_rate_formula",
-            close(actual_rate, expected_rate),
-            f"actual={actual_rate:.6f} expected={expected_rate:.6f} Gbps",
-        )
-
         allowed_sources = {"jedec", "vendor", "derived", "research_default"}
         bad_sources = sorted(
             {
@@ -274,6 +271,11 @@ def main() -> int:
             ],
         )
         commands = read_csv(command_csv)
+        expected_interface_bw = (int(read_stats["interface_read_bytes"]) +
+                                 int(read_stats["interface_write_bytes"])) / float(read_stats["simulation_time_ns"])
+        add(checks, "interface_bandwidth_formula",
+            close(float(read_stats["achieved_if_bw_GBps"]), expected_interface_bw),
+            f"actual={read_stats['achieved_if_bw_GBps']} expected={expected_interface_bw} GB/s")
         act = next(row for row in commands if row["command"] == "ACT")
         rd = next(row for row in commands if row["command"] == "RD")
         tick_multiplier = int(base_stats["tick_multiplier"])
@@ -289,7 +291,7 @@ def main() -> int:
         expected_completion = int(rd["cycle"]) + (
             timings["nCL"] + timings["nBL"]
         ) * tick_multiplier
-        actual_latency = float(read_stats["avg_read_latency"])
+        actual_latency = latency_ticks(read_stats)
         add(
             checks,
             "closed_row_read_completion",
@@ -298,9 +300,7 @@ def main() -> int:
         )
         dfi_rows = read_csv(dfi_csv)
         first_read_beat = next(row for row in dfi_rows if row["kind"] == "READ_DATA")
-        expected_dfi_cycle = int(rd["cycle"]) + int(
-            base_stats["dfi_read_latency_nck"]
-        ) * tick_multiplier
+        expected_dfi_cycle = int(rd["cycle"]) + dfi_read_latency * tick_multiplier
         add(
             checks,
             "dfi_read_latency",
@@ -597,8 +597,8 @@ def main() -> int:
         high_stats, _ = run(
             binary, [*validation_selection, "--config", str(high_config)],
             ["--trace", str(one_read)])
-        low_latency = float(low_stats["avg_read_latency"])
-        high_latency = float(high_stats["avg_read_latency"])
+        low_latency = latency_ticks(low_stats)
+        high_latency = latency_ticks(high_stats)
         expected_delta = 8 * tick_multiplier
         add(
             checks,
@@ -614,7 +614,6 @@ def main() -> int:
             checks,
             "project_full_stack_scope",
             full_stack_stats["standard"] == "HBM4"
-            and full_stack_stats["hbm_full_32ch_stack"] == "true"
             and int(full_stack_stats["channels"]) == 32
             and int(full_stack_stats["data_bus_bits"]) == 2048
             and close(full_stack_peak, 2048.0),
@@ -643,7 +642,6 @@ def main() -> int:
         print(f"{status:4} {check.name}: {check.detail}")
 
     report = {
-        "schema_version": 1,
         "scope": "hbm_sim_project_native_analytical_storage_dfi_provenance",
         "model_authority": "hbm_sim_project_requirements_and_declared_standard_profile",
         "external_reference_required": False,

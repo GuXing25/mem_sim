@@ -46,7 +46,7 @@ int section_layer(const std::string& section,
                   const Selection& selection,
                   bool& active) {
   active = true;
-  // v2 配置的覆盖方向与“默认 -> 特化 -> 实验覆盖”一致：
+  // 配置的覆盖方向与“默认 -> 特化 -> 实验覆盖”一致：
   // common 提供两种协议族都能理解的工程默认，family/standard/preset 逐层
   // 特化，override 最后表达本次实验的偏离。这样继承式多 Stack 用例才能真正
   // 覆盖 [system] 中的单 Stack 默认，而不是被公共段反向覆盖。

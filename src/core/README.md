@@ -16,6 +16,7 @@ core 层当前包含真实存储区热路径：`data.cpp` 实现 `MemoryImage`�
 - 新增地址映射模板时，保持模板名语义清楚，例如 `RoBaRaCoCh`。
 - 多 controller 行为应保持一个 channel 一个 controller 的结构，便于对齐 Ramulator2.1。
 - system 层只合并统计和 trace，不应实现 DRAM 命令状态机。
+- `merge_controller_stats()` 只累计 Controller 所属统计；存储、行缓冲、功耗、热和 ECC 的 62 项最终统计统一从 per-stack `MemoryImage` 读取，不先跨 Channel 重复累加再覆盖。单 Controller 的统计入口保持不变。
 - `data.cpp` 是模型层入口，不应反向依赖 CLI；txt load/dump 只作为 checkpoint/report，不参与 RD/WR 热路径的文件 I/O。
 
 ## `addr_map.cpp`

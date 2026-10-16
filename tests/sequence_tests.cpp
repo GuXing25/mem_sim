@@ -3711,7 +3711,7 @@ void test_floorplan_power_and_thermal_model() {
               stats.power_write_energy_pj > 0.0 &&
               stats.power_energy_pj >= stats.power_act_energy_pj,
           "power model did not classify command energy");
-  require(stats.thermal_updates == 3 && stats.thermal_tiles_touched >= 1 &&
+  require(stats.thermal_updates == 3 && stats.thermal_grid_cells_touched >= 1 &&
               stats.thermal_peak_temp_c > 40.0,
           "thermal model did not heat the touched floorplan tile");
   require(stats.thermal_hotspot_layer == physical.layer &&

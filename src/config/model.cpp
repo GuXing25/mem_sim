@@ -446,11 +446,8 @@ void apply_spec_overrides(DramSpec& spec, const ModelOverrides& overrides) {
 }
 
 DramSpec build_model(const std::string& standard, const ModelOverrides& overrides,
-                     int schema_version, std::vector<ParameterDerivation>* derived) {
-  if (schema_version < 1 || schema_version > 3)
-    throw std::invalid_argument("unsupported model config schema");
+                     std::vector<ParameterDerivation>* derived) {
   if (derived) derived->clear();
-  // Schema denotes accepted syntax only. All model inputs use the latest resolver.
   DramSpec spec = make_spec(standard);
   apply_coupled_model(spec, overrides, derived);
   return spec;

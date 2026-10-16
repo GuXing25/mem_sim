@@ -12,7 +12,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from result_io import run_simulator
+from result_io import run_simulator, latency_ticks
 
 from config_selection import REFERENCE_PRESETS, selection_args
 
@@ -78,7 +78,7 @@ def simulate(binary: Path, standard: str, requests: int, seed: int,
     if stats.get("hit_cycle_limit", "true").lower() != "false":
         raise RuntimeError("sensitivity run hit cycle limit")
     result = {
-        "latency_ticks": float(stats["avg_read_latency"]),
+        "latency_ticks": latency_ticks(stats),
         "throughput_GBps": float(stats["achieved_bw_GBps"]),
     }
     # Timing-only reference cases disable these models. Their old diagnostic
@@ -217,7 +217,6 @@ def main() -> int:
         })
 
     report = {
-        "schema_version": 2,
         "scope": "oat_timing_sensitivity_and_bounded_input_uncertainty",
         "parameters": list(PARAMETERS), "fraction": args.fraction,
         "row_cycle_policy": "nRC = nRAS + nRP + nominal row-cycle margin; nRC is not sampled independently",

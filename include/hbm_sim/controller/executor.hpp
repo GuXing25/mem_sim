@@ -36,10 +36,8 @@ class CommandExecutor {
   CommandExecutionResult issue(Request& req, Command issued, Cycle clk);
 
  private:
-  Cycle timing_delay(int cycles) const;
   void close_rank_banks(const DecodedAddress& decoded, Cycle clk);
   void gate_rank_banks_after(const DecodedAddress& decoded, Cycle ready_at);
-  std::pair<int, int> rank_bank_range(const DecodedAddress& decoded) const;
 
   const DramSpec& spec_;
   std::vector<BankState>& banks_;

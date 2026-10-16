@@ -6,7 +6,7 @@ layer 排序，不直接修改 `DramSpec`。`fields.hpp` 保存普通字段和 T
 `build_model()` 和联动输入解析；CLI 的 `apply_option()` 只分发平台选项与模型输入。
 外部前端可通过 `include/hbm_sim/config/model.hpp` 复用同一模型构建入口。
 
-schema-v2/v3 分节 layer 为：meta/model 0、公共 section 10、family 20、standard 30、preset 40、
+分节 layer 为：meta/model 0、公共 section 10、family 20、standard 30、preset 40、
 override 50；命令行由 CLI 记录为 60。inactive standard/preset section 不进入
 解析结果。平面 `key=value` 文档也执行相同的参数联动。
 Timing 来源按文档/section 绑定到字段，不能随扫描顺序跨段传播。
@@ -22,7 +22,7 @@ Timing 来源按文档/section 绑定到字段，不能随扫描顺序跨段传�
 配置不能创建新的算法实现。scheduler、row policy、PHY mode 和 backend 的陌生名称
 必须失败；增加名称时还要实现对应 C++ 行为和回归测试。
 
-所有版本共用 `resolve_coupled_inputs()`，在 profile 展开前核对几何、密度、速率和
+统一使用 `resolve_coupled_inputs()`，在 profile 展开前核对几何、密度、速率和
 时钟；`apply_spec_overrides()` 对失败覆盖保持调用方原对象不变。
 HBM 的 `sids=auto` 按支持的 4/8/12/16Hi 组织选择 1/2/3/4，在容量和密度推导之前完成；
 指定层数但省略 SID 时采用同一规则。其他层数需显式正整数 SID，不做截断猜测。

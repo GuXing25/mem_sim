@@ -113,18 +113,14 @@ MemPhy::MemPhy(DramSpec spec,
   }
   if (behavioral() && options_.reset_cycles > 0) {
     state_ = MemPhyState::Reset;
-    state_deadline_ = timing_delay(options_.reset_cycles);
+    state_deadline_ = spec_.nck_to_ticks(options_.reset_cycles);
   } else if (behavioral() && options_.initialization_cycles > 0) {
     state_ = MemPhyState::Initialization;
-    state_deadline_ = timing_delay(options_.initialization_cycles);
+    state_deadline_ = spec_.nck_to_ticks(options_.initialization_cycles);
   } else if (behavioral() && options_.auto_train && options_.training_cycles > 0) {
     state_ = MemPhyState::Training;
-    state_deadline_ = timing_delay(options_.training_cycles);
+    state_deadline_ = spec_.nck_to_ticks(options_.training_cycles);
   }
-}
-
-Cycle MemPhy::timing_delay(int nck) const {
-  return static_cast<Cycle>(std::max(0, nck)) * static_cast<Cycle>(std::max(1, spec_.tick_multiplier));
 }
 
 bool MemPhy::idle() const {
@@ -171,7 +167,7 @@ void MemPhy::accept_command(const Request&, Command command, BusClass bus, Cycle
   // 会错误阻止 HBM row/column 双发射，即使配置明确要求零流水延迟。
   if (options_.command_pipeline_cycles > 0) {
     command_fifo_.push_back(
-        {cycle + timing_delay(options_.command_pipeline_cycles)});
+        {cycle + spec_.nck_to_ticks(options_.command_pipeline_cycles)});
     stats_.max_command_fifo =
         std::max<std::uint64_t>(stats_.max_command_fifo,
                                 command_fifo_.size());
@@ -197,7 +193,7 @@ Cycle MemPhy::submit_data(const Request& request, Command command, Cycle cycle) 
     const int device_latency = spec_.dfi_read_latency_nck > 0
                                    ? spec_.dfi_read_latency_nck + spec_.timing.nBL
                                    : spec_.timing.read_latency();
-    slot.ready_cycle += timing_delay(device_latency + options_.read_return_pipeline_cycles);
+    slot.ready_cycle += spec_.nck_to_ticks(device_latency + options_.read_return_pipeline_cycles);
     read_fifo_.push_back(slot);
     stats_.read_requests++;
     stats_.max_read_fifo = std::max<std::uint64_t>(stats_.max_read_fifo, read_fifo_.size());
@@ -205,7 +201,7 @@ Cycle MemPhy::submit_data(const Request& request, Command command, Cycle cycle) 
     const int device_latency = spec_.dfi_write_latency_nck > 0
                                    ? spec_.dfi_write_latency_nck
                                    : spec_.timing.nCWL;
-    slot.ready_cycle += timing_delay(device_latency + options_.write_data_pipeline_cycles);
+    slot.ready_cycle += spec_.nck_to_ticks(device_latency + options_.write_data_pipeline_cycles);
     write_fifo_.push_back(slot);
     stats_.write_requests++;
     stats_.max_write_fifo = std::max<std::uint64_t>(stats_.max_write_fifo, write_fifo_.size());
@@ -222,10 +218,10 @@ void MemPhy::advance_lifecycle(Cycle cycle) {
     if (cycle >= state_deadline_) {
       if (options_.initialization_cycles > 0) {
         state_ = MemPhyState::Initialization;
-        state_deadline_ = cycle + timing_delay(options_.initialization_cycles);
+        state_deadline_ = cycle + spec_.nck_to_ticks(options_.initialization_cycles);
       } else if (options_.auto_train && options_.training_cycles > 0) {
         state_ = MemPhyState::Training;
-        state_deadline_ = cycle + timing_delay(options_.training_cycles);
+        state_deadline_ = cycle + spec_.nck_to_ticks(options_.training_cycles);
       } else {
         state_ = MemPhyState::Ready;
       }
@@ -235,7 +231,7 @@ void MemPhy::advance_lifecycle(Cycle cycle) {
     if (cycle >= state_deadline_) {
       if (options_.auto_train && options_.training_cycles > 0) {
         state_ = MemPhyState::Training;
-        state_deadline_ = cycle + timing_delay(options_.training_cycles);
+        state_deadline_ = cycle + spec_.nck_to_ticks(options_.training_cycles);
       } else {
         state_ = MemPhyState::Ready;
       }

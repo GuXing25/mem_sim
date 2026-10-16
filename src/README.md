@@ -5,7 +5,7 @@
 `src/` 按模拟器职责分层，目标是接近 Ramulator2.1 的模块边界，同时保持 HBM/LPDDR 专用小型项目的清晰度。
 
 - `cli/`：命令行、运行选项、结果输出装配；调用配置库生成模型，不写协议状态机。
-- `config/`：配置文件分层、模型 key 映射、schema 3 参数联动与矛盾检查；可由库调用。
+- `config/`：配置文件分层、模型 key 映射、统一参数联动与矛盾检查；可由库调用。
 - `core/`：跨模块核心对象，例如地址映射、多 controller `MemorySystem` 和真实堆叠存储 `MemoryImage`。多 channel 并行、channel mapper、全局命令 trace 合并、真实 payload、bank/row/column/subarray/mat/cell/microbump 存储视图、floorplan、SECDED shadow、功耗和 TSV-aware 热事件都从这里进入。
 - `dram/`：DRAM 标准描述，包括标准 traits、JEDEC 换算、命令语义、命令状态合法性、接口开销、完整 organization/timing profile 和派生 timing table。新增 HBM/LPDDR 标准参数时优先改这里。
 - `controller/`：控制器内部实现，包括 request buffer 调度、row policy、refresh/RFM manager、timing engine 和命令执行器。它对应 Ramulator2.1 controller 侧的核心骨架。
@@ -48,7 +48,7 @@ dram -> common
 - 新增 PHY/DFI 行为：公共生命周期、FIFO 和协议编码放在 `dram/mem_phy.cpp`，事件/CSV 校验放在 `validation/dfi.cpp`。Behavioral 数据完成会改变 Controller completion 路径；仍不宣称 pin-level 模拟训练或厂商 lane 合规。
 - 新增接口开销或 metadata lane 口径：优先改 `dram/interface.cpp`，保持 `DramSpec` 只保存配置字段，Controller/MemorySystem 只消费已经计算好的 request/command 开销。
 - 新增初始化、训练或链路控制序列：优先改 `frontend/traffic.cpp` 的 `generate_control_sequence()`，再补 `tests/sequence_tests.cpp` 和 `tests/smoke.sh`，保证 CLI、online controller 和离线 validator 都能看到同一条命令路径。
-- 新增统计字段：先放到 `Stats`，再在 `stats/stats.cpp` 追加输出，避免改变旧字段顺序。
+- 新增统计字段：内部测量放入 `Stats`；仅有明确使用或验证用途的字段进入公共结果或补充诊断，不能自动全量导出。字段按名字读取，不依赖输出顺序。
 
 ## 一次请求的代码路径
 

@@ -74,16 +74,6 @@ struct ValidatorHbmPairingState {
   Cycle next_pairing_falling_edge = 0;
 };
 
-Cycle timing_delay(const DramSpec &spec, int cycles) {
-  if (cycles <= 0) {
-    return 0;
-  }
-  // Validator 必须使用和 Controller 完全相同的 nCK->tick 换算，否则合法 trace
-  // 会被离线检查误判为 timing violation。
-  return static_cast<Cycle>(cycles) *
-         static_cast<Cycle>(std::max(1, spec.tick_multiplier));
-}
-
 std::size_t scope_count(const DramSpec &spec, TimingScope scope) {
   const Organization &o = spec.org;
   // 这里刻意复制 TimingEngine 的
@@ -389,10 +379,10 @@ void validate_and_replay_bank_state(
     bank.activating_row = issued.decoded.row;
     bank.activating_request = issued.request_id;
     bank.next_act2 =
-        issued.cycle + timing_delay(spec, std::max(1, spec.timing.nAADMin));
+        issued.cycle + spec.nck_to_ticks(std::max(1, spec.timing.nAADMin));
     bank.act2_deadline =
         issued.cycle +
-        timing_delay(spec, std::max(spec.timing.nAADMin, spec.timing.nAADMax));
+        spec.nck_to_ticks(std::max(spec.timing.nAADMin, spec.timing.nAADMax));
     break;
   case Command::ACT2:
     require_state(spec.split_activate,
@@ -620,11 +610,11 @@ validate_single_stack_trace(const DramSpec &spec,
                       ? spec.timing.nREFDB2REFDBS : spec.timing.nRRDL;
         if (next_row && spec.timing.nREFDB2REFDBL > 0)
           gap = spec.timing.nREFDB2REFDBL;
-        refresh_next[rank] = issued.cycle + timing_delay(spec, gap);
+        refresh_next[rank] = issued.cycle + spec.nck_to_ticks(gap);
       } else if (issued.command == Command::REFAB) {
         refresh_bank_count[rank] = 0;
         refreshed_banks[rank].clear();
-        refresh_next[rank] = issued.cycle + timing_delay(spec, spec.timing.nRFC);
+        refresh_next[rank] = issued.cycle + spec.nck_to_ticks(spec.timing.nRFC);
       } else if (issued.command == Command::SREFEX) {
         const std::size_t ranks_per_channel =
             spec.org.pseudo_channels * spec.org.sids * spec.org.ranks;
@@ -705,7 +695,7 @@ validate_single_stack_trace(const DramSpec &spec,
       report.faw_events_checked++;
       ValidatorScopeState &state = activation_scopes[scope_index(
           spec, spec.activation_scope, issued.decoded)];
-      Cycle window = timing_delay(spec, std::max(1, spec.timing.nFAW));
+      Cycle window = spec.nck_to_ticks(std::max(1, spec.timing.nFAW));
       while (!state.recent_acts.empty() &&
              issued.cycle >= state.recent_acts.front() &&
              issued.cycle - state.recent_acts.front() >= window) {
@@ -742,30 +732,30 @@ validate_single_stack_trace(const DramSpec &spec,
                                      ? spec.timing.nWCKSYNC
                                      : spec.timing.nWCK2CK;
         wck.wck_ready_at =
-            issued.cycle + timing_delay(spec, std::max(1, sync_latency));
+            issued.cycle + spec.nck_to_ticks(std::max(1, sync_latency));
         wck.wck_active_until =
             issued.cycle +
-            timing_delay(spec, std::max(spec.timing.nWCKPST, sync_latency + 1));
+            spec.nck_to_ticks(std::max(spec.timing.nWCKPST, sync_latency + 1));
       } else if (issued.command == Command::WCKTRAIN) {
         wck.wck_ready_at =
             issued.cycle +
-            timing_delay(spec, std::max(1, spec.timing.nWCKTRAIN));
+            spec.nck_to_ticks(std::max(1, spec.timing.nWCKTRAIN));
         wck.wck_active_until =
             wck.wck_ready_at +
-            timing_delay(spec, std::max(1, spec.timing.nWCKPST));
+            spec.nck_to_ticks(std::max(1, spec.timing.nWCKPST));
       } else if (issued.command == Command::RD ||
                  issued.command == Command::RDA) {
         wck.wck_active_until =
             std::max(wck.wck_active_until,
                      issued.cycle +
-                         timing_delay(spec, spec.timing.nCL + spec.timing.nBL +
+                         spec.nck_to_ticks(spec.timing.nCL + spec.timing.nBL +
                                                 spec.timing.nWCKPST));
       } else if (issued.command == Command::WR ||
                  issued.command == Command::WRA) {
         wck.wck_active_until =
             std::max(wck.wck_active_until,
                      issued.cycle +
-                         timing_delay(spec, spec.timing.nCWL + spec.timing.nBL +
+                         spec.nck_to_ticks(spec.timing.nCWL + spec.timing.nBL +
                                                 spec.timing.nWCKPST));
       }
     }
@@ -776,7 +766,7 @@ validate_single_stack_trace(const DramSpec &spec,
         continue;
       }
       const Cycle ready =
-          issued.cycle + timing_delay(spec, std::max(0, constraint.latency));
+          issued.cycle + spec.nck_to_ticks(std::max(0, constraint.latency));
       // 应用 preceding->following 约束，为后续命令写入最早发射 cycle。
       report.timing_constraint_updates++;
       auto update = [&](ValidatorScopeState &state) {
